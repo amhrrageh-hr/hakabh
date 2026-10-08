@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تسجيل الدخول - هكبة المليون</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/static/manifest.json">
+    <script src="/static/pwa-register.js" defer></script>
+    <style>
+        :root {
+            --primary: #d4af37;
+            --bg-dark: #052109;
+            --bg-card: #0a3d0e;
+            --border: #1b5e20;
+            --text-soft: #ccf2d1;
+            --glass: rgba(10, 61, 14, 0.8);
+        }
+
+        body {
+            font-family: 'Tajawal', sans-serif;
+            background-color: var(--bg-dark);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .gold-text { color: var(--primary); }
+        .greenish-white { color: var(--text-soft); }
+
+        .glass-panel {
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .input-premium {
+            background-color: rgba(5, 33, 9, 0.8);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 0.85rem 1rem;
+            color: white;
+            width: 100%;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+        .input-premium:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 15px rgba(212, 175, 55, 0.1);
+        }
+
+        .btn-gold {
+            background-color: var(--primary);
+            color: var(--bg-dark);
+            font-weight: 800;
+            border-radius: 12px;
+            padding: 1rem;
+            transition: all 0.3s ease;
+            text-align: center;
+            width: 100%;
+        }
+        .btn-gold:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(212, 175, 55, 0.3);
+            filter: brightness(1.1);
+        }
+        .btn-gold:active { transform: translateY(0); }
+        .btn-gold:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.1);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            padding: 1rem;
+            border-radius: 12px;
+            font-size: 0.875rem;
+            text-align: center;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="max-w-md w-full glass-panel rounded-[2.5rem] p-10 relative overflow-hidden">
+        <!-- Decoration -->
+        <div class="absolute -top-20 -right-20 w-40 h-40 bg-[var(--primary)] opacity-5 rounded-full blur-3xl"></div>
+        <div class="absolute -bottom-20 -left-20 w-40 h-40 bg-[var(--primary)] opacity-5 rounded-full blur-3xl"></div>
+
+        <div class="text-center mb-10 relative z-10">
+            <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[var(--primary)] to-[#facc15] flex items-center justify-center mx-auto mb-6 shadow-xl shadow-gold/20">
+                <svg class="w-8 h-8 text-[var(--bg-dark)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                </svg>
+            </div>
+            <h1 class="text-3xl font-black text-white mb-2">دخول المشتركين</h1>
+            <p class="text-xs greenish-white opacity-60">أدخل بياناتك للوصول إلى لوحة التحكم الخاصة بك</p>
+        </div>
+
+        <form id="loginForm" class="space-y-6 relative z-10">
+            <div class="space-y-2">
+                <label class="block text-xs greenish-white mr-2">رقم المشترك أو الهاتف</label>
+                <input type="text" name="subscriber_number" required placeholder="رقم الهاتف أو المعرف"
+                    class="input-premium">
+            </div>
+            <div class="space-y-2">
+                <label class="block text-xs greenish-white mr-2">كلمة المرور</label>
+                <input type="password" name="password" required placeholder="••••••••"
+                    class="input-premium">
+            </div>
+
+            <button type="submit" id="loginBtn" class="btn-gold text-lg mt-4">دخول المنصة</button>
+        </form>
+
+        <div id="errorMsg" class="alert-error mt-6 hidden"></div>
+        
+        <div class="text-center mt-8 relative z-10">
+            <a href="/" class="text-xs greenish-white opacity-50 hover:opacity-100 hover:gold-text transition-all underline decoration-dotted">العودة لصفحة التسجيل الرئيسية</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const err = document.getElementById('errorMsg');
+            const formData = new FormData(e.target);
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="flex items-center justify-center gap-2">جاري التحقق... <svg class="animate-spin h-4 w-4 text-current" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></span>';
+            err.classList.add('hidden');
+
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    body: formData
+                });
+                const text = await response.text();
+                let data = {};
+                try {
+                    data = JSON.parse(text);
+                } catch (parseError) {
+                    data.message = text || 'حدث خطأ في الاتصال بالسيرفر';
+                }
+
+                if (response.ok && data.success) {
+                    // توجيه الموظف للوحة المشتركين
+                    if (data.user_type === 'staff') {
+                        window.location.href = `/million-hakbah`;
+                        return;
+                    }
+                    // توجيه المشترك بناءً على حالته
+                    if (data.status === 'pending' || data.status === 'rejected') {
+                        window.location.href = `/pending`;
+                    } else {
+                        window.location.href = `/million-hakbah`;
+                    }
+                } else {
+                    err.classList.remove('hidden');
+                    err.innerText = data.message || 'بيانات الدخول غير صحيحة';
+                }
+            } catch (error) {
+                err.classList.remove('hidden');
+                err.innerText = 'حدث خطأ في الاتصال بالسيرفر';
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'دخول المنصة';
+            }
+        });
+    </script>
+</body>
+</html>

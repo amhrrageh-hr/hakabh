@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم الموظف - هكبة المليون</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+    <script src="/static/pwa-register.js" defer></script>
+    <style>
+        body {
+            font-family: 'Tajawal', sans-serif;
+            background-color: #f8f9fa;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            width: 100%;
+            max-width: 700px;
+            margin-top: 50px;
+            direction: rtl;
+            text-align: right;
+        }
+        h1 {
+            color: #28a745;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.2em;
+            font-weight: bold;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #343a40;
+            font-weight: 600;
+        }
+        select, input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ced4da;
+            border-radius: 8px;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #28a745;
+            color: white;
+            padding: 14px 25px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.1em;
+            font-weight: bold;
+            width: 100%;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #218838;
+        }
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 500;
+        }
+        .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-danger { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .logout-btn { background-color: #dc3545; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>لوحة تحكم الموظف</h1>
+        <p>مرحباً بك، {{ staff.name }}!</p>
+        <div id="message-alert" class="alert" style="display: none;"></div>
+        <form id="payment-form">
+            <div class="form-group">
+                <label>اختر الفئة:</label>
+                <select id="category_select" name="category_id">
+                    <option value="">-- اختر فئة --</option>
+                    {% for category in categories %}
+                        <option value="{{ category.name }}">{{ category.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>اختر المشترك:</label>
+                <select id="subscriber_select" name="subscriber_id" disabled>
+                    <option value="">-- اختر مشترك --</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>المبلغ المسدد:</label>
+                <input type="number" name="amount" step="0.01" required>
+            </div>
+            <div class="form-group">
+                <label>الملاحظة:</label>
+                <input type="text" name="note">
+            </div>
+            <button type="submit">تسجيل السداد</button>
+        </form>
+        <button class="logout-btn" onclick="window.location.href='/logout'">تسجيل الخروج</button>
+    </div>
+    <script>
+        const catSel = document.getElementById('category_select');
+        const subSel = document.getElementById('subscriber_select');
+        const form = document.getElementById('payment-form');
+        const alertBox = document.getElementById('message-alert');
+        const SUBSCRIBER_CACHE_KEY = 'staffSubscriberCache';
+
+        let subscriberCache = {};
+        try {
+            subscriberCache = JSON.parse(localStorage.getItem(SUBSCRIBER_CACHE_KEY) || '{}');
+        } catch (e) {
+            subscriberCache = {};
+        }
+
+        function saveSubscriberCache() {
+            localStorage.setItem(SUBSCRIBER_CACHE_KEY, JSON.stringify(subscriberCache));
+        }
+
+        function setSubscriberOptions(subscribers, fallbackMessage = null) {
+            subSel.innerHTML = '';
+            if (!subscribers || subscribers.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = fallbackMessage || '-- لا يوجد مشتركين --';
+                subSel.appendChild(option);
+                subSel.disabled = true;
+                return;
+            }
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = '-- اختر مشترك --';
+            subSel.appendChild(defaultOption);
+            subscribers.forEach(s => {
+                const op = document.createElement('option');
+                op.value = s.id;
+                op.textContent = `${s.number} - ${s.name}`;
+                subSel.appendChild(op);
+            });
+            subSel.disabled = false;
+        }
+
+        async function loadSubscribers(categoryName) {
+            setSubscriberOptions([], '-- جاري التحميل --');
+
+            if (!categoryName) {
+                setSubscriberOptions([], '-- اختر فئة أولاً --');
+                return;
+            }
+
+            if (!navigator.onLine) {
+                const cached = subscriberCache[categoryName] || [];
+                if (cached.length > 0) {
+                    setSubscriberOptions(cached);
+                    showAlert('أنت حالياً بدون اتصال، يتم عرض المشتركين من الذاكرة المؤقتة.', 'success');
+                } else {
+                    setSubscriberOptions([], 'لا يوجد بيانات للمشتركين بدون اتصال');
+                    showAlert('لا يمكن تحميل قائمة المشتركين دون اتصال بالإنترنت.', 'danger');
+                }
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/staff/subscribers/${encodeURIComponent(categoryName)}`);
+                if (!res.ok) {
+                    throw new Error('فشل في جلب المشتركين');
+                }
+                const data = await res.json();
+                if (Array.isArray(data)) {
+                    subscriberCache[categoryName] = data;
+                    saveSubscriberCache();
+                }
+                setSubscriberOptions(data, '-- لا يوجد مشتركين --');
+            } catch (error) {
+                console.error('Error loading subscribers:', error);
+                const cached = subscriberCache[categoryName] || [];
+                if (cached.length > 0) {
+                    setSubscriberOptions(cached);
+                    showAlert('حدث خطأ في الشبكة، تم عرض المشتركين من الذاكرة المؤقتة.', 'success');
+                } else {
+                    setSubscriberOptions([], 'فشل تحميل المشتركين');
+                    showAlert('حدث خطأ أثناء تحميل المشتركين.', 'danger');
+                }
+            }
+        }
+
+        catSel.addEventListener('change', async () => {
+            await loadSubscribers(catSel.value);
+        });
+
+        async function sendPayment(payload) {
+            const formData = new FormData();
+            formData.append('subscriber_id', payload.subscriber_id);
+            formData.append('amount', payload.amount);
+            formData.append('note', payload.note || '');
+            formData.append('client_reference', payload.client_reference);
+
+            const response = await fetch('/staff/submit-payment', {
+                method: 'POST',
+                body: formData
+            });
+            return response;
+        }
+
+        async function syncPendingPayments() {
+            const queue = localStorage.getItem('staffPaymentQueue');
+            if (!queue) {
+                return;
+            }
+            let payments;
+            try {
+                payments = JSON.parse(queue);
+                if (!Array.isArray(payments) || payments.length === 0) {
+                    localStorage.removeItem('staffPaymentQueue');
+                    return;
+                }
+            } catch (e) {
+                localStorage.removeItem('staffPaymentQueue');
+                return;
+            }
+
+            try {
+                const res = await fetch('/staff/sync-payments', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({payments})
+                });
+                if (res.ok) {
+                    localStorage.removeItem('staffPaymentQueue');
+                    const data = await res.json();
+                    showAlert(data.message || 'تم مزامنة المدفوعات المعلقة بنجاح', 'success');
+                    return true;
+                }
+            } catch (e) {
+                return false;
+            }
+            return false;
+        }
+
+        function queuePayment(payment) {
+            const queue = localStorage.getItem('staffPaymentQueue');
+            let payments = [];
+            try {
+                payments = queue ? JSON.parse(queue) : [];
+            } catch (e) {
+                payments = [];
+            }
+            payments.push(payment);
+            localStorage.setItem('staffPaymentQueue', JSON.stringify(payments));
+        }
+
+        function showAlert(message, type) {
+            alertBox.textContent = message;
+            alertBox.className = 'alert ' + (type === 'success' ? 'alert-success' : 'alert-danger');
+            alertBox.style.display = 'block';
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            alertBox.style.display = 'none';
+            alertBox.className = 'alert';
+
+            const formData = new FormData(form);
+            const payload = {
+                subscriber_id: Number(formData.get('subscriber_id')),
+                amount: parseFloat(formData.get('amount')),
+                note: formData.get('note') || '',
+                client_reference: `offline-${Date.now()}-${Math.random().toString(36).slice(2)}`
+            };
+
+            if (!payload.subscriber_id || !payload.amount) {
+                showAlert('يرجى اختيار المشترك والمبلغ قبل الإرسال.', 'danger');
+                return;
+            }
+
+            try {
+                const res = await sendPayment(payload);
+                const data = await res.json();
+                if (res.ok) {
+                    showAlert(data.message || 'تم تسجيل السداد بنجاح', 'success');
+                    form.reset();
+                    subSel.disabled = true;
+                    subSel.innerHTML = '<option value="">-- اختر مشترك --</option>';
+                    await syncPendingPayments();
+                } else {
+                    if (!navigator.onLine) {
+                        queuePayment(payload);
+                        showAlert('تم حفظ السداد مؤقتاً وسيتم إرساله عند العودة للإنترنت', 'success');
+                        form.reset();
+                        subSel.disabled = true;
+                        subSel.innerHTML = '<option value="">-- اختر مشترك --</option>';
+                    } else {
+                        showAlert(data.message || 'حدث خطأ أثناء تسجيل السداد', 'danger');
+                    }
+                }
+            } catch (err) {
+                queuePayment(payload);
+                showAlert('تم حفظ السداد مؤقتاً وسيتم إرساله عند العودة للإنترنت', 'success');
+                form.reset();
+                subSel.disabled = true;
+                subSel.innerHTML = '<option value="">-- اختر مشترك --</option>';
+            }
+        });
+
+        window.addEventListener('online', () => {
+            syncPendingPayments();
+        });
+
+        window.addEventListener('load', async () => {
+            if (navigator.onLine) {
+                await syncPendingPayments();
+            }
+        });
+    </script>
+</body>
+</html>

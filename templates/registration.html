@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>هكبة المليون</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/static/manifest.json">
+    <script src="/static/pwa-register.js" defer></script>
+    <style>
+        :root {
+            --primary: #d4af37;
+            --bg-dark: #052109;
+            --bg-card: #0a3d0e;
+            --border: #1b5e20;
+            --text-soft: #ccf2d1;
+            --glass: rgba(10, 61, 14, 0.8);
+        }
+
+        body {
+            font-family: 'Tajawal', sans-serif;
+            background-color: var(--bg-dark);
+            color: white;
+            scroll-behavior: smooth;
+        }
+
+        .gold-text { color: var(--primary); }
+        .greenish-white { color: var(--text-soft); }
+        .bg-card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border);
+        }
+
+        .active-tab {
+            border-bottom: 3px solid var(--primary);
+            color: var(--primary);
+        }
+
+        /* Glassmorphism Effect */
+        .glass-panel {
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+        }
+
+        /* Standard Input Style */
+        .input-premium {
+            background-color: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 0.85rem 1rem;
+            color: white;
+            width: 100%;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+        .input-premium:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 15px rgba(212, 175, 55, 0.1);
+        }
+
+        /* Primary Button */
+        .btn-gold {
+            background-color: var(--primary);
+            color: var(--bg-dark);
+            font-weight: 800;
+            border-radius: 12px;
+            padding: 1rem;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+        .btn-gold:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(212, 175, 55, 0.3);
+            filter: brightness(1.1);
+        }
+        .btn-gold:active { transform: translateY(0); }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: var(--bg-dark); }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+
+        .step-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: var(--bg-dark);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            box-shadow: 0 0 15px rgba(212, 175, 55, 0.2);
+        }
+    </style>
+</head>
+
+<body class="min-h-screen">
+    <!-- الشريط العلوي -->
+    <nav class="sticky top-0 z-50 bg-[var(--bg-dark)] border-b border-[var(--border)] px-3 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-y-3">
+        <div class="flex items-center gap-2 sm:gap-3">
+            <div
+                class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-tr from-[var(--primary)] to-[#facc15] flex items-center justify-center shadow-lg shadow-gold/20 shrink-0">
+                <svg class="w-5 h-5 sm:w-6 sm:h-6 text-[var(--bg-dark)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                </svg>
+            </div>
+            <span class="font-bold text-sm sm:text-lg whitespace-nowrap">هكبة المليون <span class="hidden sm:inline">الاسبوعية</span></span>
+        </div>
+        <div class="hidden md:flex gap-8">
+            <button onclick="showTab('home')" id="tab-home"
+                class="pb-1 transition-colors hover:text-[var(--primary)] active-tab">الرئيسية</button>
+            <button onclick="showTab('how-it-works')" id="tab-how-it-works"
+                class="pb-1 transition-colors hover:text-[var(--primary)]">كيف تعمل</button>
+            <button onclick="showTab('categories')" id="tab-categories"
+                class="pb-1 transition-colors hover:text-[var(--primary)]">الفئات</button>
+        </div>
+        <div class="flex items-center gap-2 sm:gap-4">
+            <a href="/login" class="text-white hover:text-[var(--primary)] transition-colors text-xs sm:text-base font-medium whitespace-nowrap">دخول المشتركين</a>
+            <button onclick="scrollToRegistration()"
+                class="bg-[var(--primary)] text-[var(--bg-dark)] px-3 py-1.5 sm:px-5 sm:py-2 rounded-lg text-xs sm:text-base font-bold hover:brightness-110 transition-all whitespace-nowrap">الانضمام</button>
+        </div>
+    </nav>
+
+    <!-- تبويب الرئيسية -->
+    <section id="content-home" class="tab-content px-6 py-20 flex flex-col items-center text-center">
+        <p class="gold-text text-xl font-medium mb-4">منظومة ادخار رقمية فاخرة</p>
+        <h1 class="text-6xl md:text-8xl font-extrabold mb-2 text-white">هكبة المليون</h1>
+        <h2 class="gold-text text-5xl md:text-7xl font-extrabold mb-8">الاسبوعية</h2>
+        <p class="text-white opacity-90 text-2xl mb-6">طريقك نحو الادخار الامثل</p>
+        <p class="greenish-white text-lg mb-12 opacity-80">دورة 49 اسبوعا . 49 عضوا . هوية رقمية ثابتة . سحب اسبوعي شفاف
+        </p>
+        <div class="flex flex-col md:flex-row gap-4 justify-center items-center">
+            <button onclick="scrollToRegistration()"
+                class="btn-gold px-12 py-4 text-xl shadow-xl shadow-[var(--primary)]/10">ابدأ رحلتك</button>
+            <button onclick="showTab('how-it-works')"
+                class="border border-white/20 px-8 py-4 rounded-xl font-bold text-lg hover:bg-white/5 transition-all">كيف تعمل هكبة المليون</button>
+        </div>
+    </section>
+ 
+    <!-- تبويب المفهوم -->
+    <section id="content-concept" class="tab-content px-6 py-20 max-w-6xl mx-auto">
+        <div class="text-center mb-16">
+            <p class="gold-text text-xl font-bold mb-4">المفهوم</p>
+            <h2 class="text-3xl font-extrabold mb-4 text-white">ليست منصة عادية، بل منظومة مالية</h2>
+            <p class="greenish-white text-lg max-w-3xl mx-auto opacity-80">
+                صُمِّمت هكبة لتكون تجربة الادخار الأكثر شفافية وانضباطًا، حيث يصبح المال طريقًا نحو عقلية مالية جديدة.
+            </p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {% set concepts = [
+            ('◈', 'الادخار الجماعي', 'منظومة جماعية مبنية على ثقة الأرقام، حيث يلتقي 49 عضوًا في رحلة مالية واحدة.'),
+            ('✦', 'الالتزام اليومي', 'كل يوم خطوة. الانضباط هو أساس استحقاقك للجوائز وللهوية الخضراء.'),
+            ('✜', 'الهوية الرقمية', 'رقم ثابت من 1 إلى 49 يرافقك طوال الدورة كهوية لا تتكرر.'),
+            ('⊛', 'العدالة الرقمية', 'نظام شفاف بالكامل، الكل أمام نفس الفرص ونفس القواعد.'),
+            ('◉', 'الرادار المالي', 'غرفة عمليات حية تكشف نبض المجموعة دون كشف هويات الأعضاء.'),
+            ('♛', 'السحب الأسبوعي', 'سحب آلي شفاف للأعضاء الملتزمين فقط، مع جوائز تحفيزية حصرية.')
+            ] %}
+            {% for icon, title, desc in concepts %}
+            <div class="bg-card p-10 rounded-[2rem] border border-white/5 hover:border-[var(--primary)] transition-all group">
+                <div class="text-[var(--primary)] text-4xl mb-6 group-hover:scale-110 transition-transform inline-block">{{ icon }}</div>
+                <h3 class="text-xl font-bold mb-4 text-white">{{ title }}</h3>
+                <p class="text-sm greenish-white opacity-60 leading-relaxed">{{ desc }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+ 
+    <!-- تبويب الانضباط المالي -->
+    <section id="content-discipline" class="tab-content px-6 py-20 max-w-6xl mx-auto">
+        <div class="text-center mb-16">
+            <p class="gold-text text-xl font-bold mb-4">الانضباط المالي</p>
+            <h2 class="text-3xl font-extrabold mb-4 text-white">اللون الأخضر شارة شرف</h2>
+            <p class="greenish-white text-lg max-w-4xl mx-auto opacity-80 mb-4">
+                في الهكبة، الانضباط ليس خيارًا بل أسلوب حياة مالي. كل عضو ملتزم يحمل هويته الخضراء كرمز للثقة، وكل تأخر يؤثر على أهليتك في الجوائز التحفيزية.
+            </p>
+            <p class="greenish-white text-lg max-w-4xl mx-auto opacity-80">
+                النظام لا يعرف المحاباة. كل شيء قائم على العدالة الرقمية الصارمة، التي تكافئ من يلتزم وتُنبّه من يتأخر.
+            </p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {% set statuses = [
+            ('ملتزم', 'السداد اليومي مكتمل، مؤهل لكل السحوبات.', '#4ade80'),
+            ('بانتظار الدفع', 'في فترة سماح اليوم، يجب السداد قريبًا.', '#facc15'),
+            ('متأخر', 'تأخر في السداد، خطر فقدان أهلية الجائزة.', '#ef4444'),
+            ('موقوف', 'خرج من السحوبات، يحتاج إلى إعادة تفعيل.', '#94a3b8')
+            ] %}
+            {% for title, desc, color in statuses %}
+            <div class="bg-card p-8 rounded-[2rem] border border-white/5 transition-all hover:border-[var(--primary)] text-center group" style="--status-color: {{ color }};">
+                <div class="w-16 h-16 rounded-full mx-auto mb-6 flex items-center justify-center bg-black/20">
+                    <div class="w-4 h-4 rounded-full animate-pulse" style="background-color: var(--status-color); box-shadow: 0 0 15px var(--status-color);"></div>
+                </div>
+                <h3 class="text-xl font-bold mb-3" style="color: var(--status-color);">{{ title }}</h3>
+                <p class="text-sm greenish-white opacity-60 leading-relaxed">{{ desc }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <!-- تبويب كيف تعمل -->
+    <section id="content-how-it-works" class="tab-content px-6 py-20 max-w-6xl mx-auto">
+        <div class="text-center mb-16">
+            <p class="gold-text text-sm font-bold uppercase mb-2">الية العمل</p>
+            <h2 class="text-4xl font-extrabold mb-4 text-white">من التسجيل الى الحسب</h2>
+            <p class="greenish-white text-sm">سبع خطوات تنقلك من مدخر فرد الى عضو في منظومة مالية متكاملة</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% set steps = [
+            ('1', 'إنشاء الحساب', 'سجل بياناتك الأساسية وادخل عالم هكبة'),
+            ('2', 'اختيار الفئة', 'حدد فئتك المالية بحسب طموحك الادخاري'),
+            ('3', 'اختيار رقم الهوية', 'اختر رقمك بين 1 و 49 ليصبح هويتك الدائمة'),
+            ('4', 'الانضمام للمجموعة', 'انضم تلقائياً لمجموعة من 49 عضواً في فئتك'),
+            ('5', 'السداد اليومي', 'التزام بالسداد اليومي لتحافظ على هويتك'),
+            ('6', 'السحب الأسبوعي', 'ادخل السحب الأسبوعي بشرط الالتزام الكامل'),
+            ('7', 'الجوائز التحفيزية', 'نافس على جوائز النخبة والمزايا الحصرية')
+            ] %}
+            {% for num, title, desc in steps %}
+            <div class="bg-card p-8 rounded-[2rem] border border-white/5 hover:border-[var(--primary)] transition-all group relative overflow-hidden">
+                <div class="gold-text text-5xl font-black mb-4 opacity-30 group-hover:opacity-100 transition-opacity">{{ num }}</div>
+                <h3 class="text-xl font-bold mb-2 text-white">{{ title }}</h3>
+                <p class="text-sm greenish-white opacity-60">{{ desc }}</p>
+                <div class="absolute -bottom-4 -right-4 w-20 h-20 bg-[var(--primary)] opacity-5 rounded-full group-hover:scale-150 transition-transform"></div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <!-- تبويب الفئات -->
+    <section id="content-categories" class="tab-content px-6 py-20 max-w-6xl mx-auto">
+        <div class="text-center mb-16">
+            <p class="gold-text text-sm font-bold mb-2">الفئات الرسمية</p>
+            <h2 class="text-4xl font-extrabold mb-4 text-white">اختر طموحك المالي</h2>
+            <p class="greenish-white text-lg">خمس فئات مصممة لكل مستوى ادخاري . من البداية حتى النخبة</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {% for cat in categories %}
+            <div class="bg-card p-10 rounded-[2.5rem] border border-white/5 flex flex-col items-center text-center hover:scale-[1.02] transition-all">
+                <h3 class="text-2xl font-bold mb-2 text-white">{{ cat.name }}</h3>
+                <div class="gold-text text-4xl font-black mb-1">{{ "{:,.0f}".format(cat.amount) }}</div>
+                <p class="greenish-white text-sm mb-4">( ريال يمني / يومياً )</p>
+                
+                {% if cat.prize_amount and cat.prize_amount > 0 %}
+                <div class="w-full bg-[#d4af37]/10 rounded-xl p-3 mb-6 border border-[#d4af37]/20">
+                    <p class="text-[11px] text-[#d4af37] mb-1">الجائزة المستهدفة</p>
+                    <p class="text-xl font-bold text-white">{{ "{:,.0f}".format(cat.prize_amount) }} <span class="text-xs font-normal opacity-70">ريال</span></p>
+                </div>
+                {% else %}
+                <div class="mb-6"></div>
+                {% endif %}
+
+                <p class="text-sm opacity-50 mb-8 leading-relaxed">نظام ادخاري متكامل يضمن لك الاستقرار المالي والنمو المستدام ضمن فئة {{ cat.name }}.</p>
+                <button onclick="scrollToRegistration('{{ cat.id }}')"
+                    class="w-full btn-gold">انضم الان</button>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <!-- نافذة التسجيل -->
+    <div id="registration-section" class="hidden fixed inset-0 z-[100] bg-black/95 backdrop-blur-md overflow-y-auto p-4 flex items-center justify-center">
+        <div class="max-w-xl w-full glass-panel rounded-[2rem] p-10 relative shadow-2xl border border-white/5">
+            <button onclick="closeRegistration()" class="absolute top-6 left-6 text-white/30 hover:text-white transition-colors text-2xl">&times;</button>
+            
+            {% if is_open %}
+            <div class="text-center mb-10">
+                <h2 class="text-3xl font-black gold-text mb-2">انضم إلى النخبة</h2>
+                <p class="text-xs greenish-white opacity-60">أكمل خطوات التسجيل لتبدأ رحلة الادخار الأذكى</p>
+            </div>
+
+            <form id="regForm" class="space-y-8">
+                <!-- الخطوة 1: البيانات الأساسية -->
+                <div id="reg-step-1" class="space-y-6">
+                    <div class="flex items-center gap-4 mb-8">
+                        <span class="step-circle">1</span>
+                        <div>
+                            <h3 class="gold-text font-bold text-xl">البيانات الأساسية</h3>
+                            <p class="text-[10px] opacity-40">أدخل معلوماتك الرسمية للتواصل</p>
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs greenish-white mb-2 ml-2">الاسم الرباعي</label>
+                            <input type="text" name="name" required placeholder="مثال: أحمد محمد علي عبدالله"
+                                class="input-premium">
+                        </div>
+                        <div>
+                            <label class="block text-xs greenish-white mb-2 ml-2">رقم الهاتف</label>
+                            <input type="tel" name="phone" required placeholder="05XXXXXXXX"
+                                class="input-premium">
+                        </div>
+                        <div>
+                            <label class="block text-xs greenish-white mb-2 ml-2">
+                                رقم الهوية / البطاقة
+                                <span class="opacity-40 text-[10px] mr-1">(اختياري)</span>
+                            </label>
+                            <input type="text" name="national_id" placeholder="أدخل رقم هويتك الوطنية أو البطاقة"
+                                class="input-premium">
+                        </div>
+                        <div>
+                            <label class="block text-xs greenish-white mb-2 ml-2">
+                                العنوان
+                                <span class="opacity-40 text-[10px] mr-1">(اختياري)</span>
+                            </label>
+                            <input type="text" name="address" placeholder="المدينة / الحي / الشارع"
+                                class="input-premium">
+                        </div>
+                        <div>
+                            <label class="block text-xs greenish-white mb-2 ml-2">
+                                البريد الإلكتروني
+                                <span class="opacity-40 text-[10px] mr-1">(اختياري)</span>
+                            </label>
+                            <input type="email" name="email" placeholder="example@email.com"
+                                class="input-premium" dir="ltr">
+                        </div>
+                        <div>
+                            <label class="block text-xs greenish-white mb-2 ml-2">كلمة المرور</label>
+                            <input type="password" name="password" required placeholder="••••••••"
+                                class="input-premium">
+                        </div>
+                    </div>
+
+                    <div class="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <input type="checkbox" id="terms_check" class="w-5 h-5 accent-[#d4af37]">
+                                <label for="terms_check" class="text-xs greenish-white cursor-pointer select-none">أوافق على شروط الانضمام</label>
+                            </div>
+                            <button type="button" onclick="showTerms()" class="text-[10px] gold-text underline hover:text-white transition-colors">عرض الشروط</button>
+                        </div>
+                    </div>
+
+                    <button type="button" onclick="goToStep(2)" class="w-full btn-gold text-lg">متابعة الاختيار</button>
+                </div>
+
+                <!-- الخطوة 2: اختيار الفئة -->
+                <div id="reg-step-2" class="hidden space-y-6">
+                    <div class="flex items-center gap-4 mb-8">
+                        <span class="step-circle">2</span>
+                        <div>
+                            <h3 class="gold-text font-bold text-xl">الفئة المالية</h3>
+                            <p class="text-[10px] opacity-40">حدد مسارك الادخاري اليومي</p>
+                        </div>
+                    </div>
+
+                    <input type="hidden" name="category_id" id="selected_cat_id">
+                    <div class="grid grid-cols-1 gap-4 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
+                        {% for cat in categories %}
+                        <div onclick="selectCategory('{{ cat.id }}', this)"
+                            class="cat-card bg-black/20 border border-white/5 p-5 rounded-2xl cursor-pointer hover:border-[#d4af37] transition-all group relative overflow-hidden">
+                            <div class="flex justify-between items-center relative z-10">
+                                <div>
+                                    <h4 class="text-white font-bold group-hover:gold-text transition-colors">{{ cat.name }}</h4>
+                                    <p class="text-[11px] gold-text opacity-80 mb-1">{{ "{:,.0f}".format(cat.amount) }} ريال / يومياً</p>
+                                    {% if cat.prize_amount and cat.prize_amount > 0 %}
+                                    <p class="text-[10px] text-white opacity-60">الجائزة المستهدفة: <span class="font-bold text-[#d4af37]">{{ "{:,.0f}".format(cat.prize_amount) }}</span> ريال</p>
+                                    {% endif %}
+                                </div>
+                                <div class="w-5 h-5 rounded-full border border-white/10 group-hover:border-[#d4af37] flex items-center justify-center transition-all">
+                                    <div class="w-2 h-2 rounded-full bg-[#d4af37] scale-0 group-hover:scale-100 transition-transform"></div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="flex gap-4 pt-4">
+                        <button type="button" onclick="goToStep(1)" class="flex-1 py-4 border border-white/10 text-white/50 rounded-xl font-bold hover:bg-white/5 transition-all">رجوع</button>
+                    </div>
+                </div>
+
+                <!-- الخطوة 3: اختيار الرقم -->
+                <div id="reg-step-3" class="hidden space-y-6">
+                    <div class="flex items-center gap-4 mb-8">
+                        <span class="step-circle">3</span>
+                        <div>
+                            <h3 class="gold-text font-bold text-xl">الهوية الرقمية</h3>
+                            <p class="text-[10px] opacity-40">رقمك الثابت طوال الدورة</p>
+                        </div>
+                    </div>
+
+                    <input type="hidden" name="number_id" id="selected_num_id">
+                    
+                    <div id="numbers-grid" class="flex flex-wrap justify-center gap-3 max-h-[300px] overflow-y-auto p-4 bg-black/20 rounded-3xl border border-white/5 custom-scrollbar">
+                        <!-- Numbers loaded via JS -->
+                    </div>
+
+                    <div class="flex gap-4 pt-4">
+                        <button type="button" onclick="goToStep(2)" class="flex-1 py-4 border border-white/10 text-white/50 rounded-xl font-bold hover:bg-white/5 transition-all">رجوع</button>
+                        <button type="submit" id="submit-btn" disabled class="flex-[2] btn-gold opacity-30 cursor-not-allowed">تأكيد وانضمام</button>
+                    </div>
+                </div>
+            </form>
+            <div id="msg" class="mt-4 text-center font-bold"></div>
+            {% else %}
+            <div class="text-center py-10">
+                <p class="text-xl font-bold gold-text">عذراً، التسجيل مغلق حالياً.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        function goToStep(step) {
+            if (step >= 2) {
+                const name = document.querySelector('input[name="name"]').value;
+                const phone = document.querySelector('input[name="phone"]').value;
+                const pwd = document.querySelector('input[name="password"]').value;
+                const terms = document.getElementById('terms_check').checked;
+                
+                if (!name || name.trim() === '') {
+                    alert('يرجى كتابة الاسم أولاً');
+                    return;
+                }
+                if (!phone || phone.trim().length < 9) {
+                    alert('رقم الهاتف ناقص أو غير صحيح، يجب أن يتكون من 9 أرقام على الأقل.');
+                    return;
+                }
+                if (!pwd || pwd.trim().length < 6) {
+                    alert('كلمة المرور قصيرة جداً، يجب أن تتكون من 6 خانات على الأقل.');
+                    return;
+                }
+                if (!terms) {
+                    alert('يجب الموافقة على شروط الانضمام للمتابعة');
+                    return;
+                }
+            }
+            if (step === 3) {
+                const catId = document.getElementById('selected_cat_id').value;
+                if (!catId) {
+                    alert('يرجى اختيار الفئة أولاً');
+                    return;
+                }
+            }
+            document.getElementById('reg-step-1').classList.toggle('hidden', step !== 1);
+            document.getElementById('reg-step-2').classList.toggle('hidden', step !== 2);
+            document.getElementById('reg-step-3').classList.toggle('hidden', step !== 3);
+        }
+
+        function selectCategory(id, element) {
+            document.getElementById('selected_cat_id').value = id;
+            document.querySelectorAll('.cat-card').forEach(c => c.classList.remove('border-[#d4af37]', 'bg-[#d4af37]/10'));
+            element.classList.add('border-[#d4af37]', 'bg-[#d4af37]/10');
+            loadNumbersGrid(id);
+            setTimeout(() => goToStep(3), 300);
+        }
+
+        async function loadNumbersGrid(catId) {
+            const grid = document.getElementById('numbers-grid');
+            grid.innerHTML = '<div class="w-full text-center py-10 gold-text text-xs">جاري جلب هوياتك المتاحة...</div>';
+            
+            try {
+                const res = await fetch('/api/numbers/' + catId);
+                const data = await res.json();
+                grid.innerHTML = '';
+                
+                if (data.length === 0) {
+                    grid.innerHTML = '<div class="w-full text-center py-10 text-red-500 text-xs">عذراً، لا توجد أرقام متاحة في هذه الفئة.</div>';
+                    return;
+                }
+
+                data.forEach(n => {
+                    const circle = document.createElement('div');
+                    circle.className = 'num-circle flex-none w-10 h-10 rounded-full border border-white/10 flex items-center justify-center gold-text cursor-pointer hover:border-[#d4af37] hover:bg-[#d4af37]/10 transition-all text-xs font-bold';
+                    circle.innerText = n.number;
+                    circle.onclick = () => {
+                        document.getElementById('selected_num_id').value = n.id;
+                        document.querySelectorAll('.num-circle').forEach(el => el.classList.remove('bg-[#d4af37]', 'text-[#052109]', 'border-[#d4af37]'));
+                        circle.classList.add('bg-[#d4af37]', 'text-[#052109]', 'border-[#d4af37]');
+                        
+                        const submitBtn = document.getElementById('submit-btn');
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove('opacity-30', 'cursor-not-allowed');
+                        submitBtn.classList.add('btn-gold');
+                    };
+                    grid.appendChild(circle);
+                });
+            } catch (e) {
+                grid.innerHTML = '<div class="w-full text-center py-10 text-red-500 text-xs">حدث خطأ فني أثناء التحميل.</div>';
+            }
+        }
+
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.querySelectorAll('nav button').forEach(b => b.classList.remove('active-tab'));
+            
+            if (tabId === 'home') {
+                document.getElementById('content-home').classList.remove('hidden');
+                document.getElementById('content-concept').classList.remove('hidden');
+                document.getElementById('content-discipline').classList.remove('hidden');
+                document.getElementById('content-how-it-works').classList.remove('hidden');
+                document.getElementById('content-categories').classList.remove('hidden');
+            } else {
+                document.getElementById('content-' + tabId).classList.remove('hidden');
+            }
+            
+            document.getElementById('tab-' + tabId).classList.add('active-tab');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        function scrollToRegistration(catId) {
+            document.getElementById('registration-section').classList.remove('hidden');
+            goToStep(1);
+            if (catId) {
+                document.getElementById('selected_cat_id').value = catId;
+                loadNumbersGrid(catId);
+                // We don't jump to step 3 automatically to let user see their name/phone step 1 first
+            }
+        }
+        function closeRegistration() { document.getElementById('registration-section').classList.add('hidden'); }
+        function showTerms() { document.getElementById('terms-modal').classList.remove('hidden'); }
+        function hideTerms() { document.getElementById('terms-modal').classList.add('hidden'); }
+        document.getElementById('regForm')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const submitBtn = document.getElementById('submit-btn');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="flex items-center justify-center gap-2">جاري التسجيل... <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg></span>';
+            const formData = new FormData(e.target);
+            try {
+                const res = await fetch('/register', { method: 'POST', body: formData });
+                const data = await res.json();
+                if (res.ok) {
+                    // عرض شاشة النجاح مع بيانات التسجيل
+                    const catName = document.querySelector('.cat-card.border-\\[\\#d4af37\\]')?.querySelector('h4')?.innerText || document.querySelector('.cat-card.border-\\[\\#d4af37\\] h4')?.innerText || '---';
+                    const numEl = document.querySelector('.num-circle.bg-\\[\\#d4af37\\]');
+                    const numText = numEl ? numEl.innerText : '---';
+                    const subName = document.querySelector('input[name="name"]').value;
+                    showSuccessScreen(subName, catName, numText);
+                } else {
+                    const msg = document.getElementById('msg');
+                    msg.innerText = data.message;
+                    msg.style.color = '#ef4444';
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = 'تأكيد وانضمام';
+                }
+            } catch (e) {
+                alert('حدث خطأ فني، يرجى المحاولة لاحقاً');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = 'تأكيد وانضمام';
+            }
+        });
+
+        function showSuccessScreen(name, category, number) {
+            // إخفاء نافذة التسجيل الحالية وعرض شاشة النجاح
+            const regSection = document.getElementById('registration-section');
+            regSection.innerHTML = `
+            <div class="max-w-xl w-full glass-panel rounded-[2rem] p-10 relative shadow-2xl border border-white/5 text-center animate-fade-in">
+                <!-- دائرة النجاح -->
+                <div class="relative mx-auto mb-8" style="width:100px;height:100px;">
+                    <div class="absolute inset-0 rounded-full bg-green-500/10 animate-ping" style="animation-duration:2s;"></div>
+                    <div class="absolute inset-0 rounded-full bg-green-500/20 flex items-center justify-center">
+                        <svg class="w-14 h-14 text-green-400 success-checkmark" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <circle cx="12" cy="12" r="10" stroke-width="1.5" class="opacity-30"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M7 13l3 3 7-7" class="check-path"/>
+                        </svg>
+                    </div>
+                </div>
+
+                <h2 class="text-3xl font-black text-white mb-2">تم التسجيل بنجاح! 🎉</h2>
+                <p class="greenish-white text-sm opacity-70 mb-8">لقد انضممت رسمياً إلى منظومة هكبة المليون</p>
+
+                <!-- بطاقة معلومات الاشتراك -->
+                <div class="bg-black/30 rounded-2xl border border-white/10 p-6 mb-8 text-right space-y-4">
+                    <div class="flex justify-between items-center border-b border-white/5 pb-3">
+                        <span class="text-white/40 text-xs">الاسم</span>
+                        <span class="text-white font-bold">${name}</span>
+                    </div>
+                    <div class="flex justify-between items-center border-b border-white/5 pb-3">
+                        <span class="text-white/40 text-xs">الفئة المختارة</span>
+                        <span class="gold-text font-bold">${category}</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-white/40 text-xs">رقمك الدائم</span>
+                        <span class="w-10 h-10 rounded-full bg-gradient-to-tr from-[var(--primary)] to-[#facc15] text-[var(--bg-dark)] font-black flex items-center justify-center text-lg shadow-lg">${number}</span>
+                    </div>
+                </div>
+
+                <!-- رسالة الانتظار -->
+                <div class="bg-amber-900/20 border border-amber-500/20 rounded-xl p-4 mb-8">
+                    <div class="flex items-start gap-3 text-right">
+                        <svg class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <p class="text-amber-300 text-xs leading-relaxed">طلبك قيد المراجعة من الإدارة. بادر بتسديد أول قسط عبر التواصل مع الإدارة ليتم قبولك في المنظومة.</p>
+                    </div>
+                </div>
+
+                <!-- أزرار الإجراء -->
+                <div class="flex flex-col gap-3">
+                    <a href="/login" class="btn-gold block py-3.5 text-base font-bold rounded-xl">
+                        دخول حسابي
+                    </a>
+                    <button onclick="goHome()" class="py-3.5 border border-white/10 text-white/50 rounded-xl font-bold hover:bg-white/5 transition-all text-sm">
+                        العودة للصفحة الرئيسية <span id="home-countdown" class="gold-text font-black">(10)</span>
+                    </button>
+                </div>
+            </div>
+            <style>
+                .check-path {
+                    stroke-dasharray: 30;
+                    stroke-dashoffset: 30;
+                    animation: draw-check 0.6s ease-out 0.3s forwards;
+                }
+                @keyframes draw-check {
+                    to { stroke-dashoffset: 0; }
+                }
+            </style>`;
+            startHomeCountdown();
+        }
+
+        function goHome() {
+            closeRegistration();
+            document.getElementById('registration-section').classList.add('hidden');
+            showTab('home');
+        }
+
+        let countdownTimer = null;
+        function startHomeCountdown() {
+            let count = 10;
+            countdownTimer = setInterval(() => {
+                count--;
+                const el = document.getElementById('home-countdown');
+                if (el) el.innerText = '(' + count + ')';
+                if (count <= 0) {
+                    clearInterval(countdownTimer);
+                    goHome();
+                }
+            }, 1000);
+        }
+
+        // Initialize view
+        showTab('home');
+    </script>
+    <!-- نافذة الشروط -->
+    <div id="terms-modal" class="hidden fixed inset-0 z-[110] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6">
+        <div class="glass-panel border border-white/5 p-10 rounded-[2.5rem] max-w-lg w-full relative shadow-2xl">
+            <button onclick="hideTerms()" class="absolute top-6 left-6 text-white/30 hover:text-white transition-colors text-2xl">&times;</button>
+            <div class="text-center mb-8">
+                <h3 class="gold-text font-black text-2xl mb-2">ميثاق الانضمام</h3>
+                <p class="text-[10px] greenish-white opacity-40 uppercase tracking-widest">قواعد العضوية في هكبة المليون</p>
+            </div>
+            
+            <div class="text-xs greenish-white space-y-4 max-h-[350px] overflow-y-auto custom-scrollbar leading-relaxed px-2">
+                <div class="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p class="gold-text font-bold mb-1">1. الالتزام المالي</p>
+                    <p class="opacity-70">يجب الالتزام بالسداد اليومي أو الأسبوعي حسب الفئة المختارة لضمان استمرارية العضوية.</p>
+                </div>
+                <div class="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p class="gold-text font-bold mb-1">2. أهلية الجوائز</p>
+                    <p class="opacity-70">أي تأخير في السداد يؤثر مباشرة على أهليتك للدخول في السحوبات والجوائز التحفيزية.</p>
+                </div>
+                <div class="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p class="gold-text font-bold mb-1">3. الهوية الرقمية</p>
+                    <p class="opacity-70">رقم العضوية (1-49) ثابت ولا يمكن استبداله أو التنازل عنه خلال الدورة المالية.</p>
+                </div>
+                <div class="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p class="gold-text font-bold mb-1">4. الشفافية والعدالة</p>
+                    <p class="opacity-70">نظام القرعة آلي بالكامل ويخضع لمعايير صارمة تكافئ الملتزمين وتنبّه المتأخرين.</p>
+                </div>
+                <div class="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p class="gold-text font-bold mb-1">5. الموافقة التنظيمية</p>
+                    <p class="opacity-70">الانضمام للمنصة يعني الموافقة الكاملة على نظامها التشغيلي وقواعدها المنصوص عليها.</p>
+                </div>
+            </div>
+            <button onclick="hideTerms()" class="w-full mt-10 btn-gold">أقر وأوافق</button>
+        </div>
+    </div>
+</body>
+
+</html>
