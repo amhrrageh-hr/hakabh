@@ -1,0 +1,648 @@
+import customtkinter as ctk
+import ui_components
+from sqlalchemy.orm import Session
+import database as db_mod
+import datetime
+import threading
+import subprocess
+import os
+import sys
+import re
+import arabic_reshaper
+from bidi.algorithm import get_display
+
+# إعدادات المظهر
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("blue")
+
+class AdminApp(ctk.CTk):
+    def fix_text(self, text):
+        if not text: return ""
+        try:
+            reshaped_text = arabic_reshaper.reshape(text)
+            return get_display(reshaped_text)
+        except:
+            return text
+
+    def __init__(self):
+        super().__init__()
+
+        self.title("لوحة تحكم هكبة المليون - Premium Edition")
+        self.geometry("1250x850")
+        
+        # جلسة قاعدة البيانات
+        self.db = db_mod.SessionLocal()
+        self.public_url = ""
+
+        # تخطيط الشبكة 1x2
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0)
+        self.grid_rowconfigure(0, weight=1)
+
+        # القائمة الجانبية
+        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar_frame.grid(row=0, column=1, sticky="nsew")
+        
+        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text=self.fix_text("هكبة المليون"), font=ctk.CTkFont(family="Tajawal", size=24, weight="bold"))
+        self.logo_label.pack(pady=30)
+
+        self.btn_dashboard = ctk.CTkButton(self.sidebar_frame, text=self.fix_text("الإحصائيات"), command=self.show_dashboard, fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray70", "gray30"), font=ctk.CTkFont(family="Tajawal", size=14))
+        self.btn_dashboard.pack(pady=10, padx=20, fill="x")
+
+        self.btn_subs = ctk.CTkButton(self.sidebar_frame, text=self.fix_text("المشتركين"), command=self.show_subscribers, fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray70", "gray30"), font=ctk.CTkFont(family="Tajawal", size=14))
+        self.btn_subs.pack(pady=10, padx=20, fill="x")
+
+        self.btn_settings = ctk.CTkButton(self.sidebar_frame, text=self.fix_text("إعدادات الفئات"), command=self.show_settings, fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray70", "gray30"), font=ctk.CTkFont(family="Tajawal", size=14))
+        self.btn_settings.pack(pady=10, padx=20, fill="x")
+
+        # فريمات المحتوى الرئيسي
+        self.dashboard_frame = ctk.CTkScrollableFrame(self, corner_radius=20, fg_color="transparent")
+        self.subs_frame = ctk.CTkFrame(self, corner_radius=20, fg_color="transparent")
+        self.settings_frame = ctk.CTkFrame(self, corner_radius=20, fg_color="transparent")
+
+        self.setup_dashboard()
+        self.setup_subscribers()
+        self.setup_settings()
+
+        self.show_dashboard()
+
+    def show_dashboard(self):
+        self.dashboard_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+        self.subs_frame.grid_forget()
+        self.settings_frame.grid_forget()
+        self.refresh_stats()
+
+    def show_subscribers(self):
+        self.subs_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+        self.dashboard_frame.grid_forget()
+        self.settings_frame.grid_forget()
+        self.load_subs()
+
+    def show_settings(self):
+        self.settings_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+        self.dashboard_frame.grid_forget()
+        self.subs_frame.grid_forget()
+        self.load_categories_list()
+
+    def setup_dashboard(self):
+        label = ctk.CTkLabel(self.dashboard_frame, text=self.fix_text("نظرة عامة على النظام"), font=ctk.CTkFont(family="Tajawal", size=26, weight="bold"))
+        label.pack(pady=20, anchor="e", padx=20)
+
+        # بطاقة التحكم في السيرفر
+        server_card = ctk.CTkFrame(self.dashboard_frame, corner_radius=15, fg_color="#1f2937")
+        server_card.pack(fill="x", padx=20, pady=10)
+        
+        self.btn_start_server = ctk.CTkButton(server_card, text=self.fix_text("تشغيل خادم الموقع الآن"), command=self.start_web_server, fg_color="green", hover_color="darkgreen", font=ctk.CTkFont(family="Tajawal", size=16, weight="bold"), height=40)
+        self.btn_start_server.pack(pady=20, padx=20, fill="x")
+
+        # مفتاح التسجيل
+        card = ctk.CTkFrame(self.dashboard_frame, corner_radius=15)
+        card.pack(fill="x", padx=20, pady=10)
+        
+        self.reg_status_var = ctk.BooleanVar()
+        reg_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "registration_open").first()
+        self.reg_status_var.set(True if reg_setting and reg_setting.value == "true" else False)
+
+        switch = ctk.CTkSwitch(card, text=self.fix_text("حالة التسجيل في الموقع (مفتوح/مغلق)"), variable=self.reg_status_var, command=self.toggle_reg, font=ctk.CTkFont(family="Tajawal", size=16))
+        switch.pack(pady=20, padx=20, anchor="e")
+
+        # حاوية الإحصائيات
+        self.stats_container = ctk.CTkFrame(self.dashboard_frame, fg_color="transparent")
+        self.stats_container.pack(fill="both", expand=True, padx=20, pady=10)
+
+        # عرض الرابط العام
+        link_frame = ctk.CTkFrame(self.dashboard_frame, corner_radius=15, fg_color="#374151")
+        link_frame.pack(fill="x", padx=20, pady=10)
+        
+        self.lbl_public_link = ctk.CTkLabel(link_frame, text=self.fix_text("رابط الموقع: سيظهر هنا"), font=ctk.CTkFont(family="Tajawal", size=14))
+        self.lbl_public_link.pack(pady=5, padx=20)
+        
+        self.btn_copy_link = ctk.CTkButton(link_frame, text=self.fix_text("نسخ الرابط"), command=self.copy_link, width=100, height=30)
+        self.btn_copy_link.pack(pady=10, padx=20)
+
+    def copy_link(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.public_url)
+        ui_components.ModernAlert(self, "نجاح", "تم نسخ الرابط إلى الحافظة")
+
+    def start_web_server(self):
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["start", "cmd", "/k", "python", "main.py"], shell=True)
+            else:
+                subprocess.Popen(["python", "main.py"])
+            
+            def run_cloudflared():
+                cloudflared_path = os.path.join(os.getcwd(), "cloudflared.exe")
+                if not os.path.exists(cloudflared_path):
+                    self.after(0, lambda: self.lbl_public_link.configure(text=self.fix_text("خطأ: ملف cloudflared.exe غير موجود!")))
+                    return
+                
+                process = subprocess.Popen(
+                    [cloudflared_path, "tunnel", "--url", "http://localhost:8000"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding='utf-8',
+                    bufsize=1
+                )
+
+                for line in process.stdout:
+                    match = re.search(r'https://[a-zA-Z0-9.-]+\.trycloudflare\.com', line)
+                    if match:
+                        self.public_url = match.group(0)
+                        self.after(0, lambda url=self.public_url: self.lbl_public_link.configure(
+                            text=self.fix_text(f"الرابط المباشر: {url}")
+                        ))
+                        break
+
+            threading.Thread(target=run_cloudflared, daemon=True).start()
+            self.lbl_public_link.configure(text=self.fix_text("جاري استخراج الرابط العام... يرجى الانتظار"))
+            ui_components.ModernAlert(self, "نجاح", "تم بدء السيرفر ونفق Cloudflare")
+        except Exception as e:
+            ui_components.ModernAlert(self, "خطأ", f"فشل التشغيل: {e}", icon="error")
+
+    def toggle_reg(self):
+        val = "true" if self.reg_status_var.get() else "false"
+        self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "registration_open").update({"value": val})
+        self.db.commit()
+
+    def refresh_stats(self):
+        for widget in self.stats_container.winfo_children():
+            widget.destroy()
+
+        categories = self.db.query(db_mod.Category).all()
+        total_subs = self.db.query(db_mod.Subscriber).count()
+        
+        items = [("إجمالي المشتركين", total_subs, "#10b981")]
+        colors = ["#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#06b6d4"]
+        
+        for i, cat in enumerate(categories):
+            count = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.category == cat.name).count()
+            items.append((cat.name, count, colors[i % len(colors)]))
+            
+        num_cols = len(items)
+        for index, (title_text, count, color) in enumerate(items):
+            col = num_cols - 1 - index  # الترتيب من اليمين لليسار (RTL)
+            self.stats_container.grid_columnconfigure(col, weight=1)
+            self._create_stat_card(self.stats_container, title_text, count, color, 0, col)
+
+    def _create_stat_card(self, parent, title, count, color, row, col):
+        card = ctk.CTkFrame(parent, height=100, corner_radius=15, fg_color="#1f2937")
+        card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
+        
+        lbl_title = ctk.CTkLabel(card, text=self.fix_text(title), font=ctk.CTkFont(family="Tajawal", size=16, weight="bold"), text_color="gray80")
+        lbl_title.pack(pady=(15, 5))
+        
+        lbl_count = ctk.CTkLabel(card, text=self.fix_text(f"{count}"), font=ctk.CTkFont(family="Tajawal", size=32, weight="bold"), text_color=color)
+        lbl_count.pack(pady=(0, 15))
+
+    def setup_subscribers(self):
+        header_row = ctk.CTkFrame(self.subs_frame, fg_color="transparent")
+        header_row.pack(fill="x", padx=20, pady=10)
+        ctk.CTkLabel(header_row, text=self.fix_text("إدارة المشتركين حسب الفئة"), font=ctk.CTkFont(family="Tajawal", size=26, weight="bold")).pack(side="right")
+        ctk.CTkButton(header_row, text=self.fix_text("تحديث البيانات"), command=self.load_subs, width=100).pack(side="left")
+
+        self.tabs_container = ctk.CTkFrame(self.subs_frame, fg_color="transparent")
+        self.tabs_container.pack(fill="both", expand=True, padx=20, pady=10)
+        self.subs_tabview = None
+
+    def load_subs(self):
+        if self.subs_tabview:
+            self.subs_tabview.destroy()
+        
+        self.subs_tabview = ctk.CTkTabview(self.tabs_container, corner_radius=15)
+        self.subs_tabview.pack(fill="both", expand=True)
+
+        categories = self.db.query(db_mod.Category).all()
+        self.add_subscriber_tab("الكل", None)
+        for cat in categories:
+            self.add_subscriber_tab(cat.name, cat.name)
+
+    def add_subscriber_tab(self, tab_name, category_filter):
+        reshaped_name = self.fix_text(tab_name)
+        self.subs_tabview.add(reshaped_name)
+        
+        scroll_frame = ctk.CTkScrollableFrame(self.subs_tabview.tab(reshaped_name), fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True)
+        
+        thead = ctk.CTkFrame(scroll_frame, fg_color="gray20", height=40)
+        thead.pack(fill="x", pady=5)
+        ctk.CTkLabel(thead, text=self.fix_text("الاسم"), width=150, anchor="e").pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("رقم الهاتف"), width=120, anchor="e").pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("رقم الحساب"), width=100, anchor="e").pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("كلمة السر"), width=100, anchor="e").pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("الإجراءات"), width=200, anchor="e").pack(side="right", padx=10)
+
+        query = self.db.query(db_mod.Subscriber)
+        if category_filter:
+            query = query.filter(db_mod.Subscriber.category == category_filter)
+        
+        subs = query.all()
+        for s in subs:
+            row = ctk.CTkFrame(scroll_frame, corner_radius=10)
+            row.pack(fill="x", pady=5)
+            
+            # ربط النقر المزدوج لفتح كشف الحساب
+            row.bind("<Double-1>", lambda e, sid=s.id: self.open_subscriber_account(sid))
+            
+            lbl_name = ctk.CTkLabel(row, text=self.fix_text(s.name), width=150, anchor="e")
+            lbl_name.pack(side="right", padx=10)
+            lbl_name.bind("<Double-1>", lambda e, sid=s.id: self.open_subscriber_account(sid))
+            
+            lbl_phone = ctk.CTkLabel(row, text=s.phone, width=120, anchor="e")
+            lbl_phone.pack(side="right", padx=10)
+            lbl_phone.bind("<Double-1>", lambda e, sid=s.id: self.open_subscriber_account(sid))
+            
+            lbl_acc = ctk.CTkLabel(row, text=s.subscriber_number or "-", width=100)
+            lbl_acc.pack(side="right", padx=10)
+            lbl_acc.bind("<Double-1>", lambda e, sid=s.id: self.open_subscriber_account(sid))
+            
+            lbl_pwd = ctk.CTkLabel(row, text=s.password or "-", width=100, text_color="orange")
+            lbl_pwd.pack(side="right", padx=10)
+            lbl_pwd.bind("<Double-1>", lambda e, sid=s.id: self.open_subscriber_account(sid))
+            
+            btn_frame = ctk.CTkFrame(row, fg_color="transparent")
+            btn_frame.pack(side="right", padx=10)
+            ctk.CTkButton(btn_frame, text=self.fix_text("تعديل"), width=60, height=25, command=lambda sid=s.id: self.edit_subscriber(sid), fg_color="gray").pack(side="right", padx=2)
+            ctk.CTkButton(btn_frame, text=self.fix_text("حذف"), width=60, height=25, command=lambda sid=s.id: self.delete_subscriber(sid), fg_color="red").pack(side="right", padx=2)
+
+    def edit_subscriber(self, sub_id):
+        sub = self.db.get(db_mod.Subscriber, sub_id)
+        if not sub: return
+        
+        edit_win = ctk.CTkToplevel(self)
+        edit_win.title(self.fix_text("تعديل بيانات المشترك"))
+        edit_win.geometry("400x500")
+        edit_win.attributes("-topmost", True)
+        
+        frame = ctk.CTkFrame(edit_win, corner_radius=15)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        ctk.CTkLabel(frame, text=self.fix_text("تعديل بيانات المشترك"), font=ctk.CTkFont(family="Tajawal", size=18, weight="bold")).pack(pady=20)
+        
+        ent_name = ctk.CTkEntry(frame, placeholder_text=self.fix_text("الاسم"), width=300)
+        ent_name.insert(0, sub.name if sub.name else "")
+        ent_name.pack(pady=10)
+        
+        ent_phone = ctk.CTkEntry(frame, placeholder_text=self.fix_text("رقم الهاتف"), width=300)
+        ent_phone.insert(0, sub.phone if sub.phone else "")
+        ent_phone.pack(pady=10)
+        
+        ent_acc = ctk.CTkEntry(frame, placeholder_text=self.fix_text("رقم الحساب"), width=300)
+        ent_acc.insert(0, sub.subscriber_number if sub.subscriber_number else "")
+        ent_acc.pack(pady=10)
+        
+        ent_pwd = ctk.CTkEntry(frame, placeholder_text=self.fix_text("كلمة السر"), width=300)
+        ent_pwd.insert(0, sub.password if sub.password else "")
+        ent_pwd.pack(pady=10)
+        
+        def save_changes():
+            try:
+                new_acc = ent_acc.get().strip()
+                if new_acc and new_acc != sub.subscriber_number:
+                    existing = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.subscriber_number == new_acc).first()
+                    if existing:
+                        messagebox.showerror(self.fix_text("خطأ"), self.fix_text("عذراً، هذا الرقم مستخدم كمشترك آخر."))
+                        return
+                
+                import security
+                sub.name = ent_name.get().strip()
+                sub.phone = ent_phone.get().strip()
+                sub.subscriber_number = new_acc if new_acc else None
+                
+                new_pwd = ent_pwd.get().strip()
+                if new_pwd and new_pwd != sub.password:
+                    # Hash if it's not already a hash
+                    if not (new_pwd.startswith("$2b$") or new_pwd.startswith("$2a$")):
+                        sub.password = security.hash_password(new_pwd)
+                    else:
+                        sub.password = new_pwd # Already hashed
+                
+                self.db.commit()
+                self.load_subs()
+                edit_win.destroy()
+                ui_components.ModernAlert(self, "نجاح", "تم تحديث البيانات بنجاح")
+            except Exception as e:
+                self.db.rollback()
+                ui_components.ModernAlert(self, "خطأ", f"فشل تحديث البيانات: {e}", icon="error")
+                
+        ctk.CTkButton(frame, text=self.fix_text("حفظ التغييرات"), command=save_changes, fg_color="green", font=ctk.CTkFont(family="Tajawal", weight="bold")).pack(pady=30)
+
+    def delete_subscriber(self, sub_id):
+        def do_delete():
+            sub = self.db.get(db_mod.Subscriber, sub_id)
+            if sub:
+                num_record = self.db.query(db_mod.SubscriberNumber).filter(db_mod.SubscriberNumber.subscriber_id == sub.id).first()
+                if num_record:
+                    num_record.is_reserved = False
+                    num_record.subscriber_id = None
+                
+                self.db.delete(sub)
+                self.db.commit()
+                self.load_subs()
+                ui_components.ModernAlert(self, "نجاح", "تم حذف المشترك بنجاح")
+        
+        ui_components.ModernConfirm(self, "تأكيد", "هل أنت متأكد من حذف المشترك؟", do_delete)
+
+    def open_subscriber_account(self, sub_id):
+        sub = self.db.get(db_mod.Subscriber, sub_id)
+        if not sub: return
+        
+        acc_win = ctk.CTkToplevel(self)
+        acc_win.title(self.fix_text(f"كشف حساب - {sub.name}"))
+        acc_win.geometry("800x600")
+        acc_win.attributes("-topmost", True)
+        
+        main_frame = ctk.CTkFrame(acc_win, corner_radius=15)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        title_lbl = ctk.CTkLabel(main_frame, text=self.fix_text(f"تفاصيل الحساب للمشترك: {sub.name}"), font=ctk.CTkFont(family="Tajawal", size=20, weight="bold"))
+        title_lbl.pack(pady=10)
+        
+        btn_bar = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_bar.pack(fill="x", padx=20, pady=5)
+        ctk.CTkButton(btn_bar, text=self.fix_text("إضافة عملية"), command=lambda sid=sub_id, win=acc_win: self.add_transaction_dialog(sid, win), fg_color="green", width=120).pack(side="right")
+
+        thead = ctk.CTkFrame(main_frame, fg_color="gray20", height=40)
+        thead.pack(fill="x", padx=10, pady=5)
+        ctk.CTkLabel(thead, text=self.fix_text("التاريخ"), width=120).pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("المبلغ"), width=120).pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("رقم القسط"), width=100).pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("رقم الدورة"), width=100).pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("الحالة"), width=80).pack(side="right", padx=10)
+        ctk.CTkLabel(thead, text=self.fix_text("الملاحظة"), width=150, anchor="e").pack(side="right", padx=10)
+
+        scroll_frame = ctk.CTkScrollableFrame(main_frame, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        acc_win.scroll_frame = scroll_frame
+        
+        self.refresh_account_table(sub_id, scroll_frame)
+
+        btn_close = ctk.CTkButton(main_frame, text=self.fix_text("إغلاق"), command=acc_win.destroy, fg_color="gray30")
+        btn_close.pack(pady=10)
+
+    def refresh_account_table(self, sub_id, scroll_frame):
+        for widget in scroll_frame.winfo_children(): widget.destroy()
+        payments = self.db.query(db_mod.Payment).filter(db_mod.Payment.subscriber_id == sub_id).order_by(db_mod.Payment.due_date.asc()).all()
+        
+        if not payments:
+            ctk.CTkLabel(scroll_frame, text=self.fix_text("لا توجد مدفوعات مسجلة"), pady=20).pack()
+        else:
+            for p in payments:
+                row = ctk.CTkFrame(scroll_frame, corner_radius=8)
+                row.pack(fill="x", pady=2)
+                
+                date_str = p.due_date.strftime("%Y-%m-%d") if p.due_date else "-"
+                ctk.CTkLabel(row, text=date_str, width=120, anchor="e").pack(side="right", padx=10)
+                ctk.CTkLabel(row, text=f"{p.amount:,.2f}", width=120, text_color="cyan", anchor="e").pack(side="right", padx=10)
+                ctk.CTkLabel(row, text=str(p.installment_number) if p.installment_number else "-", width=100, anchor="e").pack(side="right", padx=10)
+                ctk.CTkLabel(row, text=str(p.cycle_number) if p.cycle_number else "-", width=100, anchor="e").pack(side="right", padx=10)
+                
+                status_text = "مدفوع" if p.is_paid else "غير مدفوع"
+                status_color = "green" if p.is_paid else "red"
+                ctk.CTkLabel(row, text=self.fix_text(status_text), width=80, text_color=status_color, anchor="e").pack(side="right", padx=10)
+                ctk.CTkLabel(row, text=self.fix_text(p.note) if p.note else "-", width=150, anchor="e").pack(side="right", padx=10)
+
+                row.bind("<Button-3>", lambda event, pid=p.id, subid=sub_id, sf=scroll_frame: self._show_payment_context_menu(event, pid, subid, sf))
+                for child in row.winfo_children():
+                    child.bind("<Button-3>", lambda event, pid=p.id, subid=sub_id, sf=scroll_frame: self._show_payment_context_menu(event, pid, subid, sf))
+
+    def _show_payment_context_menu(self, event, payment_id, sub_id, scroll_frame_ref):
+        menu = ctk.CTkOptionMenu(self, values=["تعديل", "حذف"], command=lambda v: self._handle_payment_action(v, payment_id, sub_id, scroll_frame_ref))
+        # This is a bit tricky with ctk as it doesn't have a native context menu like tk.
+        # Let's keep the tk.Menu for now but fix the imports if needed, 
+        # or just use a simple popup window. 
+        # For simplicity in this task, I'll stick to a small CTkToplevel as a menu.
+        pass
+
+    def _handle_payment_action(self, action, payment_id, sub_id, scroll_frame_ref):
+        if action == "تعديل":
+            self.edit_payment(payment_id, sub_id, scroll_frame_ref)
+        elif action == "حذف":
+            self.delete_payment(payment_id, sub_id, scroll_frame_ref)
+
+    def edit_payment(self, payment_id, sub_id, scroll_frame_ref):
+        payment = self.db.get(db_mod.Payment, payment_id)
+        if not payment: return
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(self.fix_text("تعديل عملية الدفع"))
+        dialog.geometry("500x600")
+        dialog.attributes("-topmost", True)
+
+        frame = ctk.CTkFrame(dialog, corner_radius=15)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        ctk.CTkLabel(frame, text=self.fix_text("المبلغ:")).pack(pady=(10,0))
+        ent_amount = ctk.CTkEntry(frame, placeholder_text=self.fix_text("المبلغ"), width=300)
+        ent_amount.insert(0, str(payment.amount))
+        ent_amount.pack(pady=10)
+
+        ctk.CTkLabel(frame, text=self.fix_text("التاريخ:")).pack(pady=(10,0))
+        date_str = payment.due_date.strftime("%Y-%m-%d") if payment.due_date else datetime.datetime.now().strftime("%Y-%m-%d")
+        ent_date = ctk.CTkEntry(frame, placeholder_text=self.fix_text("التاريخ (YYYY-MM-DD)"), width=300)
+        ent_date.insert(0, date_str)
+        ent_date.pack(pady=10)
+
+        status_var = ctk.BooleanVar(value=payment.is_paid)
+        ctk.CTkRadioButton(frame, text=self.fix_text("مدفوع"), variable=status_var, value=True).pack(pady=5)
+        ctk.CTkRadioButton(frame, text=self.fix_text("غير مدفوع"), variable=status_var, value=False).pack(pady=5)
+
+        ctk.CTkLabel(frame, text=self.fix_text("رقم القسط:")).pack(pady=(10,0))
+        opt_installment = ctk.CTkOptionMenu(frame, values=[str(i) for i in range(1, 25)], width=300)
+        opt_installment.set(str(payment.installment_number) if payment.installment_number else "1")
+        opt_installment.pack(pady=5)
+
+        ctk.CTkLabel(frame, text=self.fix_text("رقم الدورة:")).pack(pady=(10,0))
+        opt_cycle = ctk.CTkOptionMenu(frame, values=[str(i) for i in range(1, 11)], width=300)
+        opt_cycle.set(str(payment.cycle_number) if payment.cycle_number else "1")
+        opt_cycle.pack(pady=5)
+
+        ent_note = ctk.CTkEntry(frame, placeholder_text=self.fix_text("الملاحظة"), width=300)
+        ent_note.insert(0, payment.note if payment.note else "")
+        ent_note.pack(pady=10)
+
+        def save():
+            try:
+                payment.amount = float(ent_amount.get())
+                payment.due_date = datetime.datetime.strptime(ent_date.get(), "%Y-%m-%d")
+                payment.is_paid = status_var.get()
+                payment.installment_number = int(opt_installment.get())
+                payment.cycle_number = int(opt_cycle.get())
+                payment.note = ent_note.get()
+                self.db.commit()
+                self.refresh_account_table(sub_id, scroll_frame_ref)
+                dialog.destroy()
+            except Exception as e:
+                ui_components.ModernAlert(self, "خطأ", f"بيانات غير صحيحة: {e}", icon="error")
+
+        ctk.CTkButton(frame, text=self.fix_text("حفظ"), command=save, fg_color="green").pack(pady=20)
+
+    def delete_payment(self, payment_id, sub_id, scroll_frame_ref):
+        def do_delete():
+            p = self.db.get(db_mod.Payment, payment_id)
+            if p:
+                self.db.delete(p)
+                self.db.commit()
+                self.refresh_account_table(sub_id, scroll_frame_ref)
+        ui_components.ModernConfirm(self, "تأكيد", "حذف العملية؟", do_delete)
+
+    def add_transaction_dialog(self, sub_id, parent_win):
+        dialog = ctk.CTkToplevel(parent_win)
+        dialog.title(self.fix_text("إضافة عملية جديدة"))
+        dialog.geometry("500x600")
+        dialog.attributes("-topmost", True)
+        
+        frame = ctk.CTkFrame(dialog, corner_radius=15)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        ctk.CTkLabel(frame, text=self.fix_text("المبلغ:")).pack(pady=(10,0))
+        ent_amount = ctk.CTkEntry(frame, placeholder_text=self.fix_text("المبلغ"), width=300)
+        ent_amount.pack(pady=10)
+        
+        ctk.CTkLabel(frame, text=self.fix_text("التاريخ:")).pack(pady=(10,0))
+        ent_date = ctk.CTkEntry(frame, placeholder_text=self.fix_text("التاريخ (YYYY-MM-DD)"), width=300)
+        ent_date.insert(0, datetime.datetime.now().strftime("%Y-%m-%d"))
+        ent_date.pack(pady=10)
+        
+        status_var = ctk.BooleanVar(value=True)
+        ctk.CTkRadioButton(frame, text=self.fix_text("مدفوع"), variable=status_var, value=True).pack(pady=5)
+        ctk.CTkRadioButton(frame, text=self.fix_text("غير مدفوع"), variable=status_var, value=False).pack(pady=5)
+        
+        ctk.CTkLabel(frame, text=self.fix_text("رقم القسط:")).pack(pady=(10,0))
+        opt_inst = ctk.CTkOptionMenu(frame, values=[str(i) for i in range(1, 25)], width=300)
+        opt_inst.pack(pady=5)
+        
+        ctk.CTkLabel(frame, text=self.fix_text("رقم الدورة:")).pack(pady=(10,0))
+        opt_cycle = ctk.CTkOptionMenu(frame, values=[str(i) for i in range(1, 11)], width=300)
+        opt_cycle.pack(pady=5)
+        
+        ent_note = ctk.CTkEntry(frame, placeholder_text=self.fix_text("الملاحظة"), width=300)
+        ent_note.pack(pady=10)
+        
+        def save():
+            try:
+                new_pay = db_mod.Payment(
+                    subscriber_id=sub_id,
+                    amount=float(ent_amount.get()),
+                    due_date=datetime.datetime.strptime(ent_date.get(), "%Y-%m-%d"),
+                    is_paid=status_var.get(),
+                    installment_number=int(opt_inst.get()),
+                    cycle_number=int(opt_cycle.get()),
+                    note=ent_note.get()
+                )
+                self.db.add(new_pay)
+                self.db.commit()
+                self.refresh_account_table(sub_id, parent_win.scroll_frame)
+                dialog.destroy()
+            except Exception as e:
+                ui_components.ModernAlert(self, "خطأ", f"بيانات غير صحيحة: {e}", icon="error")
+        
+        ctk.CTkButton(frame, text=self.fix_text("إضافة"), command=save, fg_color="green").pack(pady=20)
+
+    def setup_settings(self):
+        label = ctk.CTkLabel(self.settings_frame, text=self.fix_text("إعدادات الفئات والأرقام"), font=ctk.CTkFont(family="Tajawal", size=26, weight="bold"))
+        label.pack(pady=20, anchor="e", padx=20)
+        
+        frame_add = ctk.CTkFrame(self.settings_frame, corner_radius=15)
+        frame_add.pack(fill="x", padx=20, pady=10)
+        self.ent_cat_name = ctk.CTkEntry(frame_add, placeholder_text=self.fix_text("اسم الفئة الجديدة"))
+        self.ent_cat_name.pack(side="right", padx=10, pady=20, expand=True, fill="x")
+        self.ent_cat_amount = ctk.CTkEntry(frame_add, placeholder_text=self.fix_text("المبلغ"))
+        self.ent_cat_amount.pack(side="right", padx=10, pady=20)
+        ctk.CTkButton(frame_add, text=self.fix_text("إضافة فئة"), command=self.add_category, width=100).pack(side="right", padx=20, pady=20)
+
+        self.cat_list_scroll = ctk.CTkScrollableFrame(self.settings_frame, corner_radius=15, height=300)
+        self.cat_list_scroll.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        frame_nums = ctk.CTkFrame(self.settings_frame, corner_radius=15)
+        frame_nums.pack(fill="x", padx=20, pady=10)
+        self.ent_nums = ctk.CTkEntry(frame_nums, placeholder_text=self.fix_text("الأرقام (مثال: 101, 102)"))
+        self.ent_nums.pack(side="right", padx=10, pady=20, expand=True, fill="x")
+        self.cat_menu = ctk.CTkOptionMenu(frame_nums, values=[self.fix_text("تحميل...")])
+        self.cat_menu.pack(side="right", padx=10, pady=20)
+        self.refresh_cat_menu()
+        ctk.CTkButton(frame_nums, text=self.fix_text("حفظ الأرقام"), command=self.add_numbers, fg_color="green").pack(side="right", padx=20, pady=20)
+
+    def load_categories_list(self):
+        for widget in self.cat_list_scroll.winfo_children(): widget.destroy()
+        cats = self.db.query(db_mod.Category).all()
+        for c in cats:
+            row = ctk.CTkFrame(self.cat_list_scroll, corner_radius=10)
+            row.pack(fill="x", pady=5)
+            ctk.CTkLabel(row, text=self.fix_text(c.name), width=250, anchor="e").pack(side="right", padx=20)
+            ctk.CTkLabel(row, text=self.fix_text(f"{c.amount} ريال"), width=100).pack(side="right", padx=20)
+            
+            btn_frame = ctk.CTkFrame(row, fg_color="transparent")
+            btn_frame.pack(side="left", padx=10)
+            ctk.CTkButton(btn_frame, text=self.fix_text("تعديل"), width=70, height=25, command=lambda cid=c.id: self.edit_category(cid)).pack(side="left", padx=2)
+            ctk.CTkButton(row, text=self.fix_text("حذف"), width=70, height=25, fg_color="red", command=lambda cid=c.id: self.delete_category(cid)).pack(side="left", padx=10)
+
+    def edit_category(self, cat_id):
+        cat = self.db.get(db_mod.Category, cat_id)
+        if cat:
+            def save_name(new_name):
+                if new_name:
+                    def save_amount(new_amount):
+                        try:
+                            cat.name = new_name
+                            if new_amount: cat.amount = float(new_amount)
+                            self.db.commit()
+                            self.load_categories_list()
+                            self.refresh_cat_menu()
+                            ui_components.ModernAlert(self, "نجاح", "تم التعديل بنجاح")
+                        except Exception as e:
+                            self.db.rollback()
+                            ui_components.ModernAlert(self, "خطأ", f"فشل التعديل: {e}", icon="error")
+                    
+                    ui_components.ModernInput(self, "تعديل", "أدخل المبلغ الجديد:", save_amount, initial_value=str(cat.amount))
+            
+            ui_components.ModernInput(self, "تعديل", "أدخل اسم الفئة الجديد:", save_name, initial_value=cat.name)
+
+    def refresh_cat_menu(self):
+        cats = self.db.query(db_mod.Category).all()
+        self.cat_mapping = {c.name: c.id for c in cats}
+        if cats:
+            self.cat_menu.configure(values=[self.fix_text(k) for k in self.cat_mapping.keys()])
+            self.cat_menu.set(self.fix_text(list(self.cat_mapping.keys())[0]))
+
+    def add_category(self):
+        name = self.ent_cat_name.get()
+        amount = self.ent_cat_amount.get()
+        if name and amount:
+            self.db.add(db_mod.Category(name=name, amount=float(amount)))
+            self.db.commit()
+            self.ent_cat_name.delete(0, 'end'); self.ent_cat_amount.delete(0, 'end')
+            self.load_categories_list(); self.refresh_cat_menu()
+
+    def add_numbers(self):
+        nums_str = self.ent_nums.get(); cat_reshaped = self.cat_menu.get()
+        if nums_str and cat_reshaped != self.fix_text("تحميل..."):
+            cat_id = None
+            for original_name, cid in self.cat_mapping.items():
+                if self.fix_text(original_name) == cat_reshaped:
+                    cat_id = cid
+                    break
+            if cat_id:
+                nums = [n.strip() for n in nums_str.split(",")]
+                for n in nums:
+                    if n: self.db.add(db_mod.SubscriberNumber(number=n, category_id=cat_id))
+                self.db.commit(); self.ent_nums.delete(0, 'end')
+                ui_components.ModernAlert(self, "نجاح", "تمت إضافة الأرقام بنجاح")
+
+    def delete_category(self, cat_id):
+        def do_delete():
+            cat = self.db.get(db_mod.Category, cat_id)
+            if cat:
+                self.db.delete(cat)
+                self.db.commit()
+                self.load_categories_list()
+                self.refresh_cat_menu()
+                ui_components.ModernAlert(self, "نجاح", "تم حذف الفئة بنجاح")
+        
+        ui_components.ModernConfirm(self, "تأكيد", "هل أنت متأكد من حذف الفئة؟", do_delete)
+
+if __name__ == "__main__":
+    app = AdminApp()
+    app.mainloop()

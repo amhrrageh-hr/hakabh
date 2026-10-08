@@ -1,0 +1,6 @@
+2026-06-22 17:39:50,723 INFO AdminApp init start
+2026-06-22 17:39:50,724 INFO Prompting for admin access now
+2026-06-22 17:39:50,724 INFO prompt_admin_access start; logged_in_staff=False
+2026-06-22 17:39:50,725 INFO prompt_admin_access: login_required=False
+2026-06-22 17:39:50,725 INFO Admin login not required by settings
+2026-06-22 17:39:50,725 INFO access granted - continuing with UI setup
