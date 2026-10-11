@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>بانتظار القبول - هكبة المليون</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/static/manifest.json">
+    <script src="/static/pwa-register.js" defer></script>
+    <style>
+        :root {
+            --primary: #d4af37;
+            --bg-dark: #052109;
+            --bg-card: #0a3d0e;
+            --border: #1b5e20;
+            --text-soft: #ccf2d1;
+            --glass: rgba(10, 61, 14, 0.85);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'Tajawal', sans-serif;
+            background-color: var(--bg-dark);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 2rem 1.5rem 4rem;
+            position: relative;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        /* خلفية متحركة */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse at 20% 20%, rgba(212,175,55,0.04) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(10, 61, 14, 0.6) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .gold-text { color: var(--primary); }
+        .greenish-white { color: var(--text-soft); }
+
+        .glass-panel {
+            background: var(--glass);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(212,175,55,0.15);
+            box-shadow:
+                0 25px 60px rgba(0,0,0,0.5),
+                inset 0 1px 0 rgba(255,255,255,0.05);
+        }
+
+        /* حلقة الانتظار الدوارة */
+        .pending-ring {
+            width: 120px;
+            height: 120px;
+            position: relative;
+            margin: 0 auto 2rem;
+        }
+
+        .pending-ring::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 3px solid rgba(212,175,55,0.1);
+        }
+
+        .pending-ring-spinner {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            border-top-color: var(--primary);
+            border-right-color: rgba(212,175,55,0.4);
+            animation: spin 2s linear infinite;
+        }
+
+        .pending-ring-inner {
+            position: absolute;
+            inset: 15px;
+            border-radius: 50%;
+            background: rgba(212,175,55,0.05);
+            border: 1px solid rgba(212,175,55,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-8px); }
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(212,175,55,0.2); }
+            50% { box-shadow: 0 0 0 20px rgba(212,175,55,0); }
+        }
+
+        @keyframes slide-up {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .animate-float { animation: float 3s ease-in-out infinite; }
+        .animate-slide-up { animation: slide-up 0.6s ease-out forwards; }
+        .animate-glow { animation: pulse-glow 2s ease-in-out infinite; }
+
+        .info-card {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 1.25rem;
+            padding: 1.25rem 1.5rem;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .info-row:last-child { border-bottom: none; }
+
+        .step-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            padding: 1rem;
+            background: rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .step-item:hover {
+            border-color: rgba(212,175,55,0.2);
+            background: rgba(212,175,55,0.03);
+        }
+
+        .step-number {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary), #facc15);
+            color: var(--bg-dark);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+
+        .btn-gold {
+            background: linear-gradient(135deg, var(--primary), #b8962e);
+            color: var(--bg-dark);
+            font-weight: 800;
+            border-radius: 14px;
+            padding: 0.9rem 1.5rem;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            display: block;
+            width: 100%;
+            text-align: center;
+            text-decoration: none;
+        }
+
+        .btn-gold:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(212,175,55,0.3);
+            filter: brightness(1.1);
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: rgba(255,255,255,0.5);
+            font-weight: 700;
+            border-radius: 14px;
+            padding: 0.9rem 1.5rem;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255,255,255,0.1);
+            cursor: pointer;
+            display: block;
+            width: 100%;
+            text-align: center;
+            text-decoration: none;
+        }
+
+        .btn-outline:hover {
+            background: rgba(255,255,255,0.05);
+            border-color: rgba(255,255,255,0.2);
+            color: white;
+        }
+
+        /* بادج الحالة */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.35rem 1rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+
+        .status-pending {
+            background: rgba(251,191,36,0.12);
+            color: #fbbf24;
+            border: 1px solid rgba(251,191,36,0.2);
+        }
+
+        .dot-pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: dot-pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes dot-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        /* إشعار القبول */
+        .approval-toast {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: linear-gradient(135deg, #4ade80, #16a34a);
+            color: white;
+            padding: 1rem 2rem;
+            border-radius: 1rem;
+            font-weight: 700;
+            box-shadow: 0 10px 40px rgba(74,222,128,0.3);
+            transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 1000;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .approval-toast.show {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* الخلفية الجميلة */
+        .bg-orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(60px);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ====== شريط التمرير ====== */
+        .progress-track {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(212,175,55,0.1);
+            border-radius: 999px;
+            height: 8px;
+            width: 100%;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #b8962e, #d4af37, #facc15);
+            background-size: 200% 100%;
+            animation: progress-shimmer 2s linear infinite, progress-grow 2.5s cubic-bezier(0.4,0,0.2,1) forwards;
+            box-shadow: 0 0 12px rgba(212,175,55,0.5);
+            width: 0%;
+        }
+
+        @keyframes progress-shimmer {
+            0%   { background-position: 200% center; }
+            100% { background-position: -200% center; }
+        }
+
+        @keyframes progress-grow {
+            0%   { width: 0%; }
+            100% { width: var(--target-width, 33%); }
+        }
+
+        .progress-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.35rem;
+            flex: 1;
+        }
+
+        .progress-step-dot {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: 900;
+            transition: all 0.5s ease;
+            border: 2px solid rgba(255,255,255,0.08);
+            background: rgba(0,0,0,0.3);
+            color: rgba(255,255,255,0.3);
+        }
+
+        .progress-step-dot.done {
+            background: linear-gradient(135deg, #d4af37, #facc15);
+            border-color: #d4af37;
+            color: #052109;
+            box-shadow: 0 0 14px rgba(212,175,55,0.5);
+        }
+
+        .progress-step-dot.active {
+            border-color: #d4af37;
+            background: rgba(212,175,55,0.12);
+            color: #d4af37;
+            animation: dot-active-pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes dot-active-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(212,175,55,0.4); }
+            50%       { box-shadow: 0 0 0 8px rgba(212,175,55,0); }
+        }
+
+        .progress-step-label {
+            font-size: 0.6rem;
+            font-weight: 700;
+            text-align: center;
+            line-height: 1.2;
+        }
+        /* ============================== */
+    </style>
+</head>
+<body>
+    <!-- كرات الخلفية (fixed حتى لا تؤثر على تمرير الصفحة) -->
+    <div class="bg-orb" style="position:fixed;width:300px;height:300px;background:rgba(212,175,55,0.04);top:-100px;right:-100px;z-index:0;pointer-events:none;"></div>
+    <div class="bg-orb" style="position:fixed;width:400px;height:400px;background:rgba(10,61,14,0.5);bottom:-150px;left:-150px;z-index:0;pointer-events:none;"></div>
+
+    <!-- البطاقة الرئيسية -->
+    <div class="glass-panel rounded-[2.5rem] p-8 sm:p-10 max-w-lg w-full relative z-10 animate-slide-up" style="margin-top: auto; margin-bottom: auto;">
+
+        <!-- حلقة الانتظار -->
+        <div class="pending-ring animate-float">
+            <div class="pending-ring-spinner"></div>
+            <div class="pending-ring-inner animate-glow">
+                <svg class="w-12 h-12 text-[var(--primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+            </div>
+        </div>
+
+        <!-- العنوان -->
+        <div class="text-center mb-8">
+            <div class="status-badge status-pending mx-auto mb-4">
+                <div class="dot-pulse"></div>
+                بانتظار القبول
+            </div>
+            <h1 class="text-3xl sm:text-4xl font-black text-white mb-3 leading-tight">
+                طلبك قيد المراجعة
+            </h1>
+            <p class="greenish-white text-sm opacity-70 leading-relaxed mb-4">
+                لكي يتم قبولك بادر بتسديد اول قسط
+            </p>
+            
+            <!-- العد التنازلي -->
+            <div id="countdown-container" class="bg-red-900/30 border border-red-500/30 rounded-xl p-4 inline-block min-w-[250px]">
+                <p class="text-xs text-white/70 mb-2">الوقت المتبقي لإلغاء الحجز التلقائي:</p>
+                <div id="countdown-timer" class="flex justify-center gap-2" dir="ltr">
+                    <div class="flex flex-col items-center">
+                        <span id="cd-hours" class="text-xl font-black text-red-400">00</span>
+                        <span class="text-[10px] text-white/50">ساعة</span>
+                    </div>
+                    <span class="text-xl font-black text-red-400">:</span>
+                    <div class="flex flex-col items-center">
+                        <span id="cd-minutes" class="text-xl font-black text-red-400">00</span>
+                        <span class="text-[10px] text-white/50">دقيقة</span>
+                    </div>
+                    <span class="text-xl font-black text-red-400">:</span>
+                    <div class="flex flex-col items-center">
+                        <span id="cd-seconds" class="text-xl font-black text-red-400">00</span>
+                        <span class="text-[10px] text-white/50">ثانية</span>
+                    </div>
+                </div>
+                <p id="cd-expired" class="text-red-500 text-sm font-bold mt-2 hidden">انتهت مهلة السداد!</p>
+            </div>
+        </div>
+
+        <!-- بطاقة المشترك -->
+        <div class="info-card mb-6">
+            <div class="info-row">
+                <span class="text-white/40 text-xs">الاسم الكامل</span>
+                <span class="text-white font-bold text-sm">{{ sub.name }}</span>
+            </div>
+            <div class="info-row">
+                <span class="text-white/40 text-xs">الفئة المختارة</span>
+                <span class="gold-text font-bold text-sm">{{ sub.category or '---' }}</span>
+            </div>
+            <div class="info-row">
+                <span class="text-white/40 text-xs">رقمك الدائم</span>
+                <span class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--primary)] to-[#facc15] text-[var(--bg-dark)] font-black flex items-center justify-center text-sm shadow-lg">
+                    {{ sub.subscriber_number or '---' }}
+                </span>
+            </div>
+            {% if category_info %}
+            <div class="info-row">
+                <span class="text-white/40 text-xs">مبلغ القسط الأول</span>
+                <span class="text-green-400 font-black text-base">{{ "{:,.0f}".format(category_info.amount) }} ريال</span>
+            </div>
+            {% endif %}
+            <div class="info-row">
+                <span class="text-white/40 text-xs">رقم الهاتف</span>
+                <span class="text-white/70 text-sm">{{ sub.phone }}</span>
+            </div>
+        </div>
+
+        <!-- ====== شريط التمرير ====== -->
+        <div class="mb-8">
+            <div class="flex justify-between items-end mb-3">
+                <p class="text-xs text-white/40 uppercase tracking-widest">مسار طلبك</p>
+                <span id="progress-label" class="text-[10px] gold-text font-bold">قيد المراجعة</span>
+            </div>
+
+            <!-- الخطوات فوق الشريط -->
+            <div class="flex justify-between items-start mb-2 px-1">
+                <!-- خطوة 1: التسجيل -->
+                <div class="progress-step">
+                    <div class="progress-step-dot done" id="ps-1">✓</div>
+                    <span class="progress-step-label" style="color:#d4af37;">التسجيل</span>
+                </div>
+                <!-- خطوة 2: المراجعة -->
+                <div class="progress-step">
+                    <div class="progress-step-dot active" id="ps-2">⏳</div>
+                    <span class="progress-step-label" style="color:rgba(255,255,255,0.4);">المراجعة</span>
+                </div>
+                <!-- خطوة 3: القبول -->
+                <div class="progress-step">
+                    <div class="progress-step-dot" id="ps-3">3</div>
+                    <span class="progress-step-label" style="color:rgba(255,255,255,0.25);">القبول</span>
+                </div>
+                <!-- خطوة 4: الدخول -->
+                <div class="progress-step">
+                    <div class="progress-step-dot" id="ps-4">🚀</div>
+                    <span class="progress-step-label" style="color:rgba(255,255,255,0.25);">الدخول</span>
+                </div>
+            </div>
+
+            <!-- الشريط نفسه -->
+            <div class="progress-track">
+                <div class="progress-fill" id="progress-fill" style="--target-width: 40%;"></div>
+            </div>
+
+            <!-- نص المرحلة الحالية -->
+            <div class="flex items-center gap-2 mt-3">
+                <div class="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></div>
+                <p class="text-[11px] text-white/40" id="progress-sub-label">تم تسجيل طلبك بنجاح، ننتظر موافقة الإدارة...</p>
+            </div>
+        </div>
+        <!-- ================================ -->
+
+        <!-- خطوات القبول -->
+        <div class="space-y-3 mb-8">
+            <p class="text-xs text-white/40 uppercase tracking-widest mb-4 text-center">خطوات الانضمام</p>
+
+            <div class="step-item">
+                <div class="step-number">1</div>
+                <div>
+                    <p class="text-white font-bold text-sm mb-1">تسديد أول قسط</p>
+                    <p class="text-white/40 text-xs leading-relaxed">
+                        بادر بتحويل مبلغ
+                        {% if category_info %}<span class="gold-text font-bold">{{ "{:,.0f}".format(category_info.amount) }} ريال</span>{% else %}<span class="gold-text font-bold">القسط الأول</span>{% endif %}
+                        إلى حساب المنظومة
+                    </p>
+                </div>
+            </div>
+
+            <div class="step-item">
+                <div class="step-number">2</div>
+                <div>
+                    <p class="text-white font-bold text-sm mb-1">إبلاغ الإدارة</p>
+                    <p class="text-white/40 text-xs leading-relaxed">أرسل إيصال التحويل للإدارة عبر قناة التواصل المعتمدة مع ذكر رقمك الدائم</p>
+                </div>
+            </div>
+
+            <div class="step-item">
+                <div class="step-number">3</div>
+                <div>
+                    <p class="text-white font-bold text-sm mb-1">انتظار التفعيل</p>
+                    <p class="text-white/40 text-xs leading-relaxed">ستُفعَّل عضويتك تلقائياً بعد مراجعة الإدارة، وستنتقل مباشرةً للوحة التحكم</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- مؤشر المراقبة التلقائية -->
+        <div class="flex items-center justify-center gap-2 mb-8 text-xs text-white/30">
+            <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+            <span id="ws-status-text">جاري مراقبة حالة طلبك تلقائياً...</span>
+        </div>
+
+        <!-- أزرار الإجراء -->
+        <div class="space-y-3">
+            <a href="/logout" class="btn-outline text-sm">
+                تسجيل الخروج
+            </a>
+        </div>
+    </div>
+
+    <!-- إشعار القبول -->
+    <div id="approval-toast" class="approval-toast">
+        <div class="flex items-center gap-3">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+            </svg>
+            <div>
+                <p class="font-black">🎉 تم قبولك! مرحباً بك في هكبة المليون</p>
+                <p class="text-xs opacity-80 mt-0.5">سيتم نقلك للوحة التحكم خلال ثوانٍ...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const subscriberId = "{{ sub.id }}";
+        const rawDate = "{{ sub.created_at.strftime('%Y-%m-%dT%H:%M:%S') if sub.created_at else '' }}";
+
+        // تحديد وقت البداية
+        let createdAtMs;
+        if (rawDate) {
+            // توقيت الخادم (SQLite) عادةً يكون UTC، لذا نضيف Z ليتعرف عليه المتصفح كتوقيت عالمي
+            createdAtMs = new Date(rawDate + "Z").getTime();
+            // إصلاح إضافي: إذا كان التوقيت في الماضي السحيق لسبب ما أو به خطأ
+            if (isNaN(createdAtMs)) {
+                createdAtMs = Date.now();
+            }
+        } else {
+            // للحسابات القديمة التي لا تملك تاريخ تسجيل في قاعدة البيانات
+            createdAtMs = Date.now(); 
+        }
+
+        const expireAt = createdAtMs + (48 * 60 * 60 * 1000);
+
+        function updateTimer() {
+            const now = Date.now();
+            const diff = expireAt - now;
+
+            if (diff <= 0) {
+                document.getElementById('countdown-timer').style.display = 'none';
+                document.getElementById('cd-expired').classList.remove('hidden');
+                return false;
+            }
+
+            const hours = Math.floor(diff / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+            document.getElementById('cd-hours').textContent = hours.toString().padStart(2, '0');
+            document.getElementById('cd-minutes').textContent = minutes.toString().padStart(2, '0');
+            document.getElementById('cd-seconds').textContent = seconds.toString().padStart(2, '0');
+            return true;
+        }
+
+        // تحديث فوري ثم كل ثانية
+        if (updateTimer()) {
+            setInterval(updateTimer, 1000);
+        }
+
+        // WebSocket لمراقبة تغيير الحالة
+        function connectWebSocket() {
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${location.host}/ws/notifications/${subscriberId}`;
+            let ws;
+
+            try {
+                ws = new WebSocket(wsUrl);
+            } catch (e) {
+                startPolling();
+                return;
+            }
+
+            ws.onopen = () => {
+                document.getElementById('ws-status-text').textContent = 'متصل - نراقب طلبك في الوقت الفعلي';
+            };
+
+            ws.onmessage = (event) => {
+                if (event.data === 'refresh_dashboard' || event.data === 'accepted') {
+                    showApprovalToast();
+                }
+            };
+
+            ws.onclose = () => {
+                document.getElementById('ws-status-text').textContent = 'يتم إعادة الاتصال...';
+                setTimeout(connectWebSocket, 5000);
+            };
+
+            ws.onerror = () => {
+                // عند فشل WS، نستخدم polling
+                ws.close();
+                startPolling();
+            };
+        }
+
+        // Polling كبديل إذا فشل WebSocket
+        let pollingInterval = null;
+        function startPolling() {
+            document.getElementById('ws-status-text').textContent = 'جاري التحقق من حالة طلبك...';
+            pollingInterval = setInterval(checkStatus, 15000); // كل 15 ثانية
+        }
+
+        async function checkStatus() {
+            try {
+                const res = await fetch('/api/check-status', { credentials: 'same-origin' });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === 'accepted') {
+                        clearInterval(pollingInterval);
+                        showApprovalToast();
+                    }
+                }
+            } catch (e) {
+                // تجاهل الأخطاء
+            }
+        }
+
+        function showApprovalToast() {
+            // تحديث شريط التمرير للمرحلة الأخيرة (القبول + الدخول)
+            advanceProgressToAccepted();
+
+            const toast = document.getElementById('approval-toast');
+            toast.classList.add('show');
+            setTimeout(() => {
+                window.location.href = '/million-hakbah';
+            }, 3000);
+        }
+
+        /* ====== منطق شريط التمرير ====== */
+        function advanceProgressToAccepted() {
+            const fill   = document.getElementById('progress-fill');
+            const label  = document.getElementById('progress-label');
+            const subLbl = document.getElementById('progress-sub-label');
+            const ps3    = document.getElementById('ps-3');
+            const ps4    = document.getElementById('ps-4');
+            const ps2    = document.getElementById('ps-2');
+
+            // إنهاء مرحلة المراجعة
+            ps2.classList.remove('active');
+            ps2.classList.add('done');
+            ps2.textContent = '✓';
+
+            // تفعيل مرحلة القبول
+            ps3.classList.add('done');
+            ps3.textContent = '✓';
+
+            // تفعيل مرحلة الدخول
+            setTimeout(() => {
+                ps4.classList.add('active');
+                ps4.textContent = '🚀';
+            }, 600);
+
+            // تقدم الشريط
+            fill.style.animation = 'none';
+            fill.style.width = '100%';
+            fill.style.transition = 'width 1.2s cubic-bezier(0.4,0,0.2,1)';
+            fill.style.boxShadow = '0 0 20px rgba(74,222,128,0.6)';
+            fill.style.background = 'linear-gradient(90deg,#16a34a,#4ade80)';
+
+            label.textContent  = 'تم القبول! 🎉';
+            label.style.color  = '#4ade80';
+            subLbl.textContent = 'مبروك! تم قبول طلبك، جاري نقلك للوحة التحكم...';
+            subLbl.style.color = '#4ade80';
+        }
+
+        // تحريك الشريط بشكل دوري لإظهار النشاط
+        function animateProgressIdle() {
+            const fill = document.getElementById('progress-fill');
+            if (!fill) return;
+            // نبض خفيف على الشريط كل 4 ثوانٍ
+            setInterval(() => {
+                fill.style.opacity = '0.7';
+                setTimeout(() => { fill.style.opacity = '1'; }, 500);
+            }, 4000);
+        }
+        animateProgressIdle();
+        /* ================================ */
+
+        // بدء الاتصال
+        connectWebSocket();
+    </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+.\.venv\Scripts\pyinstaller.exe HakbahMillionAdmin.spec --clean -y
+
+
+
+
+
+.\build_installer.bat
+

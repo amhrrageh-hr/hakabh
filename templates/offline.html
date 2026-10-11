@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>أنت الآن بدون اتصال - هكبة المليون</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body {
+            direction: rtl;
+            font-family: 'Tajawal', sans-serif;
+            background-color: #f8f9fa;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #1f2937;
+        }
+        .offline-card {
+            max-width: 520px;
+            width: 100%;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 16px 48px rgba(15, 23, 42, 0.12);
+            padding: 32px;
+            text-align: center;
+        }
+        .offline-card h1 {
+            margin-bottom: 16px;
+            color: #166534;
+        }
+        .offline-card p {
+            margin-bottom: 24px;
+            line-height: 1.75;
+            color: #4b5563;
+        }
+        .offline-card button {
+            border: none;
+            background: #28a745;
+            color: white;
+            font-size: 1rem;
+            padding: 12px 22px;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="offline-card">
+        <h1>أنت الآن بدون اتصال</h1>
+        <p>لا يمكن الوصول إلى هذه الصفحة عبر الإنترنت الآن. إذا كانت الصفحة قد زُوّرت مسبقاً، فستُعرض هنا. حاول إعادة التحميل بعد الاتصال بالإنترنت.</p>
+        <button onclick="window.location.reload()">إعادة المحاولة</button>
+    </div>
+</body>
+</html>

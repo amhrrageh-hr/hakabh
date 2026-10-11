@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Databases & local configs
+*.db
+*.db-shm
+*.db-wal
+cookies.txt
+.env
+
+# Backups and temporary reports
+*_backup.py.bak
+*_backup_full.py
+*.bak
+*.rar
+*.zip
+*.log
+custom_report.xlsx
+categories_summary.pdf
+project-abdulalh-rajeh-alhakbh/
+scratch/
+"مجلد جديد/"
+uploaded_reports/
+
+
+# Executables
+*.exe
+ngrok
+cloudflared
+
+# Uploads directory
+uploads/
+
+# IDE files
+.vscode/
+.idea/
+
