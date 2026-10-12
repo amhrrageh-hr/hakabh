@@ -70,9 +70,10 @@ engine = create_configured_engine(DATABASE_URL)
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
-    """تحسين أداء SQLite وتفعيل القراءة والكتابة المتزامنة عند استخدام محرك SQLite"""
+    """تحسين أداء SQLite وتفعيل القراءة والكتابة المتزامنة عند استخدام محرك SQLite فقط"""
     try:
-        if hasattr(dbapi_connection, "cursor"):
+        # التأكد من أن الاتصال هو فعلاً SQLite وليس PostgreSQL
+        if type(dbapi_connection).__module__.startswith("sqlite3"):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA journal_mode=WAL")

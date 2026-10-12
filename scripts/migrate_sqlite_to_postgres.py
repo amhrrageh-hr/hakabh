@@ -66,21 +66,11 @@ def migrate():
             conn.execute(text("SELECT 1"))
         print("✅ تم التأكد من الاتصال بـ PostgreSQL بنجاح.")
 
-        # إنهاء أي اتصالات قديمة معلقة على قاعدة البيانات
-        try:
-            with pg_engine.connect() as conn:
-                conn.execute(text("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'hakbah_db' AND pid <> pg_backend_pid();"))
-                conn.commit()
-        except Exception:
-            pass
-
-        # إعادة إنشاء الجداول في PostgreSQL بنظافة وسرعة
-        print("🔨 جاري إعادة تهيئة وإنشاء الجداول في PostgreSQL...")
-        with pg_engine.connect() as conn:
-            conn.execute(text("DROP TABLE IF EXISTS payments, winners, expenses, admin_notifications, settings, subscribers, subscriber_numbers, staff, categories CASCADE;"))
-            conn.commit()
+        # التأكد من وجود الجداول في PostgreSQL
+        print("🔨 جاري التأكد من جاهزية الجداول في PostgreSQL...")
         db_mod.Base.metadata.create_all(bind=pg_engine)
         print("✅ تم تجهيز الجداول بنجاح.")
+
 
         # إنشاء جلسات العمل
         SqliteSession = sessionmaker(bind=sqlite_engine)
@@ -110,6 +100,22 @@ def migrate():
                 print(f"ℹ️ {label}: لا يوجد سجلات لنقلها.")
                 continue
 
+            if model_cls == db_mod.Payment:
+                # ترحيل دفعي سريع جداً للمدفوعات
+                batch = []
+                for record in records:
+                    data = {col.name: getattr(record, col.name) for col in inspect(model_cls).columns}
+                    batch.append(data)
+                    if len(batch) >= 1000:
+                        target_db.bulk_insert_mappings(model_cls, batch)
+                        target_db.commit()
+                        batch.clear()
+                if batch:
+                    target_db.bulk_insert_mappings(model_cls, batch)
+                    target_db.commit()
+                print(f"✨ {label}: تم نقل {len(records)} سجل بنجاح فائق.")
+                continue
+
             count = 0
             for record in records:
                 data = {col.name: getattr(record, col.name) for col in inspect(model_cls).columns}
@@ -121,7 +127,7 @@ def migrate():
                     data["subscriber_id"] = None
 
                 new_obj = model_cls(**data)
-                target_db.add(new_obj)
+                target_db.merge(new_obj)
                 count += 1
 
             target_db.commit()

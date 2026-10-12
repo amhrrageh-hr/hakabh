@@ -184,7 +184,7 @@ sudo systemctl restart nginx
 ### 3. إصدار شهادة الأمان المجانية (Certbot SSL):
 قم بتشغيل الأمر أدناه، وقم بإدخال بريدك الإلكتروني عند طلبه (أو إضافة البريد في الأمر مباشرة):
 ```bash
-sudo certbot --nginx -d hmillionair.com -d www.hmillionair.com --m admin@hmillionair.com --agree-tos
+sudo certbot --nginx -d hmillionair.com -d www.hmillionair.com --m amhrrageh@gmail.com --agree-tos
 ```
 
 ---
@@ -195,7 +195,7 @@ sudo certbot --nginx -d hmillionair.com -d www.hmillionair.com --m admin@hmillio
 
 قم بتشغيل سكريبت الهجرة من جهازك أو من السيرفر:
 ```bash
-python scripts/migrate_sqlite_to_postgres.py postgresql://hakbah_user:YourSecurePassword123@SERVER_IP:5432/hakbah_db
+python3 scripts/migrate_sqlite_to_postgres.py postgresql://hakbah_user:rageh62560@192.168.8.192:5432/hakbah_db
 ```
 سيقوم السكريبت بإنشاء الهيكل ونقل السجلات وتحديث العدادات التلقائية بنجاح.
 
