@@ -282,7 +282,7 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
                 color: #3b82f6;
                 background-color: #f1f5f9;
                 border-radius: 5px;
-            }
+            }   
         """)
         self.btn_toggle_sidebar.clicked.connect(self.toggle_sidebar)
         self.btn_toggle_sidebar.setCursor(Qt.CursorShape.PointingHandCursor)
