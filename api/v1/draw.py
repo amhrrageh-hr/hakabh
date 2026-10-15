@@ -331,8 +331,8 @@ def list_winners(
     draw_type: Optional[str] = None,
     category: Optional[str] = None,
     search: Optional[str] = None,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
+    skip: int = 0,
+    limit: int = 100,
     db: Session = Depends(get_db)
 ):
     """جلب سجل الفائزين مع تفاصيل المشتركين والتصفية السريعة"""
