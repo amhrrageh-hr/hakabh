@@ -255,7 +255,7 @@ class ReportsMixin:
         self.rep_qual_status_filter.addItem("الكل (مؤهلين وغير مؤهلين)", "all")
         self.rep_qual_status_filter.addItem("🟢 المؤهلون فقط", "qualified")
         self.rep_qual_status_filter.addItem("🔴 غير المؤهلين فقط", "not_qualified")
-        self.rep_qual_status_filter.currentIndexChanged.connect(self.refresh_qualified_draw_table)
+        self.rep_qual_status_filter.currentIndexChanged.connect(self.on_qual_status_filter_changed)
         q_form.addRow("تصفية بالأهلية:", self.rep_qual_status_filter)
         
         self.rep_qual_search = QLineEdit()
