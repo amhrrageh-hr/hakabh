@@ -326,12 +326,13 @@ class CapitalMixin:
             self.refresh_capital_winners()
 
     def show_capital_management(self):
-        self.content_stack.setCurrentWidget(self.page_capital)
+        page = self._ensure_page('page_capital', self.init_capital_page)
+        self.content_stack.setCurrentWidget(page)
         self._update_nav_style("إدارة رأس المال")
-        
         self.load_capital_category_filter()
         self.refresh_capital_stats()
         self.refresh_current_capital_tab()
+
 
     def load_capital_category_filter(self):
         self.cap_filter_cat.blockSignals(True)

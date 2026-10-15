@@ -176,22 +176,23 @@ class DrawStatsLoader(QThread):
             bg_db.close()
 
 class DrawMixin:
-    def show_draw_management(self): 
+    def show_draw_management(self):
+        page = self._ensure_page('page_draw', self.init_draw_page)
         try:
             self.db.rollback()
         except Exception:
             pass
-        self.db.expire_all() # ضمان مزامنة البيانات قبل عرض حالة السحب
-        self.content_stack.setCurrentWidget(self.page_draw)
-        self._update_nav_style("إدارة القرعة")
+        self.db.expire_all()
+        self.content_stack.setCurrentWidget(page)
+        self._update_nav_style("إدارة السحوبات")
         self.refresh_draw_categories_filter()
         self.refresh_draw_stats()
-        
         current_idx = self.draw_tabs.currentIndex()
         if current_idx == 1:
             self.load_draw_excluded()
         elif current_idx == 2:
             self.load_recent_winners()
+
 
     def _on_draw_tab_changed(self, idx):
         if idx == 1:
@@ -477,7 +478,8 @@ class DrawMixin:
         self.draw_tabs.addTab(tab3, "إعداد القرعات")
         self.draw_tabs.currentChanged.connect(self._on_draw_tab_changed)
         
-        self.load_draw_settings()
+        # تأجيل تحميل إعدادات السحب لما بعد رسم الواجهة لتجنب التجميد عند الفتح
+        QTimer.singleShot(300, self.load_draw_settings)
         
         layout.addWidget(self.draw_tabs)
         return page
@@ -706,27 +708,58 @@ class DrawMixin:
         return completed_cycle_count, incentive_count
 
     def refresh_draw_stats(self):
+        """إعادة رسم إحصائيات السحب بشكل غير متزامن تماماً لتجنب التجميد."""
         if not hasattr(self, "category_selected_cycles"):
             self.category_selected_cycles = {}
 
-        # Clear previous stats
-        for i in reversed(range(self.draw_stats_layout.count())): 
+        # إظهار حالة التحميل فوراً دون أي استعلام DB
+        for i in reversed(range(self.draw_stats_layout.count())):
             item = self.draw_stats_layout.itemAt(i)
-            if item.widget(): item.widget().setParent(None)
-            elif item.layout():
+            if item and item.widget():
+                item.widget().setParent(None)
+            elif item and item.layout():
                 while item.layout().count():
                     child = item.layout().takeAt(0)
-                    if child.widget(): child.widget().setParent(None)
-        
-        # Grid layout for better responsiveness
-        grid = QGridLayout(); grid.setSpacing(15)
-        self.draw_stats_layout.addLayout(grid)
-        
-        categories = self.db.query(db_mod.Category).all()
-        cols = 2 # Show 2 cards per row
-        today = datetime.datetime.now()
+                    if child.widget():
+                        child.widget().setParent(None)
 
-        # استعلام تجميعي لجلب أعلى دورة وأحدث دورة نشطة لكل فئة دفعة واحدة لتفادي تكرار الاستعلامات
+        loading_lbl = QLabel("⏳ جاري تحميل إحصائيات السحب...")
+        loading_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading_lbl.setStyleSheet("color: #94a3b8; font-size: 14px; padding: 20px;")
+        self.draw_stats_layout.addWidget(loading_lbl)
+
+        # تشغيل العامل في الخلفية لجلب البيانات
+        if hasattr(self, '_draw_stats_loader') and self._draw_stats_loader.isRunning():
+            self._draw_stats_loader.quit()
+            self._draw_stats_loader.wait(100)
+        self._draw_stats_loader = DrawStatsLoader(self.category_selected_cycles)
+        self._draw_stats_loader.stats_loaded.connect(self._on_draw_stats_loaded_full)
+        self._draw_stats_loader.start()
+
+    def _on_draw_stats_loaded_full(self, cat_stats):
+        """يُستدعى من الخيط الخلفي بعد تحميل الإحصائيات - يبني واجهة البطاقات."""
+        if not hasattr(self, '_draw_stats_cache'):
+            self._draw_stats_cache = {}
+        self._draw_stats_cache.update(cat_stats)
+
+        # مسح عنصر التحميل
+        for i in reversed(range(self.draw_stats_layout.count())):
+            item = self.draw_stats_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().setParent(None)
+            elif item and item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    if child.widget():
+                        child.widget().setParent(None)
+
+        # جلب الفئات والدورات في استعلام واحد خفيف
+        try:
+            categories = self.db.query(db_mod.Category).all()
+        except Exception:
+            categories = []
+        
+        today = datetime.datetime.now()
         try:
             active_cycles_by_cat = dict(
                 self.db.query(db_mod.Subscriber.category, func.max(db_mod.Payment.cycle_number))
@@ -748,9 +781,17 @@ class DrawMixin:
         except Exception:
             max_cycles_by_cat = {}
 
-        if not hasattr(self, '_draw_stats_cache'):
-            self._draw_stats_cache = {}
+        if not categories:
+            no_cat_lbl = QLabel("لا توجد فئات مسجلة حالياً.")
+            no_cat_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.draw_stats_layout.addWidget(no_cat_lbl)
+            return
+
+        grid = QGridLayout()
+        grid.setSpacing(15)
+        self.draw_stats_layout.addLayout(grid)
         self._draw_stats_labels = {}
+        cols = 2
 
         for idx, cat in enumerate(categories):
             active_cycle = active_cycles_by_cat.get(cat.name, 1)
@@ -760,16 +801,19 @@ class DrawMixin:
 
             selected_cycle = self.category_selected_cycles.get(cat.name, "auto")
             cached_val = self._draw_stats_cache.get(cat.name)
-            init_w = str(cached_val[0]) if cached_val else "..."
-            init_i = str(cached_val[1]) if cached_val else "..."
-            
-            # Create a Premium Category Card
-            cat_card = QFrame(); cat_card.setObjectName("StatCard")
-            v_lay = QVBoxLayout(cat_card); v_lay.setSpacing(12)
-            
+            init_w = str(cached_val[0]) if cached_val else "—"
+            init_i = str(cached_val[1]) if cached_val else "—"
+
+            cat_card = QFrame()
+            cat_card.setObjectName("StatCard")
+            v_lay = QVBoxLayout(cat_card)
+            v_lay.setSpacing(12)
+
             header_row = QHBoxLayout()
-            header = QLabel(f"📊 {cat.name}"); header.setObjectName("SectionTitle"); header.setStyleSheet("font-size: 16px;")
-            
+            header = QLabel(f"📊 {cat.name}")
+            header.setObjectName("SectionTitle")
+            header.setStyleSheet("font-size: 16px;")
+
             combo_cycle = QComboBox()
             combo_cycle.setMinimumWidth(170)
             combo_cycle.addItem(f"الدورة الحالية تلقائياً (دورة {active_cycle})", "auto")
@@ -780,65 +824,60 @@ class DrawMixin:
                 combo_cycle.setCurrentIndex(0)
             else:
                 found_idx = combo_cycle.findData(selected_cycle)
-                if found_idx >= 0:
-                    combo_cycle.setCurrentIndex(found_idx)
-                else:
-                    combo_cycle.setCurrentIndex(0)
+                combo_cycle.setCurrentIndex(found_idx if found_idx >= 0 else 0)
 
             header_row.addWidget(header)
             header_row.addStretch()
             header_row.addWidget(QLabel("تصفية الدورة:"))
             header_row.addWidget(combo_cycle)
-            
             v_lay.addLayout(header_row)
-            
+
             stats_row = QHBoxLayout()
-            
-            # Weekly Stat
             w_vbox = QVBoxLayout()
-            w_val = QLabel(init_w); w_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #2e7d32;")
-            w_lbl = QLabel("أتموا الدورة"); w_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
-            w_vbox.addWidget(w_val); w_vbox.addWidget(w_lbl)
-            
-            # Incentive Stat
+            w_val = QLabel(init_w)
+            w_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #2e7d32;")
+            w_lbl = QLabel("أتموا الدورة")
+            w_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
+            w_vbox.addWidget(w_val)
+            w_vbox.addWidget(w_lbl)
+
             i_vbox = QVBoxLayout()
-            i_val = QLabel(init_i); i_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #1b5e20;")
-            i_lbl = QLabel("مؤهلين التحفيزية"); i_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
-            i_vbox.addWidget(i_val); i_vbox.addWidget(i_lbl)
-            
-            stats_row.addLayout(w_vbox); stats_row.addStretch(); stats_row.addLayout(i_vbox)
+            i_val = QLabel(init_i)
+            i_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #1b5e20;")
+            i_lbl = QLabel("مؤهلين التحفيزية")
+            i_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
+            i_vbox.addWidget(i_val)
+            i_vbox.addWidget(i_lbl)
+
+            stats_row.addLayout(w_vbox)
+            stats_row.addStretch()
+            stats_row.addLayout(i_vbox)
             v_lay.addLayout(stats_row)
-            
+
             self._draw_stats_labels[cat.name] = (w_val, i_val)
-            
+
+            # عند تغيير الدورة: تحديث النتائج بالخلفية لا على main thread
             def make_on_change(c_box, cat_obj, w_l, i_l):
                 def on_change():
                     val = c_box.currentData()
                     self.category_selected_cycles[cat_obj.name] = val
                     w_l.setText("...")
                     i_l.setText("...")
-                    w_cnt, i_cnt = self._get_category_stats(cat_obj, val)
-                    w_l.setText(str(w_cnt))
-                    i_l.setText(str(i_cnt))
-                    self._draw_stats_cache[cat_obj.name] = (w_cnt, i_cnt)
+                    # إعادة تشغيل الـ loader للفئة المحددة فقط
+                    if hasattr(self, '_draw_stats_loader') and self._draw_stats_loader.isRunning():
+                        return  # لا تزيد حمل الخيط إذا كان يعمل
+                    self._draw_stats_loader = DrawStatsLoader(self.category_selected_cycles)
+                    self._draw_stats_loader.stats_loaded.connect(self._on_draw_stats_loaded)
+                    self._draw_stats_loader.start()
                 return on_change
-                
+
             combo_cycle.currentIndexChanged.connect(make_on_change(combo_cycle, cat, w_val, i_val))
-            
+
             cat_card.setMinimumWidth(300)
             grid.addWidget(cat_card, idx // cols, idx % cols)
 
-        if not categories:
-            self.draw_stats_layout.addWidget(QLabel("لا توجد فئات مسجلة حالياً."))
-
-        # تشغيل العامل في الخلفية لتحديث أرقام البطاقات دون تجميد شاشة المستخدم إطلاقاً
-        if hasattr(self, '_draw_stats_loader') and self._draw_stats_loader.isRunning():
-            self._draw_stats_loader.quit()
-        self._draw_stats_loader = DrawStatsLoader(self.category_selected_cycles)
-        self._draw_stats_loader.stats_loaded.connect(self._on_draw_stats_loaded)
-        self._draw_stats_loader.start()
-
     def _on_draw_stats_loaded(self, cat_stats):
+        """تحديث الأرقام في البطاقات الموجودة (للتحديث عند تغيير الدورة)."""
         if not hasattr(self, '_draw_stats_cache'):
             self._draw_stats_cache = {}
         self._draw_stats_cache.update(cat_stats)

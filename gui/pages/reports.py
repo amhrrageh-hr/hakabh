@@ -38,6 +38,28 @@ class QualifiedDrawLoader(QThread):
         finally:
             bg_db.close()
 
+class ReportsDataLoader(QThread):
+    """يجلب بيانات التقارير (مشتركون، فئات، موظفون) في خيط خلفي لتجنب تجميد الواجهة."""
+    data_ready = pyqtSignal(list, list, list)  # (subscribers, categories, staff)
+
+    def run(self):
+        bg_db = db_mod.SessionLocal()
+        try:
+            subscribers = [
+                (s.id, s.name, s.phone)
+                for s in bg_db.query(db_mod.Subscriber)
+                .order_by(db_mod.Subscriber.name)
+                .all()
+            ]
+            categories = [c.name for c in bg_db.query(db_mod.Category).all()]
+            staff = [(st.id, st.name) for st in bg_db.query(db_mod.Staff).all()]
+            self.data_ready.emit(subscribers, categories, staff)
+        except Exception as e:
+            print("Error in ReportsDataLoader:", e)
+            self.data_ready.emit([], [], [])
+        finally:
+            bg_db.close()
+
 class ReportsMixin:
     # ------------------------------------------------------------------ helpers
     def _get_setting(self, key, default=""):
@@ -313,37 +335,58 @@ class ReportsMixin:
         if idx == 4:
             self.on_qual_category_changed()
     def refresh_reports_sub_list(self):
-        self.rep_sub_cb.clear()
-        subs = self.db.query(db_mod.Subscriber).all()
-        for s in subs:
-            self.rep_sub_cb.addItem(f"{s.name} ({s.phone})", s.id)
+        """تحميل بيانات التقارير في خيط خلفي لتجنب تجميد الواجهة."""
+        # إلغاء أي تحميل سابق لم ينتهِ بعد
+        if hasattr(self, '_reports_data_loader') and self._reports_data_loader.isRunning():
+            return
+        self._reports_data_loader = ReportsDataLoader()
+        self._reports_data_loader.data_ready.connect(self._on_reports_data_loaded)
+        self._reports_data_loader.start()
 
+    def _on_reports_data_loaded(self, subscribers, categories, staff):
+        """تطبيق البيانات المحملة على عناصر الواجهة بعد إنجاز الخيط الخلفي."""
+        # تعبئة قائمة المشتركين
+        self.rep_sub_cb.blockSignals(True)
+        self.rep_sub_cb.clear()
+        for sid, name, phone in subscribers:
+            self.rep_sub_cb.addItem(f"{name} ({phone})", sid)
+        self.rep_sub_cb.blockSignals(False)
+
+        # تعبئة فلاتر الفئات
+        self.rep_cat_filter.blockSignals(True)
         self.rep_cat_filter.clear()
         self.rep_cat_filter.addItem("الكل", None)
         self.exp_rep_exp_cat_filter.clear()
         self.exp_rep_exp_cat_filter.addItem("الكل")
-        for c in self.db.query(db_mod.Category).all():
-            self.rep_cat_filter.addItem(c.name, c.name)
-            self.exp_rep_exp_cat_filter.addItem(c.name)
-            
+        for cat_name in categories:
+            self.rep_cat_filter.addItem(cat_name, cat_name)
+            self.exp_rep_exp_cat_filter.addItem(cat_name)
+        self.rep_cat_filter.blockSignals(False)
+
+        # تعبئة قائمة الموظفين
         if hasattr(self, 'rep_staff_cb'):
+            self.rep_staff_cb.blockSignals(True)
             self.rep_staff_cb.clear()
             self.rep_staff_cb.addItem("الكل", None)
-            for st in self.db.query(db_mod.Staff).all():
-                self.rep_staff_cb.addItem(st.name, st.id)
+            for st_id, st_name in staff:
+                self.rep_staff_cb.addItem(st_name, st_id)
+            self.rep_staff_cb.blockSignals(False)
 
+        # تحديث فلتر الفئات في نموذج تقرير المؤهلين
         if hasattr(self, 'rep_qual_category'):
             self.rep_qual_category.blockSignals(True)
             self.rep_qual_category.clear()
             self.rep_qual_category.addItem("كل الفئات", None)
-            for c in self.db.query(db_mod.Category).all():
-                self.rep_qual_category.addItem(c.name, c.name)
+            for cat_name in categories:
+                self.rep_qual_category.addItem(cat_name, cat_name)
             self.rep_qual_category.blockSignals(False)
             if hasattr(self, 'reports_tabs') and self.reports_tabs.currentIndex() == 4:
                 self.on_qual_category_changed()
 
+        # تحديث قائمة المستندات المرفوعة
         if hasattr(self, 'list_uploaded_reports'):
             self.refresh_uploaded_reports()
+
     def generate_subscriber_report(self, fmt):
         sid = self.rep_sub_cb.currentData()
         if not sid: return

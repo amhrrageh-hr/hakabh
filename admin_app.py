@@ -100,11 +100,11 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.update_logged_in_user()
         self.show_dashboard()
         
-        # تشغيل فحص الأقساط المتأخرة تلقائياً عند بدء البرنامج وكل ساعة
+        # تشغيل فحص الأقساط المتأخرة وكل ساعة
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self.sync_unpaid_installments)
-        self.sync_timer.start(3600000) # 3600000 مللي ثانية = 1 ساعة
-        QTimer.singleShot(2000, self.sync_unpaid_installments) # تشغيل أول مرة بعد ثانيتين من الفتح
+        self.sync_timer.start(3600000)
+        QTimer.singleShot(2000, self.sync_unpaid_installments)
 
         try:
             self.tray_icon = QSystemTrayIcon(self)
@@ -353,34 +353,57 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         
         main_layout.addWidget(right_side_container, 1)
 
-        # Initialize Pages
+        # Initialize Pages - immediate lightweight pages
         self.page_dashboard = self.init_dashboard_page()
         self.page_subscribers = self.init_subscribers_page()
+        self.page_cycles = self.init_cycles_page()
+        self.page_main_settings = self.init_main_settings_page()
         self.page_settings = self.init_settings_page()
         self.page_company_settings = self.init_company_settings_page()
-        self.page_cycles = self.init_cycles_page()
-        self.page_capital = self.init_capital_page()
-        self.page_messaging = self.init_messaging_page()
-        self.page_reports = self.init_reports_page()
-        self.page_draw = self.init_draw_page()
         self.page_staff = self.init_staff_page()
+        self.page_messaging = self.init_messaging_page()
 
-        self.page_main_settings = self.init_main_settings_page()
+        # Heavy pages initialized lazily (first access) to avoid startup freeze
+        self.page_capital = None
+        self.page_reports = None
+        self.page_draw = None
 
         self.content_stack.addWidget(self.page_dashboard)
         self.content_stack.addWidget(self.page_subscribers)
         self.content_stack.addWidget(self.page_cycles)
-        self.content_stack.addWidget(self.page_capital)
-        self.content_stack.addWidget(self.page_reports)
-        self.content_stack.addWidget(self.page_draw)
         self.content_stack.addWidget(self.page_messaging)
         self.content_stack.addWidget(self.page_staff)
         self.content_stack.addWidget(self.page_main_settings)
+
+        # تهيئة الصفحات الثقيلة في الخلفية بعد ظهور النافذة
+        QTimer.singleShot(500, self._init_heavy_pages)
+
     def _update_nav_style(self, active_text):
         for text, btn in self.nav_btns.items():
             if text == active_text: btn.setObjectName("NavBtnActive")
             else: btn.setObjectName("")
             btn.style().unpolish(btn); btn.style().polish(btn)
+
+    def _init_heavy_pages(self):
+        """تهيئة الصفحات الثقيلة بعد ظهور النافذة لتجنب التجميد عند بدء التشغيل."""
+        if self.page_capital is None:
+            self.page_capital = self.init_capital_page()
+            self.content_stack.addWidget(self.page_capital)
+        if self.page_reports is None:
+            self.page_reports = self.init_reports_page()
+            self.content_stack.addWidget(self.page_reports)
+        if self.page_draw is None:
+            self.page_draw = self.init_draw_page()
+            self.content_stack.addWidget(self.page_draw)
+
+    def _ensure_page(self, attr, init_fn):
+        """تأكد من تهيئة صفحة معينة إذا لم تكن مهيأة بعد (lazy init)."""
+        if getattr(self, attr) is None:
+            page = init_fn()
+            setattr(self, attr, page)
+            self.content_stack.addWidget(page)
+        return getattr(self, attr)
+
 
     def toggle_sidebar(self):
         self.sidebar.setVisible(not self.sidebar.isVisible())
@@ -504,6 +527,40 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
     def show_subscribers(self): self.content_stack.setCurrentWidget(self.page_subscribers); self._update_nav_style("المشتركين"); self.load_subscribers()
     def show_cycles(self): self.content_stack.setCurrentWidget(self.page_cycles); self._update_nav_style("إدارة الدورات والأقساط"); self.refresh_cycles_cat_list()
     def show_messaging_management(self): self.content_stack.setCurrentWidget(self.page_messaging); self._update_nav_style("إدارة الرسائل والتوعية"); self.load_subscriber_messages()
+    def show_staff_management(self): self.content_stack.setCurrentWidget(self.page_staff); self._update_nav_style("الموظفين"); self.load_staff_list()
+
+    def show_capital_management(self):
+        """عرض صفحة رأس المال مع lazy initialization لتجنب التجميد."""
+        page = self._ensure_page('page_capital', self.init_capital_page)
+        self.content_stack.setCurrentWidget(page)
+        self._update_nav_style("إدارة رأس المال")
+        self.refresh_capital_stats()
+
+    def show_draw_management(self):
+        """عرض صفحة إدارة السحوبات مع lazy initialization لتجنب التجميد."""
+        page = self._ensure_page('page_draw', self.init_draw_page)
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
+        self.db.expire_all()
+        self.content_stack.setCurrentWidget(page)
+        self._update_nav_style("إدارة السحوبات")
+        self.refresh_draw_categories_filter()
+        self.refresh_draw_stats()
+        current_idx = self.draw_tabs.currentIndex()
+        if current_idx == 1:
+            self.load_draw_excluded()
+        elif current_idx == 2:
+            self.load_recent_winners()
+
+    def show_reports(self):
+        """عرض صفحة التقارير مع lazy initialization لتجنب التجميد."""
+        page = self._ensure_page('page_reports', self.init_reports_page)
+        self.content_stack.setCurrentWidget(page)
+        self._update_nav_style("أداة التقارير")
+        self.refresh_reports_sub_list()
+
     
     def init_main_settings_page(self):
         page = QWidget()
@@ -904,10 +961,6 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self._update_nav_style("الإعدادات")
         self.on_settings_tab_changed(self.settings_sidebar.currentRow())
 
-    def show_reports(self): 
-        self.content_stack.setCurrentWidget(self.page_reports)
-        self._update_nav_style("أداة التقارير")
-        self.refresh_reports_sub_list()
 
 
 if __name__ == "__main__":
