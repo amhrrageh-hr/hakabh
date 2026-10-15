@@ -101,6 +101,10 @@ app.add_middleware(
 # Initialize database
 db_mod.init_db()
 
+# Mount REST API Router for Desktop Application and Integrations
+from api.v1.router import api_v1_router
+app.include_router(api_v1_router, prefix="/api/v1")
+
 # Mount static files and templates
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
