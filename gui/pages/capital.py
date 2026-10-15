@@ -413,30 +413,23 @@ class CapitalMixin:
         # Queries
         # حساب رأس المال المتوقع بناءً على جميع السجلات المولدة للمشتركين المقبولين
         sel_cat = self.cap_filter_cat.currentData()
+        now_val = datetime.datetime.now()
 
-        expected_query = self.db.query(func.sum(db_mod.Payment.amount)).join(db_mod.Subscriber).filter(
-            db_mod.Subscriber.status == "accepted"
-        )
-        collected_query = self.db.query(func.sum(db_mod.Payment.amount)).join(db_mod.Subscriber).filter(
-            db_mod.Subscriber.status == "accepted",
-            db_mod.Payment.is_paid == True
-        )
-        arrears_query = self.db.query(func.sum(db_mod.Payment.amount)).join(db_mod.Subscriber).filter(
-            db_mod.Subscriber.status == "accepted",
-            db_mod.Payment.is_paid == False, 
-            db_mod.Payment.due_date < datetime.datetime.now()
-        )
-
+        # استعلام تجميعي واحد وسريع جداً لجلب الإجمالي والمحصل والمتأخرات دفعة واحدة
+        base_filter = [db_mod.Subscriber.status == "accepted"]
         if sel_cat:
-            expected_query = expected_query.filter(db_mod.Subscriber.category == sel_cat)
-            collected_query = collected_query.filter(db_mod.Subscriber.category == sel_cat)
-            arrears_query = arrears_query.filter(db_mod.Subscriber.category == sel_cat)
+            base_filter.append(db_mod.Subscriber.category == sel_cat)
 
-        total_expected = expected_query.scalar() or 0
-        total_collected = collected_query.scalar() or 0
-        
+        stats_row = self.db.query(
+            func.coalesce(func.sum(db_mod.Payment.amount), 0).label("expected"),
+            func.coalesce(func.sum(case((db_mod.Payment.is_paid == True, db_mod.Payment.amount), else_=0)), 0).label("collected"),
+            func.coalesce(func.sum(case(((db_mod.Payment.is_paid == False) & (db_mod.Payment.due_date < now_val), db_mod.Payment.amount), else_=0)), 0).label("arrears")
+        ).join(db_mod.Subscriber).filter(*base_filter).first()
+
+        total_expected = float(stats_row.expected) if stats_row else 0.0
+        total_collected = float(stats_row.collected) if stats_row else 0.0
+        total_arrears = float(stats_row.arrears) if stats_row else 0.0
         total_remaining = total_expected - total_collected
-        total_arrears = arrears_query.scalar() or 0
         
         # تعديل حساب المصاريف ليعتمد على الفئة المختارة
         exp_query = self.db.query(func.sum(db_mod.Expense.amount))
@@ -494,26 +487,32 @@ class CapitalMixin:
         categories = query.all()
         self.table_cap_categories.setRowCount(len(categories))
         
-        for i, cat in enumerate(categories):
-            subs_accepted = self.db.query(db_mod.Subscriber).filter(
-                db_mod.Subscriber.category == cat.name,
-                db_mod.Subscriber.status == "accepted"
-            ).all()
-            sub_ids = [s.id for s in subs_accepted]
-            
-            expected = 0
-            collected = 0
-            if sub_ids:
-                expected = self.db.query(func.sum(db_mod.Payment.amount)).filter(db_mod.Payment.subscriber_id.in_(sub_ids)).scalar() or 0
-                collected = self.db.query(func.sum(db_mod.Payment.amount)).filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.is_paid == True).scalar() or 0
-            
-            remaining = expected - collected
+        # استعلام تجميعي واحد لكافة الفئات دفعة واحدة بدلاً من استعلام داخل حلقة تكرارية
+        cat_stats_query = self.db.query(
+            db_mod.Subscriber.category,
+            func.count(func.distinct(db_mod.Subscriber.id)).label("sub_count"),
+            func.coalesce(func.sum(db_mod.Payment.amount), 0).label("expected"),
+            func.coalesce(func.sum(case((db_mod.Payment.is_paid == True, db_mod.Payment.amount), else_=0)), 0).label("collected")
+        ).join(db_mod.Payment, db_mod.Subscriber.id == db_mod.Payment.subscriber_id, isouter=True).filter(
+            db_mod.Subscriber.status == "accepted"
+        ).group_by(db_mod.Subscriber.category)
 
+        if sel_cat:
+            cat_stats_query = cat_stats_query.filter(db_mod.Subscriber.category == sel_cat)
+
+        cat_stats_map = {row[0]: row for row in cat_stats_query.all()}
+
+        for i, cat in enumerate(categories):
+            stats = cat_stats_map.get(cat.name)
+            sub_count = stats.sub_count if stats else 0
+            expected = float(stats.expected) if stats else 0.0
+            collected = float(stats.collected) if stats else 0.0
+            remaining = expected - collected
             ratio = (collected / expected * 100) if expected > 0 else 0
             
             self.table_cap_categories.setItem(i, 0, QTableWidgetItem(cat.name))
             self.table_cap_categories.setItem(i, 1, QTableWidgetItem(f"{cat.amount:,.2f}"))
-            self.table_cap_categories.setItem(i, 2, QTableWidgetItem(str(len(sub_ids))))
+            self.table_cap_categories.setItem(i, 2, QTableWidgetItem(str(sub_count)))
             self.table_cap_categories.setItem(i, 3, QTableWidgetItem(f"{expected:,.2f}"))
             self.table_cap_categories.setItem(i, 4, QTableWidgetItem(f"{collected:,.2f}"))
             self.table_cap_categories.setItem(i, 5, QTableWidgetItem(f"{remaining:,.2f}"))

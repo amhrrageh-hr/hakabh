@@ -138,7 +138,15 @@ class CyclesMixin:
                 return
             
             if ModernDialog(self, "تأكيد", f"سيتم إنشاء {total_installments} سجل دفع (بمعدل قسط واحد يومياً) لكل مشترك. هل أنت متأكد؟", is_confirm=True).exec():
+                sub_ids = [sub.id for sub in subs]
+                # جلب جميع السجلات الموجودة مسبقاً في استعلام واحد وسريع لتجنب تجميد البرنامج لعدة دقائق
+                existing = set(
+                    self.db.query(db_mod.Payment.subscriber_id, db_mod.Payment.cycle_number, db_mod.Payment.installment_number)
+                    .filter(db_mod.Payment.subscriber_id.in_(sub_ids))
+                    .all()
+                )
                 total_created = 0
+                new_payments = []
                 for c_idx in range(1, cycles + 1):
                     for i_idx in range(1, inst_per_cycle + 1):
                         # Calculate global installment index
@@ -149,13 +157,7 @@ class CyclesMixin:
                         due_datetime = datetime.datetime.combine(due_date, datetime.time.min)
                         
                         for sub in subs:
-                            exists = self.db.query(db_mod.Payment).filter(
-                                db_mod.Payment.subscriber_id == sub.id,
-                                db_mod.Payment.cycle_number == c_idx,
-                                db_mod.Payment.installment_number == i_idx
-                            ).first()
-                            
-                            if not exists:
+                            if (sub.id, c_idx, i_idx) not in existing:
                                 new_p = db_mod.Payment(
                                     subscriber_id=sub.id,
                                     amount=cat.amount,
@@ -165,10 +167,13 @@ class CyclesMixin:
                                     installment_number=i_idx,
                                     note=f"دورة {c_idx} - قسط {i_idx}"
                                 )
-                                self.db.add(new_p)
+                                new_payments.append(new_p)
+                                existing.add((sub.id, c_idx, i_idx))
                                 total_created += 1
                 
-                self.db.commit()
+                if new_payments:
+                    self.db.add_all(new_payments)
+                    self.db.commit()
                 ModernDialog(self, "نجاح", f"تم توليد {total_created} سجل دفع بنجاح لـ {len(subs)} مشترك").exec()
         except ValueError:
             ModernDialog(self, "خطأ", "يرجى إدخال أرقام صحيحة للدورات والأقساط").exec()

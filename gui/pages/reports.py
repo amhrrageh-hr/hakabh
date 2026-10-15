@@ -20,6 +20,24 @@ import database as db_mod
 from gui.utils import reshape_text, ServerWorker, draw_pdf_header, setup_excel_header, register_arabic_font
 from gui.dialogs import *
 
+class QualifiedDrawLoader(QThread):
+    data_ready = pyqtSignal(list)
+
+    def __init__(self, fetch_fn):
+        super().__init__()
+        self.fetch_fn = fetch_fn
+
+    def run(self):
+        bg_db = db_mod.SessionLocal()
+        try:
+            items = self.fetch_fn(bg_db)
+            self.data_ready.emit(items)
+        except Exception as e:
+            print("Error loading qualified subscribers:", e)
+            self.data_ready.emit([])
+        finally:
+            bg_db.close()
+
 class ReportsMixin:
     # ------------------------------------------------------------------ helpers
     def _get_setting(self, key, default=""):
@@ -1010,13 +1028,14 @@ class ReportsMixin:
         self.refresh_qualified_draw_table()
 
 
-    def get_qualified_subscribers_list(self):
+    def get_qualified_subscribers_list(self, db=None):
+        active_db = db or self.db
         sel_draw = self.rep_qual_draw_type.currentText() if hasattr(self, 'rep_qual_draw_type') else "الكل"
         sel_cat = self.rep_qual_category.currentData() if hasattr(self, 'rep_qual_category') else None
         sel_cycle = self.rep_qual_cycle.currentData() if hasattr(self, 'rep_qual_cycle') else "auto"
         search_txt = self.rep_qual_search.text().strip().lower() if hasattr(self, 'rep_qual_search') else ""
         
-        query = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted")
+        query = active_db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted")
         if sel_cat:
             query = query.filter(db_mod.Subscriber.category == sel_cat)
             
@@ -1029,14 +1048,14 @@ class ReportsMixin:
         sub_ids = [s.id for s in all_subs]
 
         # 1. جلب الحالات المالية دفعة واحدة
-        fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db)
+        fin_status_map = db_mod.calculate_financial_status_batch(all_subs, active_db)
 
         # 2. جلب جميع الفئات كقاموس في الذاكرة
-        cats_map = {c.name: c for c in self.db.query(db_mod.Category).all()}
+        cats_map = {c.name: c for c in active_db.query(db_mod.Category).all()}
 
         # 3. جلب أرقام الفائزين بالقرعة الأسبوعية
         winners_set = set(
-            w[0] for w in self.db.query(db_mod.Winner.subscriber_number)
+            w[0] for w in active_db.query(db_mod.Winner.subscriber_number)
             .filter(db_mod.Winner.draw_type.contains("القرعة الاسبوعية"))
             .all()
         )
@@ -1047,7 +1066,7 @@ class ReportsMixin:
         else:
             try:
                 active_cycles = dict(
-                    self.db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
+                    active_db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
                     .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
                     .group_by(db_mod.Payment.subscriber_id)
                     .all()
@@ -1055,8 +1074,9 @@ class ReportsMixin:
             except Exception:
                 active_cycles = {}
 
-        # 5. جلب أقساط هؤلاء المشتركين فقط
-        payments_data = self.db.query(
+        # 5. جلب أقساط هؤلاء المشتركين فقط للدورات المحددة لتسريع الاستعلام
+        needed_cycles = set(active_cycles.values()) if active_cycles else {1}
+        payments_data = active_db.query(
             db_mod.Payment.subscriber_id,
             db_mod.Payment.cycle_number,
             db_mod.Payment.amount,
@@ -1064,14 +1084,15 @@ class ReportsMixin:
             db_mod.Payment.paid_date,
             db_mod.Payment.is_paid
         ).filter(
-            db_mod.Payment.subscriber_id.in_(sub_ids)
+            db_mod.Payment.subscriber_id.in_(sub_ids),
+            db_mod.Payment.cycle_number.in_(needed_cycles)
         ).all()
 
         payments_by_sub = {}
         for p in payments_data:
             payments_by_sub.setdefault(p[0], []).append(p)
 
-        setting_inc = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "incentive_max_late_installments").first()
+        setting_inc = active_db.query(db_mod.Setting).filter(db_mod.Setting.key == "incentive_max_late_installments").first()
         max_late_allowed = int(setting_inc.value) if (setting_inc and setting_inc.value and str(setting_inc.value).isdigit()) else 1
         
         result = []
@@ -1152,6 +1173,7 @@ class ReportsMixin:
                 
             result.append({
                 "sub": sub,
+                "sub_id": sub.id,
                 "name": sub_name,
                 "phone": sub_phone,
                 "category": sub_cat,
@@ -1174,8 +1196,31 @@ class ReportsMixin:
             pass
         self.db.expire_all()
         
-        all_items = self.get_qualified_subscribers_list()
-        
+        # إلغاء أي عامل سابق قيد التشغيل
+        if hasattr(self, '_qual_draw_loader') and self._qual_draw_loader.isRunning():
+            self._qual_draw_loader.quit()
+
+        # إظهار مؤشر تحميل فوري في الجدول لعدم تجميد واجهة البرنامج إطلاقاً
+        self.table_rep_draw_qualified.setRowCount(1)
+        loading_item = QTableWidgetItem("⏳ جاري فحص وتحديث بيانات المؤهلين للسحب في الخلفية...")
+        loading_item.setForeground(QColor("#64748b"))
+        self.table_rep_draw_qualified.setItem(0, 0, loading_item)
+
+        self._qual_draw_loader = QualifiedDrawLoader(lambda bg_db: self.get_qualified_subscribers_list(bg_db))
+        self._qual_draw_loader.data_ready.connect(self._on_qualified_draw_data_ready)
+        self._qual_draw_loader.start()
+
+    def _on_qualified_draw_data_ready(self, all_items):
+        self._cached_qual_draw_items = all_items
+        self._populate_qualified_draw_table(all_items)
+
+    def on_qual_status_filter_changed(self):
+        if hasattr(self, '_cached_qual_draw_items') and self._cached_qual_draw_items:
+            self._populate_qualified_draw_table(self._cached_qual_draw_items)
+        else:
+            self.refresh_qualified_draw_table()
+
+    def _populate_qualified_draw_table(self, all_items):
         # Apply qualification status filter
         status_filter = self.rep_qual_status_filter.currentData() if hasattr(self, 'rep_qual_status_filter') else "all"
         if status_filter == "qualified":
@@ -1189,7 +1234,8 @@ class ReportsMixin:
         
         for i, item in enumerate(items):
             name_cell = QTableWidgetItem(item["name"])
-            name_cell.setData(Qt.ItemDataRole.UserRole, item["sub"].id)
+            sub_id = item.get("sub_id") or (item["sub"].id if item.get("sub") else None)
+            name_cell.setData(Qt.ItemDataRole.UserRole, sub_id)
             
             self.table_rep_draw_qualified.setItem(i, 0, name_cell)
             self.table_rep_draw_qualified.setItem(i, 1, QTableWidgetItem(item["phone"]))

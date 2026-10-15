@@ -54,22 +54,39 @@ class StaffMixin:
             self.staff_grid.itemAt(i).widget().setParent(None)
             
         staff_members = self.db.query(db_mod.Staff).all()
+        if not staff_members:
+            return
+
+        theme_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "admin_theme").first()
+        theme = theme_setting.value if theme_setting else "dark"
+
+        # جلب إحصائيات تحصيل الموظفين في استعلام تجميعي واحد وسريع جداً
+        staff_ids = [s.id for s in staff_members]
+        stats_data = dict(
+            (row[0], (row[1], float(row[2] or 0.0))) for row in self.db.query(
+                db_mod.Payment.staff_id,
+                func.count(db_mod.Payment.id),
+                func.coalesce(func.sum(db_mod.Payment.amount), 0)
+            ).filter(
+                db_mod.Payment.staff_id.in_(staff_ids),
+                db_mod.Payment.is_paid == True
+            ).group_by(db_mod.Payment.staff_id).all()
+        )
+
         cols = 2
         for idx, s in enumerate(staff_members):
-            card = self.create_staff_card(s)
+            count, total_sum = stats_data.get(s.id, (0, 0.0))
+            card = self.create_staff_card(s, theme, count, total_sum)
             self.staff_grid.addWidget(card, idx // cols, idx % cols)
         
         self.staff_grid.setRowStretch(self.staff_grid.rowCount(), 1)
 
-    def create_staff_card(self, s):
+    def create_staff_card(self, s, theme="dark", collected_count=0, collected_sum=0.0):
         card = QFrame()
         card.setObjectName("StatCard")
         card.setMinimumHeight(240)
         card.setMinimumWidth(380)
         
-        # Get theme
-        theme_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "admin_theme").first()
-        theme = theme_setting.value if theme_setting else "dark"
         is_dark = (theme == "dark")
         
         bg_style = "background: #1e293b; border: 1px solid #334155;" if is_dark else "background: white; border: 1px solid #e2e8f0;"
@@ -157,10 +174,6 @@ class StaffMixin:
         # Statistics Layout
         stats_lay = QGridLayout()
         stats_lay.setSpacing(8)
-        
-        # Calculate stats for this staff
-        collected_count = self.db.query(db_mod.Payment).filter(db_mod.Payment.staff_id == s.id, db_mod.Payment.is_paid == True).count()
-        collected_sum = self.db.query(func.sum(db_mod.Payment.amount)).filter(db_mod.Payment.staff_id == s.id, db_mod.Payment.is_paid == True).scalar() or 0
         
         lbl_col_title = QLabel("العمليات المحصلة:")
         lbl_col_title.setFont(QFont("Tajawal", 9))

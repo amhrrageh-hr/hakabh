@@ -65,6 +65,105 @@ class GrandPrizePeriodDialog(QDialog):
     def get_selected_period(self):
         return self.combo_period.currentData()
 
+class DrawStatsLoader(QThread):
+    stats_loaded = pyqtSignal(dict)
+
+    def __init__(self, selected_cycles):
+        super().__init__()
+        self.selected_cycles = dict(selected_cycles or {})
+
+    def run(self):
+        bg_db = db_mod.SessionLocal()
+        try:
+            today = datetime.datetime.now()
+            today_date = today.date()
+            categories = bg_db.query(db_mod.Category).all()
+            all_accepted = bg_db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == 'accepted').all()
+            fin_status_map = db_mod.calculate_financial_status_batch(all_accepted, bg_db)
+            disciplined_by_cat = {}
+            for s in all_accepted:
+                if fin_status_map.get(s.id) not in ['late', 'suspended']:
+                    disciplined_by_cat.setdefault(s.category, []).append(s)
+
+            sub_ids = [s.id for subs in disciplined_by_cat.values() for s in subs]
+            active_cycles = dict(
+                bg_db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
+                .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
+                .group_by(db_mod.Payment.subscriber_id)
+                .all()
+            ) if sub_ids else {}
+
+            needed_sub_cycles = {}
+            for cat in categories:
+                sel_c = self.selected_cycles.get(cat.name, 'auto')
+                for s in disciplined_by_cat.get(cat.name, []):
+                    if sel_c != 'auto' and isinstance(sel_c, int):
+                        needed_sub_cycles[s.id] = sel_c
+                    else:
+                        needed_sub_cycles[s.id] = active_cycles.get(s.id, 1)
+
+            needed_cycles_set = set(needed_sub_cycles.values()) if needed_sub_cycles else {1}
+            payments_data = bg_db.query(
+                db_mod.Payment.subscriber_id,
+                db_mod.Payment.cycle_number,
+                db_mod.Payment.amount,
+                db_mod.Payment.due_date,
+                db_mod.Payment.paid_date,
+                db_mod.Payment.is_paid
+            ).filter(
+                db_mod.Payment.subscriber_id.in_(sub_ids),
+                db_mod.Payment.cycle_number.in_(needed_cycles_set)
+            ).all() if sub_ids else []
+
+            payments_by_sub = {}
+            for p in payments_data:
+                if p[1] == needed_sub_cycles.get(p[0]):
+                    payments_by_sub.setdefault(p[0], []).append(p)
+
+            setting_inc = bg_db.query(db_mod.Setting).filter(db_mod.Setting.key == 'incentive_max_late_installments').first()
+            max_late_allowed = int(setting_inc.value) if (setting_inc and setting_inc.value and str(setting_inc.value).isdigit()) else 1
+
+            cat_stats = {}
+            for cat in categories:
+                subs = disciplined_by_cat.get(cat.name, [])
+                max_inst = cat.max_installments or 0
+                total_expected = (cat.amount * max_inst)
+                completed = 0
+                incentive = 0
+                for s in subs:
+                    s_payments = payments_by_sub.get(s.id, [])
+                    if not s_payments: continue
+                    total_paid = sum(p[2] for p in s_payments if p[5])
+                    is_finished = (total_paid >= total_expected - 0.01) and all(p[5] for p in s_payments)
+                    is_inc = True
+                    has_paid = False
+                    late_count = 0
+                    for p in s_payments:
+                        if not p[3]: continue
+                        p_due = p[3].date()
+                        is_p = p[5]
+                        p_paid = p[4].date() if p[4] else None
+                        if p_due <= today_date:
+                            if not is_p: late_count += 1
+                            else:
+                                has_paid = True
+                                if p_paid and p_paid > p_due: late_count += 1
+                        else:
+                            if is_p:
+                                has_paid = True
+                                if p_paid and p_paid > p_due: late_count += 1
+                    if late_count > max_late_allowed:
+                        is_inc = False
+                    if is_finished: completed += 1
+                    if is_inc and has_paid: incentive += 1
+                cat_stats[cat.name] = (completed, incentive)
+
+            self.stats_loaded.emit(cat_stats)
+        except Exception as e:
+            print("Error in DrawStatsLoader:", e)
+        finally:
+            bg_db.close()
+
 class DrawMixin:
     def show_draw_management(self): 
         try:
@@ -526,7 +625,8 @@ class DrawMixin:
             except Exception:
                 active_cycles = {}
 
-        # جلب دفعات هؤلاء المشتركين فقط بأعمدة محددة
+        # جلب دفعات هؤلاء المشتركين للدورات المطلوبة فقط (تجنب تحميل 14 ألف سجل وتجميد الواجهة)
+        needed_cycles = set(active_cycles.values()) if active_cycles else {1}
         payments_data = self.db.query(
             db_mod.Payment.subscriber_id,
             db_mod.Payment.cycle_number,
@@ -535,7 +635,8 @@ class DrawMixin:
             db_mod.Payment.paid_date,
             db_mod.Payment.is_paid
         ).filter(
-            db_mod.Payment.subscriber_id.in_(sub_ids)
+            db_mod.Payment.subscriber_id.in_(sub_ids),
+            db_mod.Payment.cycle_number.in_(needed_cycles)
         ).all()
 
         payments_by_sub = {}
@@ -614,22 +715,42 @@ class DrawMixin:
         cols = 2 # Show 2 cards per row
         today = datetime.datetime.now()
 
+        # استعلام تجميعي لجلب أعلى دورة وأحدث دورة نشطة لكل فئة دفعة واحدة لتفادي تكرار الاستعلامات
+        try:
+            active_cycles_by_cat = dict(
+                self.db.query(db_mod.Subscriber.category, func.max(db_mod.Payment.cycle_number))
+                .join(db_mod.Payment, db_mod.Subscriber.id == db_mod.Payment.subscriber_id)
+                .filter(db_mod.Payment.due_date <= today)
+                .group_by(db_mod.Subscriber.category)
+                .all()
+            )
+        except Exception:
+            active_cycles_by_cat = {}
+
+        try:
+            max_cycles_by_cat = dict(
+                self.db.query(db_mod.Subscriber.category, func.max(db_mod.Payment.cycle_number))
+                .join(db_mod.Payment, db_mod.Subscriber.id == db_mod.Payment.subscriber_id)
+                .group_by(db_mod.Subscriber.category)
+                .all()
+            )
+        except Exception:
+            max_cycles_by_cat = {}
+
+        if not hasattr(self, '_draw_stats_cache'):
+            self._draw_stats_cache = {}
+        self._draw_stats_labels = {}
+
         for idx, cat in enumerate(categories):
-            # Find the active cycle based on today's date for display label
-            active_p = self.db.query(db_mod.Payment).join(db_mod.Subscriber).filter(
-                db_mod.Subscriber.category == cat.name,
-                db_mod.Payment.due_date <= today
-            ).order_by(db_mod.Payment.due_date.desc()).first()
-            active_cycle = active_p.cycle_number if active_p else 1
-            
+            active_cycle = active_cycles_by_cat.get(cat.name, 1)
             cat_max = cat.max_cycles or 1
-            max_p_cycle = self.db.query(func.max(db_mod.Payment.cycle_number)).join(db_mod.Subscriber).filter(
-                db_mod.Subscriber.category == cat.name
-            ).scalar() or 1
+            max_p_cycle = max_cycles_by_cat.get(cat.name, 1)
             total_cycles = max(cat_max, max_p_cycle)
 
             selected_cycle = self.category_selected_cycles.get(cat.name, "auto")
-            completed_cycle_count, incentive_count = self._get_category_stats(cat, selected_cycle)
+            cached_val = self._draw_stats_cache.get(cat.name)
+            init_w = str(cached_val[0]) if cached_val else "..."
+            init_i = str(cached_val[1]) if cached_val else "..."
             
             # Create a Premium Category Card
             cat_card = QFrame(); cat_card.setObjectName("StatCard")
@@ -664,32 +785,55 @@ class DrawMixin:
             
             # Weekly Stat
             w_vbox = QVBoxLayout()
-            w_val = QLabel(str(completed_cycle_count)); w_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #2e7d32;")
+            w_val = QLabel(init_w); w_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #2e7d32;")
             w_lbl = QLabel("أتموا الدورة"); w_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
             w_vbox.addWidget(w_val); w_vbox.addWidget(w_lbl)
             
             # Incentive Stat
             i_vbox = QVBoxLayout()
-            i_val = QLabel(str(incentive_count)); i_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #1b5e20;")
+            i_val = QLabel(init_i); i_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #1b5e20;")
             i_lbl = QLabel("مؤهلين التحفيزية"); i_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
             i_vbox.addWidget(i_val); i_vbox.addWidget(i_lbl)
             
             stats_row.addLayout(w_vbox); stats_row.addStretch(); stats_row.addLayout(i_vbox)
             v_lay.addLayout(stats_row)
             
+            self._draw_stats_labels[cat.name] = (w_val, i_val)
+            
             def make_on_change(c_box, cat_obj, w_l, i_l):
                 def on_change():
                     val = c_box.currentData()
                     self.category_selected_cycles[cat_obj.name] = val
+                    w_l.setText("...")
+                    i_l.setText("...")
                     w_cnt, i_cnt = self._get_category_stats(cat_obj, val)
                     w_l.setText(str(w_cnt))
                     i_l.setText(str(i_cnt))
+                    self._draw_stats_cache[cat_obj.name] = (w_cnt, i_cnt)
                 return on_change
                 
             combo_cycle.currentIndexChanged.connect(make_on_change(combo_cycle, cat, w_val, i_val))
             
             cat_card.setMinimumWidth(300)
             grid.addWidget(cat_card, idx // cols, idx % cols)
+
+        # تشغيل العامل في الخلفية لتحديث أرقام البطاقات دون تجميد شاشة المستخدم إطلاقاً
+        if hasattr(self, '_draw_stats_loader') and self._draw_stats_loader.isRunning():
+            self._draw_stats_loader.quit()
+        self._draw_stats_loader = DrawStatsLoader(self.category_selected_cycles)
+        self._draw_stats_loader.stats_loaded.connect(self._on_draw_stats_loaded)
+        self._draw_stats_loader.start()
+
+    def _on_draw_stats_loaded(self, cat_stats):
+        if not hasattr(self, '_draw_stats_cache'):
+            self._draw_stats_cache = {}
+        self._draw_stats_cache.update(cat_stats)
+        if hasattr(self, '_draw_stats_labels'):
+            for cat_name, (w_cnt, i_cnt) in cat_stats.items():
+                if cat_name in self._draw_stats_labels:
+                    w_l, i_l = self._draw_stats_labels[cat_name]
+                    w_l.setText(str(w_cnt))
+                    i_l.setText(str(i_cnt))
         
         if not categories:
             self.draw_stats_layout.addWidget(QLabel("لا توجد فئات مسجلة حالياً."))
@@ -1056,33 +1200,60 @@ class DrawMixin:
         disqualified_count = 0
         
         today = datetime.datetime.now()
-        for sub in all_subs:
-            # التحقق من الانضباط المالي للمشترك
-            fin_status = db_mod.calculate_financial_status(sub, self.db)
+        
+        # تحسين فائق: حساب الانضباط المالي دفعة واحدة لكافة المشتركين
+        fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db)
+        cats_map = {c.name: c for c in self.db.query(db_mod.Category).all()}
+        
+        disciplined_subs = []
+        for s in all_subs:
+            fin_status = fin_status_map.get(s.id)
             if fin_status in ["late", "suspended"]:
                 disqualified_count += 1
-                continue
+            else:
+                disciplined_subs.append(s)
+                
+        sub_ids = [s.id for s in disciplined_subs]
+        
+        # جلب الدورات النشطة دفعة واحدة
+        active_cycles = dict(
+            self.db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
+            .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
+            .group_by(db_mod.Payment.subscriber_id)
+            .all()
+        ) if sub_ids else {}
 
-            # Determine the cycle for this subscriber (selected vs auto)
+        # تحديد الدورة المطلوبة لكل مشترك
+        needed_sub_cycles = {}
+        for sub in disciplined_subs:
             cat_selected = self.category_selected_cycles.get(sub.category, "auto")
             if cat_selected != "auto" and isinstance(cat_selected, int):
                 sub_current_cycle = cat_selected
             else:
-                active_p = self.db.query(db_mod.Payment).filter(
-                    db_mod.Payment.subscriber_id == sub.id,
-                    db_mod.Payment.due_date <= today
-                ).order_by(db_mod.Payment.due_date.desc()).first()
-                sub_current_cycle = active_p.cycle_number if active_p else 1
+                sub_current_cycle = active_cycles.get(sub.id, 1)
+            needed_sub_cycles[sub.id] = sub_current_cycle
 
-            payments = self.db.query(db_mod.Payment).filter(
-                db_mod.Payment.subscriber_id == sub.id, 
-                db_mod.Payment.cycle_number == sub_current_cycle
-            ).order_by(db_mod.Payment.installment_number.asc()).all()
-            
-            if not payments: continue
-            
+        # جلب جميع أقساط الدورات المطلوبة بهؤلاء المشتركين فقط دفعة واحدة
+        needed_cycles_set = set(needed_sub_cycles.values()) if needed_sub_cycles else {1}
+        raw_payments = self.db.query(db_mod.Payment).filter(
+            db_mod.Payment.subscriber_id.in_(sub_ids),
+            db_mod.Payment.cycle_number.in_(needed_cycles_set)
+        ).order_by(db_mod.Payment.installment_number.asc()).all() if sub_ids else []
+
+        payments_by_sub = {}
+        for p in raw_payments:
+            if p.cycle_number == needed_sub_cycles.get(p.subscriber_id):
+                payments_by_sub.setdefault(p.subscriber_id, []).append(p)
+
+        max_late_allowed = self._get_incentive_max_late()
+
+        for sub in disciplined_subs:
+            payments = payments_by_sub.get(sub.id, [])
+            if not payments:
+                continue
+
             # Find category for max_installments
-            cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first()
+            cat = cats_map.get(sub.category)
             max_inst = cat.max_installments if cat else 0
 
             # الأهلية: سداد كامل المبلغ المطلوب للدورة (مثلاً: 12 قسط × 1000 ريال)
