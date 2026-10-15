@@ -50,10 +50,12 @@ from gui.pages.draw import DrawMixin
 from gui.pages.cycles import CyclesMixin
 from gui.pages.messaging import MessagingMixin
 from gui.pages.staff import StaffMixin
+from api_client import get_api_client, APIWorker
 
 class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, CapitalMixin, ReportsMixin, DrawMixin, CyclesMixin, MessagingMixin, StaffMixin):
     def __init__(self, staff=None):
         super().__init__()
+        self.api_client = get_api_client()
         self.logged_in_staff = staff
         self.setWindowTitle("لوحة تحكم هكبة المليون - Hakbah million")
         self.resize(1300, 850)

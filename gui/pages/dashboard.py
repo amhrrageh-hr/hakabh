@@ -126,10 +126,59 @@ class DashboardMixin:
         self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "registration_open").update({"value": val})
         self.db.commit()
     def refresh_stats(self):
-        self.db.expire_all() # تحديث الجلسة لقراءة البيانات الجديدة من الموقع
-        for i in reversed(range(self.stats_grid.count())): self.stats_grid.itemAt(i).widget().setParent(None)
+        if hasattr(self, 'api_client') and self.api_client:
+            if hasattr(self, '_dash_stats_worker') and self._dash_stats_worker.isRunning():
+                self._dash_stats_worker.quit()
+            from api_client import APIWorker
+            self._dash_stats_worker = APIWorker(self.api_client.get_dashboard_stats)
+            self._dash_stats_worker.finished.connect(self._render_dashboard_stats_api)
+            self._dash_stats_worker.error.connect(lambda err: self._render_dashboard_stats_db())
+            self._dash_stats_worker.start()
+        else:
+            self._render_dashboard_stats_db()
+
+    def _render_dashboard_stats_api(self, data):
+        for i in reversed(range(self.stats_grid.count())):
+            w = self.stats_grid.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+
+        total_subscribers = data.get("total_subscribers", 0)
+        cat_counts = data.get("category_counts", {})
         
-        # استعلام تجميعي واحد لجلب أعداد المشتركين لكل الفئات بدلاً من استعلام منفصل لكل فئة
+        items = [("إجمالي المشتركين", total_subscribers, "#2e7d32")]
+        colors = ["#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444"]
+        
+        cats = [c for c in cat_counts.keys() if c != "غير محدد"]
+        if not cats and hasattr(self, 'db'):
+            try:
+                cats = [c.name for c in self.db.query(db_mod.Category).all()]
+            except Exception:
+                cats = []
+
+        for i, cat_name in enumerate(cats):
+            count = cat_counts.get(cat_name, 0)
+            items.append((cat_name, count, colors[i % len(colors)]))
+
+        for title, value, color in items:
+            card = QFrame(); card.setObjectName("StatCard"); card.setMinimumHeight(120)
+            vbox = QVBoxLayout(card); vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            t_lbl = QLabel(title); t_lbl.setObjectName("StatTitle"); t_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            vbox.addWidget(t_lbl)
+            v_lbl = QLabel(str(value)); v_lbl.setObjectName("StatValue"); v_lbl.setStyleSheet(f"color: {color};"); v_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            vbox.addWidget(v_lbl)
+            self.stats_grid.addWidget(card)
+
+    def _render_dashboard_stats_db(self):
+        try:
+            self.db.expire_all()
+        except Exception:
+            pass
+        for i in reversed(range(self.stats_grid.count())):
+            w = self.stats_grid.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+        
         cat_counts = dict(
             self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id))
             .group_by(db_mod.Subscriber.category)
