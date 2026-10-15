@@ -817,6 +817,9 @@ class DrawMixin:
             cat_card.setMinimumWidth(300)
             grid.addWidget(cat_card, idx // cols, idx % cols)
 
+        if not categories:
+            self.draw_stats_layout.addWidget(QLabel("لا توجد فئات مسجلة حالياً."))
+
         # تشغيل العامل في الخلفية لتحديث أرقام البطاقات دون تجميد شاشة المستخدم إطلاقاً
         if hasattr(self, '_draw_stats_loader') and self._draw_stats_loader.isRunning():
             self._draw_stats_loader.quit()
@@ -834,9 +837,6 @@ class DrawMixin:
                     w_l, i_l = self._draw_stats_labels[cat_name]
                     w_l.setText(str(w_cnt))
                     i_l.setText(str(i_cnt))
-        
-        if not categories:
-            self.draw_stats_layout.addWidget(QLabel("لا توجد فئات مسجلة حالياً."))
 
     def refresh_draw_categories_filter(self):
         cats = self.db.query(db_mod.Category).all()
