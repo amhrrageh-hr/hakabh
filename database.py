@@ -261,8 +261,8 @@ class AdminNotification(Base):
     id = Column(Integer, primary_key=True, index=True)
     message = Column(String)
     type = Column(String, default="info") # e.g., "new_subscriber", "payment_received"
-    is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime, server_default=func.now())
+    is_read = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, server_default=func.now(), index=True)
 
 class SubscriberMessage(Base):
     __tablename__ = "subscriber_messages"
