@@ -15,3 +15,4 @@ echo ==============================================
 echo Done! You can find the installer in the "dist" folder.
 echo ==============================================
 pause
+#نتابسنتابنشسابسنت
