@@ -73,6 +73,17 @@ class DrawStatsLoader(QThread):
         self.selected_cycles = dict(selected_cycles or {})
 
     def run(self):
+        try:
+            from api_client import get_api_client
+            client = get_api_client()
+            res = client.get_draw_stats()
+            stats = {c["category_name"]: (c["completed_cycle_count"], c["incentive_count"]) for c in res.get("categories", [])}
+            if stats:
+                self.stats_loaded.emit(stats)
+                return
+        except Exception:
+            pass
+
         bg_db = db_mod.SessionLocal()
         try:
             today = datetime.datetime.now()

@@ -402,20 +402,72 @@ class CapitalMixin:
         import threading
         threading.Thread(target=_background_worker, daemon=True).start()
     def refresh_capital_stats(self):
-        self.db.expire_all() # ضمان جلب أحدث مبالغ السداد من الموقع
-        # Clear stats
+        sel_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
+        if hasattr(self, 'api_client') and self.api_client:
+            if hasattr(self, '_cap_stats_worker') and self._cap_stats_worker.isRunning():
+                self._cap_stats_worker.quit()
+            from api_client import APIWorker
+            self._cap_stats_worker = APIWorker(self.api_client.get_capital_stats, category=sel_cat)
+            self._cap_stats_worker.finished.connect(self._render_capital_stats_api)
+            self._cap_stats_worker.error.connect(lambda err: self._render_capital_stats_db())
+            self._cap_stats_worker.start()
+        else:
+            self._render_capital_stats_db()
+
+    def _render_capital_stats_api(self, data):
+        for i in reversed(range(self.capital_stats_layout.count())):
+            widget = self.capital_stats_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        total_expected = float(data.get("total_expected", 0.0))
+        total_collected = float(data.get("total_collected", 0.0))
+        total_winner_payouts = float(data.get("total_winner_payouts", 0.0))
+        total_expenses = float(data.get("total_expenses", 0.0))
+        total_arrears = float(data.get("total_arrears", 0.0))
+        net_cash = float(data.get("net_cash", 0.0))
+
+        stats = [
+            ("رأس المال المستهدف (الإجمالي)", f"{total_expected:,.2f} ر.ي", "#3b82f6"),
+            ("المبالغ المحصلة (الإيرادات)", f"{total_collected:,.2f} ر.ي", "#2e7d32"),
+            ("مستحقات الفائزين (المسددة)", f"{total_winner_payouts:,.2f} ر.ي", "#8b5cf6"),
+            ("النفقات التشغيلية", f"{total_expenses:,.2f} ر.ي", "#ec4899"),
+            ("الأقساط المتأخرة (المستحقة)", f"{total_arrears:,.2f} ر.ي", "#ef4444"),
+            ("صافي السيولة النقدية المتبقية", f"{net_cash:,.2f} ر.ي", "#06b6d4" if net_cash >= 0 else "#ef4444")
+        ]
+
+        for title, value, color in stats:
+            card = QFrame()
+            card.setObjectName("StatCard")
+            card.setMinimumHeight(120)
+            vbox = QVBoxLayout(card)
+            vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            t_lbl = QLabel(title)
+            t_lbl.setObjectName("StatTitle")
+            t_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            vbox.addWidget(t_lbl)
+            v_lbl = QLabel(value)
+            v_lbl.setObjectName("StatValue")
+            v_lbl.setStyleSheet(f"color: {color}; font-size: 20px; font-weight: bold;")
+            v_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            vbox.addWidget(v_lbl)
+            self.capital_stats_layout.addWidget(card)
+
+    def _render_capital_stats_db(self):
+        try:
+            self.db.expire_all()
+        except Exception:
+            pass
         for i in reversed(range(self.capital_stats_layout.count())):
             widget = self.capital_stats_layout.itemAt(i).widget()
             if widget:
                 widget.setParent(None)
                 widget.deleteLater()
             
-        # Queries
-        # حساب رأس المال المتوقع بناءً على جميع السجلات المولدة للمشتركين المقبولين
         sel_cat = self.cap_filter_cat.currentData()
         now_val = datetime.datetime.now()
 
-        # استعلام تجميعي واحد وسريع جداً لجلب الإجمالي والمحصل والمتأخرات دفعة واحدة
         base_filter = [db_mod.Subscriber.status == "accepted"]
         if sel_cat:
             base_filter.append(db_mod.Subscriber.category == sel_cat)
@@ -429,15 +481,12 @@ class CapitalMixin:
         total_expected = float(stats_row.expected) if stats_row else 0.0
         total_collected = float(stats_row.collected) if stats_row else 0.0
         total_arrears = float(stats_row.arrears) if stats_row else 0.0
-        total_remaining = total_expected - total_collected
         
-        # تعديل حساب المصاريف ليعتمد على الفئة المختارة
         exp_query = self.db.query(func.sum(db_mod.Expense.amount))
         if sel_cat:
             exp_query = exp_query.filter(db_mod.Expense.subscriber_category == sel_cat)
         total_expenses = exp_query.scalar() or 0
         
-        # حساب مستحقات الفائزين بالقرعة المسددة (الذين استلموا مبالغهم)
         winner_payouts_query = self.db.query(func.sum(db_mod.Winner.payout_amount)).filter(
             db_mod.Winner.is_received == True
         )
