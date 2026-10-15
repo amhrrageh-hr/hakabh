@@ -69,7 +69,12 @@ class SubscribersMixin:
         search_layout.addWidget(QLabel("بحث متقدم:"))
         self.sub_search_input = QLineEdit()
         self.sub_search_input.setPlaceholderText("ابحث بالاسم، الهاتف، أو رقم الحساب...")
-        self.sub_search_input.textChanged.connect(self.load_subscribers)
+        self.sub_search_timer = QTimer(page)
+        self.sub_search_timer.setSingleShot(True)
+        self.sub_search_timer.setInterval(350)
+        self.sub_search_timer.timeout.connect(self.load_subscribers)
+        self.sub_search_input.textChanged.connect(lambda: self.sub_search_timer.start())
+        self.sub_search_input.returnPressed.connect(lambda: (self.sub_search_timer.stop(), self.load_subscribers()))
         search_layout.addWidget(self.sub_search_input)
         layout.addLayout(search_layout)
         self.sub_tabs = QTabWidget()
@@ -161,6 +166,11 @@ class SubscribersMixin:
                 self._payment_stats = {}
         except Exception:
             self._payment_stats = {}
+
+        try:
+            self._fin_status_cache = db_mod.calculate_financial_status_batch(subs, self.db)
+        except Exception:
+            self._fin_status_cache = {}
             
         # Create actual content and replace placeholder
         content = self.create_sub_cards_view(subs)
@@ -243,23 +253,15 @@ class SubscribersMixin:
         card.setMinimumHeight(250)
         card.setMinimumWidth(400) # زيادة طفيفة في العرض
 
-        # إضافة تأثير الظل
-        shadow = QGraphicsDropShadowEffect(card)
-        shadow.setBlurRadius(25)
-        shadow.setXOffset(0)
-        shadow.setYOffset(5)
-        shadow.setColor(QColor(0, 0, 0, 30)) # ظل أسود خفيف
-        card.setGraphicsEffect(shadow)
-
         card.setStyleSheet("""
             QFrame#StatCard {
                 background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #ffffff, stop:1 #f8fafc);
-                border: 1px solid #e2e8f0;
-                border-radius: 16px;
-                padding: 1px; /* هام لتجنب قص الظل */
+                border: 1px solid #cbd5e1;
+                border-radius: 14px;
             }
             QFrame#StatCard:hover {
-                border: 1px solid #2563eb;
+                border: 1.5px solid #2563eb;
+                background-color: #f8fafc;
             }
         """)
         
@@ -358,7 +360,9 @@ class SubscribersMixin:
         if s.status == "excluded":
             fin_text, fin_bg, fin_fg = "مستبعد 🚫", "#fee2e2", "#991b1b"
         else:
-            fin_status = db_mod.calculate_financial_status(s, self.db)
+            fin_status = getattr(self, '_fin_status_cache', {}).get(s.id)
+            if not fin_status:
+                fin_status = db_mod.calculate_financial_status(s, self.db)
             if fin_status == "committed":
                 fin_text, fin_bg, fin_fg = "ملتزم 🟢", "#d1fae5", "#065f46"
             elif fin_status == "pending_payment":

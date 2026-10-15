@@ -892,6 +892,7 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
                 self.db.add(db_mod.Setting(key=key, value=val))
         
         self.db.commit()
+        db_mod.invalidate_discipline_cache()
         from gui.dialogs import ModernDialog
         ModernDialog(self, "نجاح", "تم حفظ إعدادات الانضباط المالي بنجاح.").exec()
 

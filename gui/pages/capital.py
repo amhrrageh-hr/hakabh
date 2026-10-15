@@ -90,7 +90,12 @@ class CapitalMixin:
         t2_header.addWidget(QLabel("بحث:"))
         self.cap_search_def = QLineEdit()
         self.cap_search_def.setPlaceholderText("ابحث باسم المشترك أو الهاتف...")
-        self.cap_search_def.textChanged.connect(self.refresh_capital_defaulters)
+        self._cap_search_def_timer = QTimer(page)
+        self._cap_search_def_timer.setSingleShot(True)
+        self._cap_search_def_timer.setInterval(350)
+        self._cap_search_def_timer.timeout.connect(self.refresh_capital_defaulters)
+        self.cap_search_def.textChanged.connect(lambda: self._cap_search_def_timer.start())
+        self.cap_search_def.returnPressed.connect(lambda: (self._cap_search_def_timer.stop(), self.refresh_capital_defaulters()))
         t2_header.addWidget(self.cap_search_def, 1)
         
         btn_pay_all = QPushButton("سداد المتأخرات دفعة واحدة")
@@ -128,7 +133,12 @@ class CapitalMixin:
         t3_header.addWidget(QLabel("الموقف المالي للمشتركين:"))
         self.cap_search_standing = QLineEdit()
         self.cap_search_standing.setPlaceholderText("ابحث باسم المشترك أو الهاتف...")
-        self.cap_search_standing.textChanged.connect(self.refresh_capital_standing)
+        self._cap_search_standing_timer = QTimer(page)
+        self._cap_search_standing_timer.setSingleShot(True)
+        self._cap_search_standing_timer.setInterval(350)
+        self._cap_search_standing_timer.timeout.connect(self.refresh_capital_standing)
+        self.cap_search_standing.textChanged.connect(lambda: self._cap_search_standing_timer.start())
+        self.cap_search_standing.returnPressed.connect(lambda: (self._cap_search_standing_timer.stop(), self.refresh_capital_standing()))
         t3_header.addWidget(self.cap_search_standing, 1)
         t3_layout.addLayout(t3_header)
         
@@ -227,7 +237,12 @@ class CapitalMixin:
         
         self.exp_search_input = QLineEdit()
         self.exp_search_input.setPlaceholderText("ابحث باسم النفقة أو الملاحظات...")
-        self.exp_search_input.textChanged.connect(self.refresh_capital_expenses)
+        self._exp_search_timer = QTimer(page)
+        self._exp_search_timer.setSingleShot(True)
+        self._exp_search_timer.setInterval(350)
+        self._exp_search_timer.timeout.connect(self.refresh_capital_expenses)
+        self.exp_search_input.textChanged.connect(lambda: self._exp_search_timer.start())
+        self.exp_search_input.returnPressed.connect(lambda: (self._exp_search_timer.stop(), self.refresh_capital_expenses()))
         t4_header.addWidget(self.exp_search_input, 1)
         
         btn_exp_excel = QPushButton("تصدير كشف المصاريف")
@@ -266,7 +281,12 @@ class CapitalMixin:
         t5_header.addWidget(QLabel("بحث:"))
         self.cap_search_winners = QLineEdit()
         self.cap_search_winners.setPlaceholderText("ابحث باسم المشترك، رقم الحساب، أو الهاتف...")
-        self.cap_search_winners.textChanged.connect(self.refresh_capital_winners)
+        self._cap_search_win_timer = QTimer(page)
+        self._cap_search_win_timer.setSingleShot(True)
+        self._cap_search_win_timer.setInterval(350)
+        self._cap_search_win_timer.timeout.connect(self.refresh_capital_winners)
+        self.cap_search_winners.textChanged.connect(lambda: self._cap_search_win_timer.start())
+        self.cap_search_winners.returnPressed.connect(lambda: (self._cap_search_win_timer.stop(), self.refresh_capital_winners()))
         t5_header.addWidget(self.cap_search_winners, 1)
         
         btn_win_excel = QPushButton("تصدير كشف مستحقات الفائزين")
@@ -287,21 +307,31 @@ class CapitalMixin:
         t5_layout.addWidget(self.table_cap_winners)
         
         self.capital_tabs.addTab(self.tab_cap_winners, "مستحقات الفائزين بالقرعة")
+        self.capital_tabs.currentChanged.connect(self.refresh_current_capital_tab)
         
         page.setWidget(container)
         return page
+
+    def refresh_current_capital_tab(self):
+        idx = self.capital_tabs.currentIndex()
+        if idx == 0:
+            self.refresh_capital_categories()
+        elif idx == 1:
+            self.refresh_capital_defaulters()
+        elif idx == 2:
+            self.refresh_capital_standing()
+        elif idx == 3:
+            self.refresh_capital_expenses()
+        elif idx == 4:
+            self.refresh_capital_winners()
+
     def show_capital_management(self):
         self.content_stack.setCurrentWidget(self.page_capital)
         self._update_nav_style("إدارة رأس المال")
         
         self.load_capital_category_filter()
-        
         self.refresh_capital_stats()
-        self.refresh_capital_categories()
-        self.refresh_capital_defaulters()
-        self.refresh_capital_standing()
-        self.refresh_capital_expenses()
-        self.refresh_capital_winners()
+        self.refresh_current_capital_tab()
 
     def load_capital_category_filter(self):
         self.cap_filter_cat.blockSignals(True)
@@ -316,57 +346,61 @@ class CapitalMixin:
 
     def refresh_capital_on_category_change(self):
         self.refresh_capital_stats()
-        self.refresh_capital_categories()
-        self.refresh_capital_defaulters()
-        self.refresh_capital_standing()
-        self.refresh_capital_winners()
+        self.refresh_current_capital_tab()
+
     def sync_unpaid_installments(self):
-        """تقوم هذه الدالة بإضافة أقساط غير مسددة تلقائياً للأيام التي مضت ولم يسدد فيها المشترك"""
-        try:
-            now_date = datetime.datetime.now().date()
-            subscribers = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
-            
-            for sub in subscribers:
-                # جلب بيانات الفئة لمعرفة تاريخ البدء والمبلغ
-                cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first()
-                if not cat or not cat.start_date:
-                    continue
+        """تقوم هذه الدالة بإضافة أقساط غير مسددة تلقائياً للأيام التي مضت في مسار خلفي لتجنب تجميد الواجهة"""
+        def _background_worker():
+            bg_db = db_mod.SessionLocal()
+            try:
+                now_date = datetime.datetime.now().date()
+                categories = {c.name: c for c in bg_db.query(db_mod.Category).all()}
+                subscribers = bg_db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
                 
-                # التحقق من آخر قسط مسجل لهذا المشترك
-                last_p = self.db.query(db_mod.Payment).filter(
-                    db_mod.Payment.subscriber_id == sub.id
-                ).order_by(db_mod.Payment.due_date.desc()).first()
-                
-                # تحديد تاريخ بدء الفحص (إما تاريخ بدء الفئة أو اليوم التالي لآخر قسط)
-                if last_p:
-                    current_check = last_p.due_date.date() + datetime.timedelta(days=1)
-                else:
-                    # نبدأ دائماً من تاريخ بدء الفئة لضمان توليد ما فات المشترك من أقساط الهكبة
-                    current_check = cat.start_date.date() if cat.start_date else now_date
-                
-                # إضافة أقساط "غير مسددة" لكل يوم مضى حتى تاريخ اليوم
-                while current_check <= now_date:
-                    total_days = (current_check - cat.start_date.date()).days
-                    cycle = (total_days // cat.max_installments) + 1
-                    inst = (total_days % cat.max_installments) + 1
+                added = 0
+                for sub in subscribers:
+                    cat = categories.get(sub.category)
+                    if not cat or not cat.start_date:
+                        continue
                     
-                    if cycle <= cat.max_cycles:
-                        new_p = db_mod.Payment(
-                            subscriber_id=sub.id,
-                            amount=cat.amount,
-                            due_date=datetime.datetime.combine(current_check, datetime.time.min),
-                            is_paid=False,
-                            cycle_number=cycle,
-                            installment_number=inst,
-                            note="قسط يومي غير مسدد"
-                        )
-                        self.db.add(new_p)
-                    current_check += datetime.timedelta(days=1)
-            
-            self.db.commit()
-        except Exception as e:
-            print(f"Error during auto-sync: {e}")
-            self.db.rollback()
+                    last_p = bg_db.query(db_mod.Payment).filter(
+                        db_mod.Payment.subscriber_id == sub.id
+                    ).order_by(db_mod.Payment.due_date.desc()).first()
+                    
+                    if last_p:
+                        current_check = last_p.due_date.date() + datetime.timedelta(days=1)
+                    else:
+                        current_check = cat.start_date.date() if cat.start_date else now_date
+                    
+                    while current_check <= now_date:
+                        total_days = (current_check - cat.start_date.date()).days
+                        cycle = (total_days // cat.max_installments) + 1
+                        inst = (total_days % cat.max_installments) + 1
+                        
+                        if cycle <= cat.max_cycles:
+                            new_p = db_mod.Payment(
+                                subscriber_id=sub.id,
+                                amount=cat.amount,
+                                due_date=datetime.datetime.combine(current_check, datetime.time.min),
+                                is_paid=False,
+                                cycle_number=cycle,
+                                installment_number=inst,
+                                note="قسط يومي غير مسدد"
+                            )
+                            bg_db.add(new_p)
+                            added += 1
+                        current_check += datetime.timedelta(days=1)
+                
+                if added > 0:
+                    bg_db.commit()
+            except Exception as e:
+                print(f"Error during auto-sync: {e}")
+                bg_db.rollback()
+            finally:
+                bg_db.close()
+
+        import threading
+        threading.Thread(target=_background_worker, daemon=True).start()
     def refresh_capital_stats(self):
         self.db.expire_all() # ضمان جلب أحدث مبالغ السداد من الموقع
         # Clear stats

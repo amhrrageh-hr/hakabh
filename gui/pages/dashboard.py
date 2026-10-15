@@ -128,10 +128,18 @@ class DashboardMixin:
     def refresh_stats(self):
         self.db.expire_all() # تحديث الجلسة لقراءة البيانات الجديدة من الموقع
         for i in reversed(range(self.stats_grid.count())): self.stats_grid.itemAt(i).widget().setParent(None)
-        items = [("إجمالي المشتركين", self.db.query(db_mod.Subscriber).count(), "#2e7d32")]
+        
+        # استعلام تجميعي واحد لجلب أعداد المشتركين لكل الفئات بدلاً من استعلام منفصل لكل فئة
+        cat_counts = dict(
+            self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id))
+            .group_by(db_mod.Subscriber.category)
+            .all()
+        )
+        total_subscribers = self.db.query(db_mod.Subscriber).count()
+        items = [("إجمالي المشتركين", total_subscribers, "#2e7d32")]
         colors = ["#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444"]
         for i, cat in enumerate(self.db.query(db_mod.Category).all()):
-            count = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.category == cat.name).count()
+            count = cat_counts.get(cat.name, 0)
             items.append((cat.name, count, colors[i % len(colors)]))
 
         for title, value, color in items:

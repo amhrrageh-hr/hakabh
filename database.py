@@ -64,7 +64,14 @@ def create_configured_engine(url):
         return create_engine(url, connect_args=connect_args)
     else:
         # إعدادات التوصيل للشبكات والـ Remote PostgreSQL
-        return create_engine(url, connect_args=connect_args, pool_pre_ping=True, pool_recycle=300)
+        return create_engine(
+            url,
+            connect_args=connect_args,
+            pool_size=10,
+            max_overflow=20,
+            pool_pre_ping=True,
+            pool_recycle=300
+        )
 
 engine = create_configured_engine(DATABASE_URL)
 
@@ -398,7 +405,32 @@ def get_db():
     finally:
         db.close()
 
-def calculate_financial_status(subscriber, db):
+_thresholds_cache = {"time": 0.0, "value": (1, 3)}
+
+def invalidate_discipline_cache():
+    global _thresholds_cache
+    _thresholds_cache["time"] = 0.0
+
+def get_discipline_thresholds(db):
+    """جلب حدود التأخر والإيقاف مع تخزين مؤقت لتفادي الاستعلام المتكرر"""
+    global _thresholds_cache
+    import time
+    now = time.time()
+    if now - _thresholds_cache["time"] < 60.0:
+        return _thresholds_cache["value"]
+
+    try:
+        late_setting = db.query(Setting).filter(Setting.key == "discipline_late_threshold").first()
+        suspended_setting = db.query(Setting).filter(Setting.key == "discipline_suspended_threshold").first()
+        late_th = int(late_setting.value) if (late_setting and late_setting.value and str(late_setting.value).isdigit()) else 1
+        susp_th = int(suspended_setting.value) if (suspended_setting and suspended_setting.value and str(suspended_setting.value).isdigit()) else 3
+        _thresholds_cache["value"] = (late_th, susp_th)
+        _thresholds_cache["time"] = now
+    except Exception:
+        pass
+    return _thresholds_cache["value"]
+
+def calculate_financial_status(subscriber, db, settings_cache=None):
     """
     حساب حالة الانضباط المالي للمشترك ديناميكياً:
     - committed: ملتزم (🟢)
@@ -442,12 +474,7 @@ def calculate_financial_status(subscriber, db):
             elif p_date == today_date:
                 due_today_unpaid = True
 
-    # جلب الحدود المخصصة للتأخر والإيقاف من جدول الإعدادات
-    late_setting = db.query(Setting).filter(Setting.key == "discipline_late_threshold").first()
-    suspended_setting = db.query(Setting).filter(Setting.key == "discipline_suspended_threshold").first()
-    
-    late_threshold = int(late_setting.value) if (late_setting and late_setting.value.isdigit()) else 1
-    suspended_threshold = int(suspended_setting.value) if (suspended_setting and suspended_setting.value.isdigit()) else 3
+    late_threshold, suspended_threshold = settings_cache if settings_cache else get_discipline_thresholds(db)
 
     if overdue_count >= suspended_threshold:
         return "suspended"
@@ -457,3 +484,73 @@ def calculate_financial_status(subscriber, db):
         return "pending_payment"
     else:
         return "committed"
+
+def calculate_financial_status_batch(subscribers, db):
+    """حساب الحالة المالية لمجموعة من المشتركين دفعة واحدة عبر استعلام واحد سريع جداً"""
+    if not subscribers:
+        return {}
+    
+    thresholds = get_discipline_thresholds(db)
+    late_threshold, suspended_threshold = thresholds
+    
+    accepted_subs = [s for s in subscribers if s.status == "accepted"]
+    results = {s.id: (s.status or "pending") for s in subscribers if s.status != "accepted"}
+    
+    if not accepted_subs:
+        return results
+    
+    import datetime
+    today = datetime.datetime.now()
+    today_date = today.date()
+    sub_ids = [s.id for s in accepted_subs]
+    
+    # جلب كافة دفعات المشتركين المقبولين باستعلام واحد فقط
+    try:
+        all_payments = db.query(Payment).filter(
+            Payment.subscriber_id.in_(sub_ids)
+        ).order_by(Payment.due_date.asc()).all()
+    except Exception:
+        all_payments = []
+    
+    payments_by_sub = {}
+    for p in all_payments:
+        payments_by_sub.setdefault(p.subscriber_id, []).append(p)
+        
+    for s in accepted_subs:
+        sub_payments = payments_by_sub.get(s.id, [])
+        if not sub_payments:
+            results[s.id] = "committed"
+            continue
+            
+        # استخراج الدورة الحالية: آخر قسط مستحق حتى اليوم
+        past_payments = [p for p in sub_payments if p.due_date and p.due_date <= today]
+        if past_payments:
+            sub_current_cycle = past_payments[-1].cycle_number or 1
+        else:
+            sub_current_cycle = 1
+            
+        cycle_payments = [p for p in sub_payments if p.cycle_number == sub_current_cycle]
+        if not cycle_payments:
+            results[s.id] = "committed"
+            continue
+            
+        overdue_count = 0
+        due_today_unpaid = False
+        for p in cycle_payments:
+            if not p.is_paid and p.due_date:
+                p_date = p.due_date.date()
+                if p_date < today_date:
+                    overdue_count += 1
+                elif p_date == today_date:
+                    due_today_unpaid = True
+                    
+        if overdue_count >= suspended_threshold:
+            results[s.id] = "suspended"
+        elif overdue_count >= late_threshold:
+            results[s.id] = "late"
+        elif due_today_unpaid:
+            results[s.id] = "pending_payment"
+        else:
+            results[s.id] = "committed"
+            
+    return results
