@@ -527,7 +527,6 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
     def show_subscribers(self): self.content_stack.setCurrentWidget(self.page_subscribers); self._update_nav_style("المشتركين"); self.load_subscribers()
     def show_cycles(self): self.content_stack.setCurrentWidget(self.page_cycles); self._update_nav_style("إدارة الدورات والأقساط"); self.refresh_cycles_cat_list()
     def show_messaging_management(self): self.content_stack.setCurrentWidget(self.page_messaging); self._update_nav_style("إدارة الرسائل والتوعية"); self.load_subscriber_messages()
-    def show_staff_management(self): self.content_stack.setCurrentWidget(self.page_staff); self._update_nav_style("الموظفين"); self.load_staff_list()
 
     def show_capital_management(self):
         """عرض صفحة رأس المال مع lazy initialization لتجنب التجميد."""
