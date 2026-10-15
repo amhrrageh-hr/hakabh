@@ -287,9 +287,18 @@ def accept_subscriber_on_payment(session, flush_context, instances):
             if sub and sub.status != "accepted":
                 sub.status = "accepted"
 
-def init_db():
+def init_db(force_migration=False):
     db = SessionLocal()
     try:
+        # إذا تم التحقق من الجداول مسبقاً، تخطي الفحص البطيء لتسريع فتح البرنامج
+        if not force_migration:
+            try:
+                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v1").first()
+                if mig_setting and mig_setting.value == "true":
+                    return
+            except Exception:
+                pass
+
         # Create all tables defined in the models. This is the most reliable way.
         Base.metadata.create_all(bind=engine)
         db.commit()
@@ -391,6 +400,13 @@ def init_db():
         if not reg_setting:
             db.add(Setting(key="registration_open", value="true"))
 
+        # حفظ علامة اكتمال تهيئة الجداول لتسريع الفتح اللاحق
+        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v1").first()
+        if not mig_setting:
+            db.add(Setting(key="schema_migrated_v1", value="true"))
+        else:
+            mig_setting.value = "true"
+
         db.commit()
     except Exception as e:
         print(f"An error occurred during DB initialization: {e}")
@@ -486,7 +502,7 @@ def calculate_financial_status(subscriber, db, settings_cache=None):
         return "committed"
 
 def calculate_financial_status_batch(subscribers, db):
-    """حساب الحالة المالية لمجموعة من المشتركين دفعة واحدة عبر استعلام واحد سريع جداً"""
+    """حساب الحالة المالية لمجموعة من المشتركين دفعة واحدة عبر استعلامين خفيفين جداً دون تحميل آلاف السجلات"""
     if not subscribers:
         return {}
     
@@ -504,41 +520,45 @@ def calculate_financial_status_batch(subscribers, db):
     today_date = today.date()
     sub_ids = [s.id for s in accepted_subs]
     
-    # جلب كافة دفعات المشتركين المقبولين باستعلام واحد فقط
+    # 1. جلب الدورة الحالية لكل مشترك عبر استعلام تجميعي خفيف وسريع جداً
     try:
-        all_payments = db.query(Payment).filter(
-            Payment.subscriber_id.in_(sub_ids)
-        ).order_by(Payment.due_date.asc()).all()
+        active_cycles = dict(
+            db.query(Payment.subscriber_id, func.max(Payment.cycle_number))
+            .filter(Payment.subscriber_id.in_(sub_ids), Payment.due_date <= today)
+            .group_by(Payment.subscriber_id)
+            .all()
+        )
     except Exception:
-        all_payments = []
+        active_cycles = {}
     
-    payments_by_sub = {}
-    for p in all_payments:
-        payments_by_sub.setdefault(p.subscriber_id, []).append(p)
+    # 2. جلب الأقساط غير المسددة فقط (تجنب تحميل 14,000 قسط مسدد بدون فائدة)
+    try:
+        unpaid_payments = db.query(
+            Payment.subscriber_id,
+            Payment.cycle_number,
+            Payment.due_date
+        ).filter(
+            Payment.subscriber_id.in_(sub_ids),
+            Payment.is_paid == False
+        ).all()
+    except Exception:
+        unpaid_payments = []
+    
+    unpaid_by_sub = {}
+    for p in unpaid_payments:
+        unpaid_by_sub.setdefault(p[0], []).append(p)
         
     for s in accepted_subs:
-        sub_payments = payments_by_sub.get(s.id, [])
-        if not sub_payments:
-            results[s.id] = "committed"
-            continue
-            
-        # استخراج الدورة الحالية: آخر قسط مستحق حتى اليوم
-        past_payments = [p for p in sub_payments if p.due_date and p.due_date <= today]
-        if past_payments:
-            sub_current_cycle = past_payments[-1].cycle_number or 1
-        else:
-            sub_current_cycle = 1
-            
-        cycle_payments = [p for p in sub_payments if p.cycle_number == sub_current_cycle]
-        if not cycle_payments:
-            results[s.id] = "committed"
-            continue
-            
+        current_cycle = active_cycles.get(s.id, 1)
+        s_unpaid = unpaid_by_sub.get(s.id, [])
+        # تصفية الأقساط غير المسددة للدورة الحالية فقط
+        cycle_unpaid = [p for p in s_unpaid if p[1] == current_cycle]
+        
         overdue_count = 0
         due_today_unpaid = False
-        for p in cycle_payments:
-            if not p.is_paid and p.due_date:
-                p_date = p.due_date.date()
+        for p in cycle_unpaid:
+            if p[2]:
+                p_date = p[2].date()
                 if p_date < today_date:
                     overdue_count += 1
                 elif p_date == today_date:

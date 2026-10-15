@@ -75,9 +75,19 @@ class DrawMixin:
         self.content_stack.setCurrentWidget(self.page_draw)
         self._update_nav_style("إدارة القرعة")
         self.refresh_draw_categories_filter()
-        self.load_recent_winners()
-        self.load_draw_excluded()
         self.refresh_draw_stats()
+        
+        current_idx = self.draw_tabs.currentIndex()
+        if current_idx == 1:
+            self.load_draw_excluded()
+        elif current_idx == 2:
+            self.load_recent_winners()
+
+    def _on_draw_tab_changed(self, idx):
+        if idx == 1:
+            self.load_draw_excluded()
+        elif idx == 2:
+            self.load_recent_winners()
     def init_draw_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -201,7 +211,12 @@ class DrawMixin:
         ex_filter_layout.addWidget(QLabel("بحث سريع:"))
         self.draw_ex_search = QLineEdit()
         self.draw_ex_search.setPlaceholderText("ابحث باسم المشترك، رقم الحساب، أو الهاتف...")
-        self.draw_ex_search.textChanged.connect(self.load_draw_excluded)
+        self._draw_ex_search_timer = QTimer(page)
+        self._draw_ex_search_timer.setSingleShot(True)
+        self._draw_ex_search_timer.setInterval(350)
+        self._draw_ex_search_timer.timeout.connect(self.load_draw_excluded)
+        self.draw_ex_search.textChanged.connect(lambda: self._draw_ex_search_timer.start())
+        self.draw_ex_search.returnPressed.connect(lambda: (self._draw_ex_search_timer.stop(), self.load_draw_excluded()))
         ex_filter_layout.addWidget(self.draw_ex_search)
         
         ex_filter_layout.addStretch()
@@ -350,6 +365,7 @@ class DrawMixin:
 
         tab3.setWidget(con3)
         self.draw_tabs.addTab(tab3, "إعداد القرعات")
+        self.draw_tabs.currentChanged.connect(self._on_draw_tab_changed)
         
         self.load_draw_settings()
         
@@ -485,61 +501,91 @@ class DrawMixin:
             db_mod.Subscriber.category == cat.name,
             db_mod.Subscriber.status == "accepted"
         ).all()
-        
+        if not subs_in_cat:
+            return 0, 0
+
+        # جلب الحالات المالية دفعة واحدة
+        fin_status_map = db_mod.calculate_financial_status_batch(subs_in_cat, self.db)
+        disciplined_subs = [s for s in subs_in_cat if fin_status_map.get(s.id) not in ["late", "suspended"]]
+        if not disciplined_subs:
+            return 0, 0
+
+        sub_ids = [s.id for s in disciplined_subs]
+
+        # جلب الدورات الحالية دفعة واحدة
+        if target_cycle and target_cycle != "auto" and isinstance(target_cycle, int):
+            active_cycles = {sid: target_cycle for sid in sub_ids}
+        else:
+            try:
+                active_cycles = dict(
+                    self.db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
+                    .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
+                    .group_by(db_mod.Payment.subscriber_id)
+                    .all()
+                )
+            except Exception:
+                active_cycles = {}
+
+        # جلب دفعات هؤلاء المشتركين فقط بأعمدة محددة
+        payments_data = self.db.query(
+            db_mod.Payment.subscriber_id,
+            db_mod.Payment.cycle_number,
+            db_mod.Payment.amount,
+            db_mod.Payment.due_date,
+            db_mod.Payment.paid_date,
+            db_mod.Payment.is_paid
+        ).filter(
+            db_mod.Payment.subscriber_id.in_(sub_ids)
+        ).all()
+
+        payments_by_sub = {}
+        for p in payments_data:
+            payments_by_sub.setdefault(p[0], []).append(p)
+
+        max_late_allowed = self._get_incentive_max_late()
         completed_cycle_count = 0
         incentive_count = 0
-        
-        for sub in subs_in_cat:
-            # التحقق من الانضباط المالي للمشترك
-            fin_status = db_mod.calculate_financial_status(sub, self.db)
-            if fin_status in ["late", "suspended"]:
+        max_inst = cat.max_installments if cat else 0
+        total_expected_for_cycle = (cat.amount * max_inst) if cat else 0
+        today_date = today.date()
+
+        for sub in disciplined_subs:
+            sub_current_cycle = active_cycles.get(sub.id, 1)
+            all_s_p = payments_by_sub.get(sub.id, [])
+            cycle_payments = [p for p in all_s_p if p[1] == sub_current_cycle]
+            if not cycle_payments:
                 continue
 
-            if target_cycle and target_cycle != "auto" and isinstance(target_cycle, int):
-                sub_current_cycle = target_cycle
-            else:
-                active_sub_p = self.db.query(db_mod.Payment).filter(
-                    db_mod.Payment.subscriber_id == sub.id,
-                    db_mod.Payment.due_date <= today
-                ).order_by(db_mod.Payment.due_date.desc()).first()
-                sub_current_cycle = active_sub_p.cycle_number if active_sub_p else 1
+            total_paid_in_cycle = sum(p[2] for p in cycle_payments if p[5])
+            is_cycle_finished = (total_paid_in_cycle >= total_expected_for_cycle - 0.01) and all(p[5] for p in cycle_payments)
 
-            payments = self.db.query(db_mod.Payment).filter(
-                db_mod.Payment.subscriber_id == sub.id, 
-                db_mod.Payment.cycle_number == sub_current_cycle
-            ).all()
-            if not payments: continue
-            
-            # Check if all installments in the cycle are paid and the count matches the category requirement
-            max_inst = cat.max_installments if cat else 0
-            total_expected_for_cycle = (cat.amount * max_inst) if cat else 0
-            total_paid_in_cycle = sum(p.amount for p in payments if p.is_paid)
-            
-            is_cycle_finished = (total_paid_in_cycle >= total_expected_for_cycle - 0.01) and all(p.is_paid for p in payments)
-            
             is_incentive = True
             has_paid_something = False
-            max_late_allowed = self._get_incentive_max_late()
             late_count = 0
-            
-            for p in payments:
-                if p.due_date.date() <= today.date():
-                    if not p.is_paid:
+
+            for p in cycle_payments:
+                if not p[3]:
+                    continue
+                p_due = p[3].date()
+                is_p = p[5]
+                p_paid = p[4].date() if p[4] else None
+
+                if p_due <= today_date:
+                    if not is_p:
                         late_count += 1
                     else:
                         has_paid_something = True
-                        if p.paid_date and p.paid_date.date() > p.due_date.date():
+                        if p_paid and p_paid > p_due:
                             late_count += 1
                 else:
-                    # Future installments
-                    if p.is_paid:
+                    if is_p:
                         has_paid_something = True
-                        if p.paid_date and p.paid_date.date() > p.due_date.date():
+                        if p_paid and p_paid > p_due:
                             late_count += 1
-            
+
             if late_count > max_late_allowed:
                 is_incentive = False
-            
+
             if is_cycle_finished:
                 completed_cycle_count += 1
             if is_incentive and has_paid_something:
@@ -812,6 +858,7 @@ class DrawMixin:
         search_txt = self.draw_ex_search.text().strip().lower() if hasattr(self, 'draw_ex_search') else ""
 
         all_subs = self.db.query(db_mod.Subscriber).all()
+        fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db)
         excluded_list = []
 
         for sub in all_subs:
@@ -828,7 +875,7 @@ class DrawMixin:
                 if not match:
                     continue
 
-            fin_status = db_mod.calculate_financial_status(sub, self.db)
+            fin_status = fin_status_map.get(sub.id, "pending")
             is_excluded = False
             reason = ""
             status_badge = ""
