@@ -357,9 +357,9 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.page_dashboard = self.init_dashboard_page()
         self.page_subscribers = self.init_subscribers_page()
         self.page_cycles = self.init_cycles_page()
-        self.page_main_settings = self.init_main_settings_page()
-        self.page_settings = self.init_settings_page()
         self.page_company_settings = self.init_company_settings_page()
+        self.page_settings = self.init_settings_page()
+        self.page_main_settings = self.init_main_settings_page()
         self.page_staff = self.init_staff_page()
         self.page_messaging = self.init_messaging_page()
 
