@@ -214,6 +214,7 @@ class SettingsMixin:
         self.table_user_permissions.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_user_permissions.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table_user_permissions.setMinimumHeight(420)
+        self.table_user_permissions.cellDoubleClicked.connect(self.on_user_permissions_double_clicked)
         lay_users.addWidget(self.table_user_permissions)
         lay_users.addStretch()
 
@@ -610,9 +611,12 @@ class SettingsMixin:
         self.table_user_permissions.setRowCount(len(staff_members))
         roles = ["مدير", "محاسب", "موظف", "مشاهد"]
         for i, s in enumerate(staff_members):
-            self.table_user_permissions.setItem(i, 0, QTableWidgetItem(s.name))
-            self.table_user_permissions.setItem(i, 1, QTableWidgetItem(s.phone))
-            self.table_user_permissions.setItem(i, 2, QTableWidgetItem(s.staff_id_code))
+            item_name = QTableWidgetItem(s.name or "")
+            item_name.setData(Qt.ItemDataRole.UserRole, s.id)
+            self.table_user_permissions.setItem(i, 0, item_name)
+            self.table_user_permissions.setItem(i, 1, QTableWidgetItem(s.phone or ""))
+            self.table_user_permissions.setItem(i, 2, QTableWidgetItem(s.staff_id_code or ""))
+
             role_combo = QComboBox()
             role_combo.addItems(roles)
             if s.role and s.role in roles:
@@ -621,10 +625,84 @@ class SettingsMixin:
                 role_combo.setCurrentText("موظف")
             role_combo.currentIndexChanged.connect(lambda _, sid=s.id, combo=role_combo: self.update_staff_role(sid, combo.currentText()))
             self.table_user_permissions.setCellWidget(i, 3, role_combo)
+
+            # صفحة الإجراءات: زر تعديل + زر حذف
+            actions_w = QWidget()
+            actions_lay = QHBoxLayout(actions_w)
+            actions_lay.setContentsMargins(4, 2, 4, 2)
+            actions_lay.setSpacing(6)
+
+            btn_edit = QPushButton("تعديل")
+            btn_edit.setStyleSheet("background-color: #0284c7; color: white; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
+            btn_edit.clicked.connect(lambda _, sid=s.id: self.edit_user_from_settings(sid))
+
             btn_delete = QPushButton("حذف")
             btn_delete.setObjectName("DangerBtn")
+            btn_delete.setStyleSheet("padding: 4px 10px;")
             btn_delete.clicked.connect(lambda _, sid=s.id: self.delete_staff_from_settings(sid))
-            self.table_user_permissions.setCellWidget(i, 4, btn_delete)
+
+            actions_lay.addWidget(btn_edit)
+            actions_lay.addWidget(btn_delete)
+            self.table_user_permissions.setCellWidget(i, 4, actions_w)
+
+    def on_user_permissions_double_clicked(self, row, column):
+        item = self.table_user_permissions.item(row, 0)
+        if item:
+            sid = item.data(Qt.ItemDataRole.UserRole)
+            if sid:
+                self.edit_user_from_settings(sid)
+
+    def edit_user_from_settings(self, sid):
+        staff = self.db.get(db_mod.Staff, sid)
+        if not staff:
+            ModernDialog(self, "خطأ", "لم يتم العثور على سجل الموظف").exec()
+            return
+
+        dlg = AddStaffDialog(self, is_edit=True)
+        dlg.ent_name.setText(staff.name or "")
+        dlg.ent_phone.setText(staff.phone or "")
+        dlg.ent_staff_id.setText(staff.staff_id_code or "")
+        if staff.role:
+            dlg.role_combo.setCurrentText(staff.role)
+
+        if dlg.exec():
+            new_name = dlg.ent_name.text().strip()
+            new_phone = dlg.ent_phone.text().strip()
+            new_id = dlg.ent_staff_id.text().strip()
+            new_pwd = dlg.ent_pwd.text().strip()
+            new_role = dlg.role_combo.currentText()
+
+            if not new_name or not new_id:
+                ModernDialog(self, "خطأ", "يجب إدخال اسم الموظف ورقم الموظف الخاص").exec()
+                return
+
+            if new_id != staff.staff_id_code:
+                exists = self.db.query(db_mod.Staff).filter(
+                    db_mod.Staff.staff_id_code == new_id,
+                    db_mod.Staff.id != sid
+                ).first()
+                if exists:
+                    ModernDialog(self, "خطأ", "رقم الموظف الجديد مسجل مسبقاً لموظف آخر").exec()
+                    return
+
+            try:
+                staff.name = new_name
+                staff.phone = new_phone
+                staff.staff_id_code = new_id
+                staff.role = new_role
+                if new_pwd:
+                    staff.password = security.hash_password(new_pwd)
+                self.db.commit()
+                self.refresh_user_permissions_table()
+                if hasattr(self, 'load_staff_list'):
+                    try:
+                        self.load_staff_list()
+                    except Exception:
+                        pass
+                ModernDialog(self, "نجاح", f"تم تعديل بيانات الموظف ({new_name}) بنجاح").exec()
+            except Exception as e:
+                self.db.rollback()
+                ModernDialog(self, "خطأ", f"حدث خطأ أثناء حفظ التعديلات: {e}").exec()
 
     def update_staff_role(self, sid, role):
         staff = self.db.get(db_mod.Staff, sid)
@@ -640,6 +718,11 @@ class SettingsMixin:
                 self.db.delete(staff)
                 self.db.commit()
                 self.refresh_user_permissions_table()
+                if hasattr(self, 'load_staff_list'):
+                    try:
+                        self.load_staff_list()
+                    except Exception:
+                        pass
 
     def add_user_from_settings(self):
         dlg = AddStaffDialog(self)

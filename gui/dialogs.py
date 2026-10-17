@@ -897,16 +897,17 @@ class AddSubscriberDialog(QDialog):
         self.accept()
 
 class AddStaffDialog(QDialog):
-    def __init__(self, parent):
+    def __init__(self, parent, is_edit=False):
         super().__init__(parent)
-        self.setWindowTitle("إنشاء حساب موظف جديد")
+        self.is_edit = is_edit
+        self.setWindowTitle("تعديل بيانات الموظف" if is_edit else "إنشاء حساب موظف جديد")
         self.setFixedWidth(400)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         
-        title = QLabel("إضافة موظف جديد")
+        title = QLabel("تعديل بيانات الموظف" if is_edit else "إضافة موظف جديد")
         title.setStyleSheet("font-size: 18px; font-weight: bold; color: #2e7d32; margin-bottom: 10px;")
         layout.addWidget(title)
 
@@ -916,6 +917,8 @@ class AddStaffDialog(QDialog):
         self.ent_staff_id = QLineEdit()
         self.ent_pwd = QLineEdit()
         self.ent_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+        if is_edit:
+            self.ent_pwd.setPlaceholderText("اتركه فارغاً للإبقاء على كلمة السر الحالية")
         self.role_combo = QComboBox()
         self.role_combo.addItems(["مدير", "محاسب", "موظف", "مشاهد"])
 
@@ -926,15 +929,18 @@ class AddStaffDialog(QDialog):
         form.addRow("كلمة السر:", self.ent_pwd)
         layout.addLayout(form)
 
-        self.btn_save = QPushButton("إنشاء الحساب")
+        self.btn_save = QPushButton("حفظ التعديلات" if is_edit else "إنشاء الحساب")
         self.btn_save.setObjectName("PrimaryBtn")
         self.btn_save.setFixedHeight(40)
         self.btn_save.clicked.connect(self.validate)
         layout.addWidget(self.btn_save)
 
     def validate(self):
-        if not self.ent_name.text() or not self.ent_staff_id.text() or not self.ent_pwd.text():
-            QMessageBox.warning(self, "تنبيه", "يرجى ملء جميع الحقول الإجبارية")
+        if not self.ent_name.text().strip() or not self.ent_staff_id.text().strip():
+            QMessageBox.warning(self, "تنبيه", "يرجى ملء الحقول الإجبارية (الاسم ورقم الموظف)")
+            return
+        if not self.is_edit and not self.ent_pwd.text().strip():
+            QMessageBox.warning(self, "تنبيه", "يرجى إدخال كلمة السر")
             return
         self.accept()
 
