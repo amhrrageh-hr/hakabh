@@ -236,8 +236,16 @@ def get_draw_candidates(
             is_incentive = False
 
         is_qualified = False
-        if draw_type == "القرعة الاسبوعية" and is_cycle_finished:
-            is_qualified = True
+        if draw_type == "القرعة الاسبوعية":
+            already_won = db.query(db_mod.Winner).filter(
+                db_mod.Winner.subscriber_number == sub.subscriber_number,
+                db_mod.Winner.draw_type.contains("القرعة الاسبوعية"),
+                (db_mod.Winner.cycle_number == sub_cycle) | (db_mod.Winner.cycle_number == None)
+            ).first()
+            if already_won:
+                continue
+            if is_cycle_finished:
+                is_qualified = True
         elif draw_type == "الجائزة التحفيزية" and is_incentive and has_paid_something:
             is_qualified = True
         elif draw_type == "الجائزة الكبرى" and is_cycle_finished:
@@ -263,6 +271,119 @@ def get_draw_candidates(
             )
 
     return candidates
+
+@router.post("/perform")
+def perform_draw_api(
+    req: PerformDrawRequest,
+    db: Session = Depends(get_db)
+):
+    """إجراء السحب الآلي للقرعة وحفظ الفائزين وإرجاع النتائج للمدير فقط"""
+    draw_type = req.draw_type
+    category = req.category if req.category and req.category != "الكل" else None
+
+    # 1. جلب المرشحين المؤهلين
+    candidates = get_draw_candidates(draw_type=draw_type, category=category, cycle=req.cycle or "auto", db=db)
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"لا يوجد مشتركون مؤهلون ومستوفون لشروط '{draw_type}' حالياً في الفئة المحددة."
+        )
+
+    # تجميع المرشحين حسب الفئة
+    cand_by_cat = {}
+    for c in candidates:
+        cand_by_cat.setdefault(c.category, []).append(c)
+
+    winners_created = []
+    now = datetime.datetime.now()
+
+    if draw_type in ["القرعة الاسبوعية", "الجائزة التحفيزية"]:
+        # اختيار فائز واحد لكل فئة مؤهلة
+        for cat_name, cat_candidates in cand_by_cat.items():
+            chosen = random.choice(cat_candidates)
+            draw_label = f"{draw_type} - {cat_name}"
+            new_w = db_mod.Winner(
+                subscriber_number=chosen.number,
+                draw_type=draw_label,
+                draw_date=now,
+                cycle_number=chosen.cycle,
+                payout_amount=0.0,
+                is_received=False
+            )
+            db.add(new_w)
+            winners_created.append({
+                "subscriber_number": chosen.number,
+                "subscriber_name": chosen.name,
+                "phone": chosen.phone,
+                "category": cat_name,
+                "draw_name": draw_label,
+                "draw_date": now.strftime("%Y-%m-%d %H:%M"),
+                "cycle_number": chosen.cycle,
+                "instance": new_w
+            })
+    else:
+        # الجائزة الكبرى
+        count_setting = db.query(db_mod.Setting).filter(db_mod.Setting.key == "grand_prize_winners_count").first()
+        num_winners = int(count_setting.value) if count_setting and count_setting.value.isdigit() else 1
+        num_winners = max(1, min(num_winners, len(candidates)))
+
+        chosen_list = random.sample(candidates, num_winners)
+        period = req.period or 1
+        draw_label = f"الجائزة الكبرى - الفترة {period}" if period > 1 else "الجائزة الكبرى"
+
+        for chosen in chosen_list:
+            new_w = db_mod.Winner(
+                subscriber_number=chosen.number,
+                draw_type=draw_label,
+                draw_date=now,
+                cycle_number=chosen.cycle,
+                payout_amount=0.0,
+                is_received=False
+            )
+            db.add(new_w)
+            winners_created.append({
+                "subscriber_number": chosen.number,
+                "subscriber_name": chosen.name,
+                "phone": chosen.phone,
+                "category": chosen.category,
+                "draw_name": draw_label,
+                "draw_date": now.strftime("%Y-%m-%d %H:%M"),
+                "cycle_number": chosen.cycle,
+                "instance": new_w
+            })
+
+    db.commit()
+
+    # تحديث المعرفات بعد الحفظ
+    result = []
+    for w in winners_created:
+        result.append({
+            "id": w["instance"].id,
+            "subscriber_number": w["subscriber_number"],
+            "subscriber_name": w["subscriber_name"],
+            "phone": w["phone"],
+            "category": w["category"],
+            "draw_name": w["draw_name"],
+            "draw_date": w["draw_date"],
+            "cycle_number": w["cycle_number"]
+        })
+
+    # إشعار عبر الـ WebSocket إذا كان المشترك متصلاً
+    try:
+        from main import manager
+        import asyncio
+        for res_w in result:
+            sub_obj = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.subscriber_number == res_w['subscriber_number']).first()
+            if sub_obj:
+                asyncio.create_task(manager.send_personal_message(f"🎉 ألف مبروك! لقد فزت بـ {res_w['draw_name']}", sub_obj.id))
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "message": f"تم إجراء السحب بنجاح واختيار {len(result)} فائز(ين)",
+        "winners": result
+    }
 
 @router.get("/excluded", response_model=List[DrawExcludedItem])
 def get_draw_excluded(

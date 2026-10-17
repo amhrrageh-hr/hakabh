@@ -1,6 +1,6 @@
 import os
 import secrets
-from fastapi import HTTPException, Security, status
+from fastapi import HTTPException, Security, status, Request, Depends
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy.orm import Session
 import database as db_mod
@@ -14,16 +14,6 @@ def get_configured_api_key() -> str:
         key = "hakbah_api_sec_994a3bc1e8204d88e07a216f49b"
     return key
 
-def verify_admin_api_key(api_key: str = Security(api_key_header)):
-    """التحقق من صحة مفتاح الـ API لضمان وصول تطبيق الإدارة المكتبي فقط"""
-    expected = get_configured_api_key()
-    if not api_key or not secrets.compare_digest(api_key, expected):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="غير مصرح بالوصول: مفتاح الـ API غير صالح أو غير موجود."
-        )
-    return api_key
-
 def get_db():
     """Dependency لتوفير جلسة قاعدة بيانات مع الإغلاق التلقائي الآمن"""
     db = db_mod.SessionLocal()
@@ -31,3 +21,29 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def verify_admin_api_key(
+    request: Request,
+    api_key: str = Security(api_key_header),
+    db: Session = Depends(get_db)
+):
+    """التحقق من صحة الوصول: إما عبر مفتاح الـ API (تطبيق الإدارة المكتبي) أو عبر جلسة الويب لمدير النظام"""
+    # 1. التحقق من مفتاح الـ API (تطبيق الإدارة المكتبي)
+    expected = get_configured_api_key()
+    if api_key and secrets.compare_digest(api_key, expected):
+        return True
+
+    # 2. التحقق من جلسة الويب (Web Session) لحساب برتبة "مدير"
+    try:
+        staff_id = request.session.get("staff_id")
+        if staff_id:
+            staff = db.query(db_mod.Staff).filter(db_mod.Staff.id == staff_id).first()
+            if staff and staff.role == "مدير":
+                return True
+    except Exception:
+        pass
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="غير مصرح: هذا القسم والإجراءات متاحة فقط لحساب المدير العام."
+    )
