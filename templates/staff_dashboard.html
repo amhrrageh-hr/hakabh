@@ -949,7 +949,10 @@
             if (navigator.onLine) syncPendingPayments();
         });
 
-        {% if staff.role == 'مدير' %}
+    </script>
+
+    {% if staff.role == 'مدير' %}
+    <script>
         // --- Manager Only: Draw Management Engine ---
         let currentCandidates = [];
         let currentExcluded = [];
@@ -1222,7 +1225,7 @@
             }
             draw();
         }
-        {% endif %}
     </script>
+    {% endif %}
 </body>
 </html>
