@@ -512,3 +512,52 @@ def update_winner_receipt(winner_id: int, req: WinnerReceiptUpdate, db: Session 
     w.payout_amount = req.payout_amount
     db.commit()
     return {"success": True, "winner_id": winner_id, "is_received": w.is_received, "payout_amount": w.payout_amount}
+
+class DrawSettingsIn(BaseModel):
+    grand_prize_start_date: Optional[str] = None
+    grand_prize_end_date: Optional[str] = None
+    grand_prize_winners_count: Optional[str] = "1"
+    grand_prize_periods_count: Optional[str] = "1"
+    grand_prize_weeks_per_period: Optional[str] = "12"
+    incentive_allow_late_1: Optional[str] = "0"
+    incentive_allow_late_2: Optional[str] = "0"
+    incentive_allow_late_3: Optional[str] = "0"
+
+@router.get("/settings")
+def get_draw_settings_api(db: Session = Depends(get_db)):
+    """جلب إعدادات القرعة والجوائز الحالية من قاعدة البيانات"""
+    keys = [
+        "grand_prize_start_date", "grand_prize_end_date", "grand_prize_winners_count",
+        "grand_prize_periods_count", "grand_prize_weeks_per_period",
+        "incentive_allow_late_1", "incentive_allow_late_2", "incentive_allow_late_3"
+    ]
+    settings_dict = {}
+    for k in keys:
+        s = db.query(db_mod.Setting).filter(db_mod.Setting.key == k).first()
+        settings_dict[k] = s.value if s else ""
+    return settings_dict
+
+@router.post("/settings")
+def save_draw_settings_api(data: DrawSettingsIn, db: Session = Depends(get_db)):
+    """حفظ إعدادات القرعة وقواعد الجوائز"""
+    payload = data.dict(exclude_unset=False)
+    for k, v in payload.items():
+        if v is not None:
+            s = db.query(db_mod.Setting).filter(db_mod.Setting.key == k).first()
+            if s:
+                s.value = str(v)
+            else:
+                db.add(db_mod.Setting(key=k, value=str(v)))
+    db.commit()
+    return {"success": True, "message": "تم حفظ الإعدادات بنجاح"}
+
+@router.delete("/winners/{winner_id}")
+def delete_winner_api(winner_id: int, db: Session = Depends(get_db)):
+    """حذف سجل فائز من القرعة (صلاحية المدير)"""
+    w = db.get(db_mod.Winner, winner_id)
+    if not w:
+        raise HTTPException(status_code=404, detail="سجل الفائز غير موجود")
+    db.delete(w)
+    db.commit()
+    return {"success": True, "message": "تم حذف سجل الفائز بنجاح"}
+
