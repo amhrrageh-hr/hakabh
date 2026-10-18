@@ -100,6 +100,15 @@
             <p class="text-xs greenish-white opacity-60">أدخل بياناتك للوصول إلى لوحة التحكم الخاصة بك</p>
         </div>
 
+        <!-- تنبيه تسجيل الخروج التلقائي لعدم النشاط -->
+        <div id="timeoutAlert" class="hidden mb-6 p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm leading-relaxed flex items-start gap-3 shadow-xl backdrop-blur-md relative z-10">
+            <span class="text-2xl leading-none flex-shrink-0 mt-0.5">⏱️</span>
+            <div>
+                <p class="font-bold text-amber-100 text-sm">تم تسجيل الخروج التلقائي</p>
+                <p class="text-xs text-amber-200/90 mt-1">تم إغلاق الجلسة لعدم النشاط لمدة 5 دقائق لحماية وتأمين بيانات حسابك. يرجى تسجيل الدخول مجدداً للمتابعة.</p>
+            </div>
+        </div>
+
         <form id="loginForm" class="space-y-6 relative z-10">
             <div class="space-y-2">
                 <label class="block text-xs greenish-white mr-2">رقم المشترك أو الهاتف</label>
@@ -171,6 +180,19 @@
                 btn.innerText = 'دخول المنصة';
             }
         });
+
+        // التحقق من انتهاء الجلسة التلقائي لعدم النشاط
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('timeout') === '1' || urlParams.get('reason') === 'timeout') {
+                const timeoutAlert = document.getElementById('timeoutAlert');
+                if (timeoutAlert) {
+                    timeoutAlert.classList.remove('hidden');
+                }
+                // تنظيف الرابط من معاملات الـ query ليبقى المظهر أنيقاً
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        })();
     </script>
 </body>
 </html>

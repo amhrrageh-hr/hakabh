@@ -3,6 +3,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+import time
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
@@ -90,7 +92,36 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="هكبة المليون - Million Hakbah", lifespan=lifespan)
 
-# Add Session Middleware for secure user tracking without showing IDs in URL
+# مهلة عدم النشاط لتسجيل الخروج التلقائي (5 دقائق)
+SESSION_IDLE_TIMEOUT_SECONDS = 5 * 60
+
+class SessionInactivityMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # التحقق من وجود جلسة لمستخدم مسجل (مشترك أو موظف)
+        session = request.scope.get("session")
+        if session and (session.get("staff_id") or session.get("sub_id")):
+            path = request.url.path
+            # عدم فحص مسار تسجيل الخروج أو الدخول
+            if not path.startswith("/logout") and not path.startswith("/login"):
+                now = int(time.time())
+                last_activity = session.get("last_activity")
+                if last_activity and (now - last_activity > SESSION_IDLE_TIMEOUT_SECONDS):
+                    session.clear()
+                    # إذا كان الطلب API عبر AJAX/Fetch، نرجع 401
+                    if path.startswith("/api/") or "application/json" in request.headers.get("accept", ""):
+                        return JSONResponse(status_code=401, content={"detail": "انتهت مهلة الجلسة لعدم النشاط", "session_expired": True})
+                    # لطلبات التصفح العادية، يتم التوجيه لصفحة تسجيل الدخول مع وسم timeout
+                    return RedirectResponse(url="/login?timeout=1", status_code=303)
+
+                # تحديث وقت آخر نشاط لجميع الطلبات ما عدا طلبات الفحص الخلفية التلقائية (polling)
+                if not path.startswith("/api/check-status"):
+                    session["last_activity"] = now
+
+        return await call_next(request)
+
+# Add Inactivity Middleware and Session Middleware
+# In Starlette, the LAST added middleware is outermost (runs first)
+app.add_middleware(SessionInactivityMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=secret_key,
@@ -371,6 +402,7 @@ async def login_auth(
         if staff:
             if security.verify_password(password, staff.password):
                 request.session["staff_id"] = int(staff.id)
+                request.session["last_activity"] = int(time.time())
                 return JSONResponse(content={"success": True, "user_type": "staff"})
 
         # 2. إذا لم يكن موظفاً، ننتقل لمنطق المشتركين
@@ -417,8 +449,9 @@ async def login_auth(
         if not verified:
             return JSONResponse(status_code=401, content={"message": "بيانات الدخول غير صحيحة"})
 
-        # تخزين معرف المشترك في الجلسة
+        # تخزين معرف المشترك في الجلسة ووقت آخر نشاط
         request.session["sub_id"] = int(sub.id)
+        request.session["last_activity"] = int(time.time())
 
         # إرجاع حالة المشترك لتوجيهه للصفحة المناسبة
         return JSONResponse(content={"success": True, "status": sub.status or "pending"})
@@ -1327,7 +1360,10 @@ async def check_subscriber_status(request: Request, db: Session = Depends(get_db
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()
-    return RedirectResponse(url="/login")
+    timeout = request.query_params.get("timeout")
+    if timeout:
+        return RedirectResponse(url="/login?timeout=1", status_code=303)
+    return RedirectResponse(url="/login", status_code=303)
 
 
 if __name__ == "__main__":
