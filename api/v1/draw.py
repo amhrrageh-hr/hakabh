@@ -28,20 +28,28 @@ class WinnerReceiptUpdate(BaseModel):
     is_received: bool
     payout_amount: Optional[float] = 0.0
 
+_incentive_cache = {"time": 0.0, "val": 0}
+
 def _get_incentive_max_late(db: Session) -> int:
+    import time
+    now_ts = time.time()
+    if now_ts - _incentive_cache["time"] < 60.0:
+        return _incentive_cache["val"]
     try:
-        late3 = db.query(db_mod.Setting).filter(db_mod.Setting.key == "incentive_allow_late_3").first()
-        late2 = db.query(db_mod.Setting).filter(db_mod.Setting.key == "incentive_allow_late_2").first()
-        late1 = db.query(db_mod.Setting).filter(db_mod.Setting.key == "incentive_allow_late_1").first()
-        if late3 and late3.value == "1":
-            return 3
-        if late2 and late2.value == "1":
-            return 2
-        if late1 and late1.value == "1":
-            return 1
+        keys = ["incentive_allow_late_3", "incentive_allow_late_2", "incentive_allow_late_1"]
+        settings = {s.key: s.value for s in db.query(db_mod.Setting).filter(db_mod.Setting.key.in_(keys)).all()}
+        val = 0
+        if settings.get("incentive_allow_late_3") == "1":
+            val = 3
+        elif settings.get("incentive_allow_late_2") == "1":
+            val = 2
+        elif settings.get("incentive_allow_late_1") == "1":
+            val = 1
+        _incentive_cache["val"] = val
+        _incentive_cache["time"] = now_ts
+        return val
     except Exception:
-        pass
-    return 0
+        return _incentive_cache["val"]
 
 @router.get("/stats", response_model=DrawStatsSummaryOut)
 def get_draw_stats(db: Session = Depends(get_db)):
@@ -196,6 +204,20 @@ def get_draw_candidates(
     for p in payments_data:
         payments_by_sub.setdefault(p[0], []).append(p)
 
+    # تسريع فائق: جلب جميع الفائزين بالقرعة الأسبوعية في استعلام واحد مسبق لمنع N+1 Query
+    weekly_won_tuples = set()
+    weekly_won_any_cycle = set()
+    if draw_type == "القرعة الاسبوعية":
+        winners_q = db.query(db_mod.Winner.subscriber_number, db_mod.Winner.cycle_number).filter(
+            db_mod.Winner.draw_type.contains("القرعة الاسبوعية")
+        ).all()
+        for w_num, w_cyc in winners_q:
+            if w_num:
+                if w_cyc is None:
+                    weekly_won_any_cycle.add(w_num)
+                else:
+                    weekly_won_tuples.add((w_num, w_cyc))
+
     candidates = []
     for sub in disciplined_subs:
         sub_cycle = active_cycles.get(sub.id, 1)
@@ -237,12 +259,7 @@ def get_draw_candidates(
 
         is_qualified = False
         if draw_type == "القرعة الاسبوعية":
-            already_won = db.query(db_mod.Winner).filter(
-                db_mod.Winner.subscriber_number == sub.subscriber_number,
-                db_mod.Winner.draw_type.contains("القرعة الاسبوعية"),
-                (db_mod.Winner.cycle_number == sub_cycle) | (db_mod.Winner.cycle_number == None)
-            ).first()
-            if already_won:
+            if (sub.subscriber_number in weekly_won_any_cycle) or ((sub.subscriber_number, sub_cycle) in weekly_won_tuples):
                 continue
             if is_cycle_finished:
                 is_qualified = True
@@ -391,24 +408,29 @@ def get_draw_excluded(
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """جلب قائمة المستبعدين من السحب مع توضيح سبب الاستبعاد بدقة"""
-    all_subs = db.query(db_mod.Subscriber).all()
-    fin_status_map = db_mod.calculate_financial_status_batch(all_subs, db)
+    """جلب قائمة المستبعدين من السحب مع توضيح سبب الاستبعاد بدقة وبأداء عالٍ"""
+    query = db.query(db_mod.Subscriber)
+    if category and category != "الكل":
+        query = query.filter(db_mod.Subscriber.category == category)
+    if search:
+        s_term = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                db_mod.Subscriber.name.ilike(s_term),
+                db_mod.Subscriber.subscriber_number.ilike(s_term),
+                db_mod.Subscriber.phone.ilike(s_term)
+            )
+        )
+
+    target_subs = query.all()
+    if not target_subs:
+        return []
+
+    fin_status_map = db_mod.calculate_financial_status_batch(target_subs, db)
 
     excluded_list = []
-    for sub in all_subs:
+    for sub in target_subs:
         sub_cat = sub.category or "-"
-        if category and category != "الكل" and sub_cat != category:
-            continue
-
-        if search:
-            st = search.strip().lower()
-            name_m = st in (sub.name or "").lower()
-            acc_m = st in (sub.subscriber_number or "").lower()
-            ph_m = st in (sub.phone or "").lower()
-            if not (name_m or acc_m or ph_m):
-                continue
-
         fin_status = fin_status_map.get(sub.id, "pending")
         is_excluded = False
         reason = ""
@@ -465,8 +487,13 @@ def list_winners(
     if not winners:
         return []
 
-    subs = db.query(db_mod.Subscriber).all()
-    sub_map = {s.subscriber_number: s for s in subs}
+    # جلب المشتركين الفائزين فقط بدلاً من جلب قاعدة البيانات كاملة
+    sub_numbers = [w.subscriber_number for w in winners if w.subscriber_number]
+    if sub_numbers:
+        subs = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.subscriber_number.in_(sub_numbers)).all()
+        sub_map = {s.subscriber_number: s for s in subs}
+    else:
+        sub_map = {}
 
     items = []
     for w in winners:
@@ -525,30 +552,32 @@ class DrawSettingsIn(BaseModel):
 
 @router.get("/settings")
 def get_draw_settings_api(db: Session = Depends(get_db)):
-    """جلب إعدادات القرعة والجوائز الحالية من قاعدة البيانات"""
+    """جلب إعدادات القرعة والجوائز الحالية من قاعدة البيانات باستعلام موحد فائق السرعة"""
     keys = [
         "grand_prize_start_date", "grand_prize_end_date", "grand_prize_winners_count",
         "grand_prize_periods_count", "grand_prize_weeks_per_period",
         "incentive_allow_late_1", "incentive_allow_late_2", "incentive_allow_late_3"
     ]
-    settings_dict = {}
-    for k in keys:
-        s = db.query(db_mod.Setting).filter(db_mod.Setting.key == k).first()
-        settings_dict[k] = s.value if s else ""
-    return settings_dict
+    rows = db.query(db_mod.Setting).filter(db_mod.Setting.key.in_(keys)).all()
+    found = {r.key: r.value for r in rows}
+    return {k: found.get(k, "") for k in keys}
 
 @router.post("/settings")
 def save_draw_settings_api(data: DrawSettingsIn, db: Session = Depends(get_db)):
     """حفظ إعدادات القرعة وقواعد الجوائز"""
     payload = data.dict(exclude_unset=False)
-    for k, v in payload.items():
-        if v is not None:
-            s = db.query(db_mod.Setting).filter(db_mod.Setting.key == k).first()
-            if s:
-                s.value = str(v)
+    keys_to_save = [k for k, v in payload.items() if v is not None]
+    if keys_to_save:
+        existing = {s.key: s for s in db.query(db_mod.Setting).filter(db_mod.Setting.key.in_(keys_to_save)).all()}
+        for k in keys_to_save:
+            v = payload[k]
+            if k in existing:
+                existing[k].value = str(v)
             else:
                 db.add(db_mod.Setting(key=k, value=str(v)))
-    db.commit()
+        db.commit()
+        # إبطال الـ cache
+        _incentive_cache["time"] = 0.0
     return {"success": True, "message": "تم حفظ الإعدادات بنجاح"}
 
 @router.delete("/winners/{winner_id}")

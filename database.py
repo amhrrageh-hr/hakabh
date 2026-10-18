@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, DateTime, create_engine, text, inspect, event, func
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, DateTime, create_engine, text, inspect, event, func, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 import sys
@@ -112,6 +112,9 @@ Base = declarative_base()
 
 class Subscriber(Base):
     __tablename__ = "subscribers"
+    __table_args__ = (
+        Index("idx_subs_cat_status", "category", "status"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
@@ -119,9 +122,9 @@ class Subscriber(Base):
     national_id = Column(String, nullable=True)   # رقم الهوية أو البطاقة
     address = Column(String, nullable=True)        # العنوان
     email = Column(String, nullable=True)          # البريد الإلكتروني
-    category = Column(String)
+    category = Column(String, index=True)
     selected_number_id = Column(Integer, ForeignKey("subscriber_numbers.id"), nullable=True)
-    status = Column(String, default="pending")  # pending, accepted, rejected, excluded
+    status = Column(String, default="pending", index=True)  # pending, accepted, rejected, excluded
     subscriber_number = Column(String, index=True, nullable=True)
     password = Column(String, nullable=True)
     exclusion_reason = Column(String, nullable=True)   # سبب الاستبعاد
@@ -136,16 +139,22 @@ class Subscriber(Base):
 
 class Payment(Base):
     __tablename__ = "payments"
+    __table_args__ = (
+        Index("idx_payments_sub_paid", "subscriber_id", "is_paid"),
+        Index("idx_payments_sub_cycle", "subscriber_id", "cycle_number"),
+        Index("idx_payments_due_paid", "due_date", "is_paid"),
+        Index("idx_payments_sub_cycle_due", "subscriber_id", "cycle_number", "due_date"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    subscriber_id = Column(Integer, ForeignKey("subscribers.id"))
-    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=True)
+    subscriber_id = Column(Integer, ForeignKey("subscribers.id"), index=True)
+    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=True, index=True)
     amount = Column(Float)
-    due_date = Column(DateTime)
+    due_date = Column(DateTime, index=True)
     paid_date = Column(DateTime, nullable=True)
-    is_paid = Column(Boolean, default=False)
+    is_paid = Column(Boolean, default=False, index=True)
     installment_number = Column(Integer, nullable=True)
-    cycle_number = Column(Integer, nullable=True)
+    cycle_number = Column(Integer, nullable=True, index=True)
     note = Column(String, nullable=True)
     is_staff_settled = Column(Boolean, default=False)
     client_reference = Column(String, nullable=True, index=True)
@@ -393,6 +402,25 @@ def init_db(force_migration=False):
         except Exception as e:
             print(f"Error migrating winners table: {e}")
 
+        # إنشاء الفهارس الهامة لتحسين سرعة الاستعلامات ومنع الفحص الكامل (Full Table Scan)
+        index_queries = [
+            "CREATE INDEX IF NOT EXISTS idx_payments_sub_id ON payments (subscriber_id)",
+            "CREATE INDEX IF NOT EXISTS idx_payments_sub_paid ON payments (subscriber_id, is_paid)",
+            "CREATE INDEX IF NOT EXISTS idx_payments_sub_cycle ON payments (subscriber_id, cycle_number)",
+            "CREATE INDEX IF NOT EXISTS idx_payments_due_paid ON payments (due_date, is_paid)",
+            "CREATE INDEX IF NOT EXISTS idx_payments_due_date ON payments (due_date)",
+            "CREATE INDEX IF NOT EXISTS idx_payments_is_paid ON payments (is_paid)",
+            "CREATE INDEX IF NOT EXISTS idx_subscribers_category ON subscribers (category)",
+            "CREATE INDEX IF NOT EXISTS idx_subscribers_status ON subscribers (status)",
+            "CREATE INDEX IF NOT EXISTS idx_subscribers_cat_status ON subscribers (category, status)",
+            "CREATE INDEX IF NOT EXISTS idx_sub_numbers_cat_res ON subscriber_numbers (category_id, is_reserved)",
+            "CREATE INDEX IF NOT EXISTS idx_winners_sub_num ON winners (subscriber_number)"
+        ]
+        for iq in index_queries:
+            try:
+                db.execute(text(iq))
+            except Exception:
+                pass
         db.commit()
 
         # Add default settings if not exists
