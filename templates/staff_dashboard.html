@@ -40,8 +40,12 @@
             border-radius: 16px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
             width: 100%;
-            max-width: {% if staff.role == 'مدير' %}1050px{% else %}680px{% endif %};
+            max-width: 680px;
             transition: all 0.3s ease;
+        }
+
+        .dashboard-container.is-admin {
+            max-width: 1050px;
         }
 
         .header-section {
@@ -507,7 +511,7 @@
 <body>
     <canvas id="confetti-canvas"></canvas>
 
-    <div class="dashboard-container">
+    <div class="dashboard-container {% if staff.role == 'مدير' %}is-admin{% endif %}">
         <!-- Header -->
         <div class="header-section">
             <div class="user-info-box">
