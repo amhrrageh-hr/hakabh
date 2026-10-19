@@ -12,11 +12,11 @@
     <style>
         :root {
             --primary: #d4af37;
-            --bg-dark: #052109;
-            --bg-card: #0a3d0e;
-            --border: #1b5e20;
-            --text-soft: #ccf2d1;
-            --glass: rgba(10, 61, 14, 0.8);
+            --bg-dark: #064e3b;
+            --bg-card: #065f46;
+            --border: #34d399;
+            --text-soft: #a7f3d0;
+            --glass: rgba(6, 78, 59, 0.8);
         }
 
         body {
@@ -472,8 +472,8 @@
                     circle.innerText = n.number;
                     circle.onclick = () => {
                         document.getElementById('selected_num_id').value = n.id;
-                        document.querySelectorAll('.num-circle').forEach(el => el.classList.remove('bg-[#d4af37]', 'text-[#052109]', 'border-[#d4af37]'));
-                        circle.classList.add('bg-[#d4af37]', 'text-[#052109]', 'border-[#d4af37]');
+                        document.querySelectorAll('.num-circle').forEach(el => el.classList.remove('bg-[#d4af37]', 'text-[#064e3b]', 'border-[#d4af37]'));
+                        circle.classList.add('bg-[#d4af37]', 'text-[#064e3b]', 'border-[#d4af37]');
                         
                         const submitBtn = document.getElementById('submit-btn');
                         submitBtn.disabled = false;
