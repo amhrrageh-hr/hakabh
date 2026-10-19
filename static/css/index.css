@@ -6,12 +6,12 @@
     --secondary: #10b981;
     --accent: #34d399;
     --danger: #ef4444;
-    --background: #064e3b;
-    --surface: rgba(6, 78, 59, 0.7);
+    --background: #0d6b50;
+    --surface: rgba(13, 107, 80, 0.65);
     --text: #f8fafc;
     --text-muted: #a7f3d0;
-    --glass: rgba(6, 78, 59, 0.8);
-    --glass-border: rgba(52, 211, 153, 0.35);
+    --glass: rgba(13, 107, 80, 0.78);
+    --glass-border: rgba(52, 211, 153, 0.4);
 }
 
 * {
