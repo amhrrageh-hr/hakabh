@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QDateEdit, QGridLayout,
     QFileDialog, QSystemTrayIcon
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QObject, QThread, QDate, QTimer, QPoint
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QObject, QThread, QDate, QTimer, QPoint, QCoreApplication
 from PyQt6.QtGui import QFont, QIcon, QAction, QColor, QPalette, QCursor
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -37,7 +37,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from gui.styles import HAKBAH_LIGHT, HAKBAH_DARK
 from gui.utils import reshape_text, ServerWorker
 from gui.dialogs import (
-    ModernDialog, DrawAnimationDialog, SubscriberEditDialog, CategoryEditDialog,
+    ModernDialog, LoadingDialog, DrawAnimationDialog, SubscriberEditDialog, CategoryEditDialog,
     PaymentDialog, AddSubscriberDialog, BatchPaymentDialog, AccountDetailsDialog,
     LoginDialog, SetupAdminDialog
 )
@@ -523,17 +523,111 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.db.commit()
         self.check_for_admin_notifications()
 
-    def show_dashboard(self): self.content_stack.setCurrentWidget(self.page_dashboard); self._update_nav_style("الإحصائيات"); self.refresh_stats()
-    def show_subscribers(self): self.content_stack.setCurrentWidget(self.page_subscribers); self._update_nav_style("المشتركين"); self.load_subscribers()
-    def show_cycles(self): self.content_stack.setCurrentWidget(self.page_cycles); self._update_nav_style("إدارة الدورات والأقساط"); self.refresh_cycles_cat_list()
-    def show_messaging_management(self): self.content_stack.setCurrentWidget(self.page_messaging); self._update_nav_style("إدارة الرسائل والتوعية"); self.load_subscriber_messages()
+    # --- Universal Modern Loading Overlay System ---
+    def show_loading(self, title="جاري تنفيذ العملية", message="يرجى الانتظار، جاري معالجة البيانات..."):
+        """عرض نافذة التحميل العصرية وتحديث أحداث النظام لمنع ظهور شاشة سوداء أو تجميد الواجهة"""
+        if not hasattr(self, '_loading_dialog') or self._loading_dialog is None:
+            self._loading_dialog = LoadingDialog(self, title=title, message=message)
+        else:
+            self._loading_dialog.set_message(message, title)
+
+        if self.isVisible():
+            geo = self.geometry()
+            x = geo.x() + (geo.width() - self._loading_dialog.width()) // 2
+            y = geo.y() + (geo.height() - self._loading_dialog.height()) // 2
+            self._loading_dialog.move(x, y)
+
+        self._loading_dialog.show()
+        QCoreApplication.processEvents()
+
+    def hide_loading(self):
+        """إخفاء نافذة التحميل واستعادة التفاعل الكامل"""
+        if hasattr(self, '_loading_dialog') and self._loading_dialog:
+            try:
+                self._loading_dialog.close()
+            except Exception:
+                pass
+            self._loading_dialog = None
+        QCoreApplication.processEvents()
+
+    def run_async(self, worker_func, *args, on_success=None, on_error=None, title="جاري تنفيذ العملية", message="يرجى الانتظار، جاري معالجة البيانات...", **kwargs):
+        """
+        تشغيل أي عملية ثقيلة في خيط معالجة خلفي (Background Thread)
+        مع إظهار نافذة التحميل ومنع ظهور شاشة سوداء أو تجميد التطبيق تماماً
+        """
+        self.show_loading(title=title, message=message)
+        from api_client import APIWorker
+        worker = APIWorker(worker_func, *args, **kwargs)
+
+        def _handle_success(res):
+            self.hide_loading()
+            if on_success:
+                on_success(res)
+
+        def _handle_error(err):
+            self.hide_loading()
+            if on_error:
+                on_error(err)
+            else:
+                from gui.dialogs import ModernDialog
+                ModernDialog(self, "خطأ", f"حدث خطأ أثناء العملية: {err}").exec()
+
+        worker.finished.connect(_handle_success)
+        worker.error.connect(_handle_error)
+        worker.start()
+
+        if not hasattr(self, '_active_workers'):
+            self._active_workers = []
+        self._active_workers.append(worker)
+        worker.finished.connect(lambda: self._active_workers.remove(worker) if worker in self._active_workers else None)
+        return worker
+
+    def show_dashboard(self):
+        self.content_stack.setCurrentWidget(self.page_dashboard)
+        self._update_nav_style("الإحصائيات")
+        self.show_loading("جاري تحميل الإحصائيات", "يرجى الانتظار، جاري قراءة مؤشرات النظام واللوحة الرئيسية...")
+        try:
+            self.refresh_stats()
+        finally:
+            self.hide_loading()
+
+    def show_subscribers(self):
+        self.content_stack.setCurrentWidget(self.page_subscribers)
+        self._update_nav_style("المشتركين")
+        self.show_loading("جاري تحميل المشتركين", "يرجى الانتظار، جاري قراءة بيانات المشتركين والموقف المالي...")
+        try:
+            self.load_subscribers()
+        finally:
+            self.hide_loading()
+
+    def show_cycles(self):
+        self.content_stack.setCurrentWidget(self.page_cycles)
+        self._update_nav_style("إدارة الدورات والأقساط")
+        self.show_loading("جاري تحميل الدورات والأقساط", "يرجى الانتظار، جاري قراءة بيانات الفئات والدورات...")
+        try:
+            self.refresh_cycles_cat_list()
+        finally:
+            self.hide_loading()
+
+    def show_messaging_management(self):
+        self.content_stack.setCurrentWidget(self.page_messaging)
+        self._update_nav_style("إدارة الرسائل والتوعية")
+        self.show_loading("جاري تحميل الرسائل", "يرجى الانتظار، جاري جلب سجل رسائل المشتركين...")
+        try:
+            self.load_subscriber_messages()
+        finally:
+            self.hide_loading()
 
     def show_capital_management(self):
         """عرض صفحة رأس المال مع lazy initialization لتجنب التجميد."""
         page = self._ensure_page('page_capital', self.init_capital_page)
         self.content_stack.setCurrentWidget(page)
         self._update_nav_style("إدارة رأس المال")
-        self.refresh_capital_stats()
+        self.show_loading("جاري تحميل رأس المال", "يرجى الانتظار، جاري حساب مؤشرات رأس المال والسيولة...")
+        try:
+            self.refresh_capital_stats()
+        finally:
+            self.hide_loading()
 
     def show_draw_management(self):
         """عرض صفحة إدارة السحوبات مع lazy initialization لتجنب التجميد."""
@@ -545,20 +639,28 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.db.expire_all()
         self.content_stack.setCurrentWidget(page)
         self._update_nav_style("إدارة السحوبات")
-        self.refresh_draw_categories_filter()
-        self.refresh_draw_stats()
-        current_idx = self.draw_tabs.currentIndex()
-        if current_idx == 1:
-            self.load_draw_excluded()
-        elif current_idx == 2:
-            self.load_recent_winners()
+        self.show_loading("جاري تحميل السحوبات", "يرجى الانتظار، جاري حساب إحصائيات التأهل وجلب الفائزين...")
+        try:
+            self.refresh_draw_categories_filter()
+            self.refresh_draw_stats()
+            current_idx = self.draw_tabs.currentIndex()
+            if current_idx == 1:
+                self.load_draw_excluded()
+            elif current_idx == 2:
+                self.load_recent_winners()
+        finally:
+            self.hide_loading()
 
     def show_reports(self):
         """عرض صفحة التقارير مع lazy initialization لتجنب التجميد."""
         page = self._ensure_page('page_reports', self.init_reports_page)
         self.content_stack.setCurrentWidget(page)
         self._update_nav_style("أداة التقارير")
-        self.refresh_reports_sub_list()
+        self.show_loading("جاري إعداد التقارير", "يرجى الانتظار، جاري تجهيز بيانات التقارير والتحليلات...")
+        try:
+            self.refresh_reports_sub_list()
+        finally:
+            self.hide_loading()
 
     
     def init_main_settings_page(self):

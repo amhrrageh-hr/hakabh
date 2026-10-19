@@ -134,56 +134,63 @@ class SubscribersMixin:
         
         if widget.property("loaded"):
             return
-            
-        base_query = self.db.query(db_mod.Subscriber)
-        if hasattr(self, '_current_search_text') and self._current_search_text:
-            search_text = self._current_search_text
-            base_query = base_query.filter(
-                (db_mod.Subscriber.name.like(f"%{search_text}%")) |
-                (db_mod.Subscriber.phone.like(f"%{search_text}%")) |
-                (db_mod.Subscriber.subscriber_number.like(f"%{search_text}%"))
-            )
-            
-        if cat_name.startswith("طلبات الانضمام"):
-            base_query = base_query.filter(db_mod.Subscriber.status == "pending")
-        elif cat_name == "قائمة المستبعدين":
-            base_query = base_query.filter(db_mod.Subscriber.status == "excluded")
-        elif cat_name != "الكل":
-            base_query = base_query.filter(db_mod.Subscriber.category == cat_name, db_mod.Subscriber.status != "excluded")
-            
-        subs = base_query.all()
-        
-        # Only compute stats for displayed subscribers
-        try:
-            ids = [s.id for s in subs]
-            if ids:
-                stats = self.db.query(db_mod.Payment.subscriber_id,
-                                      func.count(db_mod.Payment.id),
-                                      func.sum(db_mod.Payment.amount))
-                stats = stats.filter(db_mod.Payment.subscriber_id.in_(ids), db_mod.Payment.is_paid == True).group_by(db_mod.Payment.subscriber_id).all()
-                self._payment_stats = {r[0]: (int(r[1]), float(r[2] or 0)) for r in stats}
-            else:
-                self._payment_stats = {}
-        except Exception:
-            self._payment_stats = {}
+
+        if hasattr(self, 'show_loading'):
+            self.show_loading("جاري جلب المشتركين", f"يرجى الانتظار، جاري تحميل المشتركين في ({cat_name})...")
 
         try:
-            self._fin_status_cache = db_mod.calculate_financial_status_batch(subs, self.db)
-        except Exception:
-            self._fin_status_cache = {}
+            base_query = self.db.query(db_mod.Subscriber)
+            if hasattr(self, '_current_search_text') and self._current_search_text:
+                search_text = self._current_search_text
+                base_query = base_query.filter(
+                    (db_mod.Subscriber.name.like(f"%{search_text}%")) |
+                    (db_mod.Subscriber.phone.like(f"%{search_text}%")) |
+                    (db_mod.Subscriber.subscriber_number.like(f"%{search_text}%"))
+                )
+                
+            if cat_name.startswith("طلبات الانضمام"):
+                base_query = base_query.filter(db_mod.Subscriber.status == "pending")
+            elif cat_name == "قائمة المستبعدين":
+                base_query = base_query.filter(db_mod.Subscriber.status == "excluded")
+            elif cat_name != "الكل":
+                base_query = base_query.filter(db_mod.Subscriber.category == cat_name, db_mod.Subscriber.status != "excluded")
+                
+            subs = base_query.all()
             
-        # Create actual content and replace placeholder
-        content = self.create_sub_cards_view(subs)
-        
-        old_lay = widget.layout()
-        if old_lay:
-            QWidget().setLayout(old_lay) # Delete old layout and contents
+            # Only compute stats for displayed subscribers
+            try:
+                ids = [s.id for s in subs]
+                if ids:
+                    stats = self.db.query(db_mod.Payment.subscriber_id,
+                                          func.count(db_mod.Payment.id),
+                                          func.sum(db_mod.Payment.amount))
+                    stats = stats.filter(db_mod.Payment.subscriber_id.in_(ids), db_mod.Payment.is_paid == True).group_by(db_mod.Payment.subscriber_id).all()
+                    self._payment_stats = {r[0]: (int(r[1]), float(r[2] or 0)) for r in stats}
+                else:
+                    self._payment_stats = {}
+            except Exception:
+                self._payment_stats = {}
+
+            try:
+                self._fin_status_cache = db_mod.calculate_financial_status_batch(subs, self.db)
+            except Exception:
+                self._fin_status_cache = {}
+                
+            # Create actual content and replace placeholder
+            content = self.create_sub_cards_view(subs)
             
-        new_lay = QVBoxLayout(widget)
-        new_lay.setContentsMargins(0, 0, 0, 0)
-        new_lay.addWidget(content)
-        
-        widget.setProperty("loaded", True)
+            old_lay = widget.layout()
+            if old_lay:
+                QWidget().setLayout(old_lay) # Delete old layout and contents
+                
+            new_lay = QVBoxLayout(widget)
+            new_lay.setContentsMargins(0, 0, 0, 0)
+            new_lay.addWidget(content)
+            
+            widget.setProperty("loaded", True)
+        finally:
+            if hasattr(self, 'hide_loading'):
+                self.hide_loading()
     def create_sub_cards_view(self, subs):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -796,13 +803,16 @@ class SubscribersMixin:
         menu.addAction(act_del)
         menu.exec(QCursor.pos())
     def export_subscribers_excel(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المشتركين (Excel)", "subscribers_report.xlsx", "Excel Files (*.xlsx)")
+        if not filename: return
+
+        if hasattr(self, 'show_loading'):
+            self.show_loading("جاري تصدير الملف", "يرجى الانتظار، جاري تجميع وتنسيق بيانات المشتركين...")
+
         try:
             subs = self.db.query(db_mod.Subscriber).all()
             data = [{"الاسم": s.name, "الهاتف": s.phone, "رقم الحساب": s.subscriber_number, "الفئة": s.category} for s in subs]
             df = pd.DataFrame(data)
-            
-            filename, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المشتركين (Excel)", "subscribers_report.xlsx", "Excel Files (*.xlsx)")
-            if not filename: return
             
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 df.to_excel(writer, sheet_name='Subscribers', index=False, startrow=3)
@@ -817,14 +827,23 @@ class SubscribersMixin:
                     column_len = max(df[value].astype(str).str.len().max(), len(value) + 2)
                     worksheet.set_column(col_num, col_num, column_len)
 
+            if hasattr(self, 'hide_loading'):
+                self.hide_loading()
             ModernDialog(self, "نجاح", f"تم تصدير ملف {filename} بنجاح").exec()
-        except Exception as e: ModernDialog(self, "خطأ", str(e)).exec()
+        except Exception as e:
+            if hasattr(self, 'hide_loading'):
+                self.hide_loading()
+            ModernDialog(self, "خطأ", str(e)).exec()
+
     def export_subscribers_pdf(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المشتركين (PDF)", "subscribers_report.pdf", "PDF Files (*.pdf)")
+        if not filename: return
+
+        if hasattr(self, 'show_loading'):
+            self.show_loading("جاري إنشاء التقرير", "يرجى الانتظار، جاري توليد ملف PDF وتنسيق الجداول...")
+
         try:
             subs = self.db.query(db_mod.Subscriber).all()
-            
-            filename, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المشتركين (PDF)", "subscribers_report.pdf", "PDF Files (*.pdf)")
-            if not filename: return
             
             c = canvas.Canvas(filename, pagesize=A4)
             width, height = A4
@@ -889,5 +908,10 @@ class SubscribersMixin:
                 y -= 20
                 
             c.save()
+            if hasattr(self, 'hide_loading'):
+                self.hide_loading()
             ModernDialog(self, "نجاح", f"تم تصدير ملف {filename} بنجاح").exec()
-        except Exception as e: ModernDialog(self, "خطأ", str(e)).exec()
+        except Exception as e:
+            if hasattr(self, 'hide_loading'):
+                self.hide_loading()
+            ModernDialog(self, "خطأ", str(e)).exec()

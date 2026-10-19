@@ -65,6 +65,130 @@ class ModernDialog(QDialog):
             
         layout.addLayout(btn_layout)
 
+
+class SpinnerWidget(QWidget):
+    """عنصر مرئي دائري دوار سلس وأنيق للتعبير عن التحميل"""
+    def __init__(self, parent=None, size=48, color="#10b981"):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.angle = 0
+        self.color = QColor(color)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._rotate)
+        self.timer.start(16) # ~60 FPS
+
+    def _rotate(self):
+        self.angle = (self.angle + 8) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        rect = self.rect().adjusted(4, 4, -4, -4)
+        
+        # رسم حلقة الخلفية الباهتة
+        bg_pen = QPen(QColor(self.color.red(), self.color.green(), self.color.blue(), 35), 4)
+        bg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(bg_pen)
+        painter.drawEllipse(rect)
+        
+        # رسم القوس المتحرك
+        arc_pen = QPen(self.color, 4)
+        arc_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(arc_pen)
+        painter.drawArc(rect, -self.angle * 16, 110 * 16)
+        painter.end()
+
+
+class LoadingDialog(QDialog):
+    """
+    نافذة تحميل عصرية خفيفة وصغيرة تظهر أثناء تنفيذ العمليات أو جلب البيانات
+    تمنع تجميد الشاشة أو ظهور الشاشة السوداء وتنبيه 'التطبيق لا يستجيب'
+    """
+    def __init__(self, parent=None, title="جاري تنفيذ العملية", message="يرجى الانتظار، جاري معالجة البيانات..."):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog | 
+            Qt.WindowType.FramelessWindowHint | 
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setModal(True)
+        self.setFixedSize(400, 160)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+
+        # بطاقة الحاوية العصرية
+        self.card = QFrame(self)
+        self.card.setObjectName("LoadingCard")
+        self.card.setStyleSheet("""
+            QFrame#LoadingCard {
+                background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #1e293b, stop:1 #0f172a);
+                border: 1.5px solid #334155;
+                border-radius: 16px;
+            }
+        """)
+
+        # تأثير الظل العصري
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(30)
+        shadow.setColor(QColor(0, 0, 0, 170))
+        shadow.setOffset(0, 8)
+        self.card.setGraphicsEffect(shadow)
+
+        card_layout = QHBoxLayout(self.card)
+        card_layout.setContentsMargins(22, 18, 22, 18)
+        card_layout.setSpacing(18)
+
+        # السبينر الدوار
+        self.spinner = SpinnerWidget(self.card, size=48, color="#10b981")
+        card_layout.addWidget(self.spinner, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # النصوص وشريط التقدم
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(6)
+        text_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        self.lbl_title = QLabel(title)
+        self.lbl_title.setStyleSheet("color: #ffffff; font-size: 15px; font-weight: bold; font-family: 'Tajawal';")
+        text_layout.addWidget(self.lbl_title)
+
+        self.lbl_message = QLabel(message)
+        self.lbl_message.setStyleSheet("color: #94a3b8; font-size: 13px; font-family: 'Tajawal';")
+        self.lbl_message.setWordWrap(True)
+        text_layout.addWidget(self.lbl_message)
+
+        # شريط تقدم ناعم
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #334155;
+                border: none;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #10b981, stop:1 #3b82f6);
+                border-radius: 2px;
+            }
+        """)
+        text_layout.addWidget(self.progress_bar)
+
+        card_layout.addLayout(text_layout)
+        main_layout.addWidget(self.card)
+
+    def set_message(self, message: str, title: str = None):
+        if title:
+            self.lbl_title.setText(title)
+        self.lbl_message.setText(message)
+        QCoreApplication.processEvents()
+
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
