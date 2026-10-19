@@ -751,16 +751,95 @@
             background: radial-gradient(circle, rgba(212, 175, 55, 0.15) 0%, transparent 70%);
             pointer-events: none;
         }
+        .announcement-slides-wrapper {
+            position: relative;
+            width: 100%;
+        }
         .announcement-slide {
             display: none;
             opacity: 0;
-            transform: translateY(8px);
-            transition: opacity 0.45s ease, transform 0.45s ease;
+            width: 100%;
         }
         .announcement-slide.active {
             display: block;
             opacity: 1;
-            transform: translateY(0);
+            transform: translateX(0);
+            position: relative;
+        }
+
+        /* Smooth Left-to-Right Horizontal Transitions */
+        @keyframes slideInFromLeft {
+            0% {
+                opacity: 0;
+                transform: translateX(-70px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        @keyframes slideOutToRight {
+            0% {
+                opacity: 1;
+                transform: translateX(0);
+            }
+            100% {
+                opacity: 0;
+                transform: translateX(70px);
+            }
+        }
+        @keyframes slideInFromRight {
+            0% {
+                opacity: 0;
+                transform: translateX(70px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        @keyframes slideOutToLeft {
+            0% {
+                opacity: 1;
+                transform: translateX(0);
+            }
+            100% {
+                opacity: 0;
+                transform: translateX(-70px);
+            }
+        }
+
+        .slide-entering-from-left {
+            display: block !important;
+            position: relative !important;
+            animation: slideInFromLeft 0.38s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+        .slide-exiting-to-right {
+            display: block !important;
+            position: absolute !important;
+            top: 0;
+            left: 0;
+            right: 0;
+            width: 100%;
+            pointer-events: none;
+            z-index: 1;
+            animation: slideOutToRight 0.38s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+        .slide-entering-from-right {
+            display: block !important;
+            position: relative !important;
+            animation: slideInFromRight 0.38s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+        .slide-exiting-to-left {
+            display: block !important;
+            position: absolute !important;
+            top: 0;
+            left: 0;
+            right: 0;
+            width: 100%;
+            pointer-events: none;
+            z-index: 1;
+            animation: slideOutToLeft 0.38s cubic-bezier(0.25, 1, 0.5, 1) forwards;
         }
         .announcement-header {
             display: flex;
@@ -1444,68 +1523,70 @@
         <!-- Dynamic Rotating Announcements & Awareness Carousel -->
         {% if announcements %}
         <div id="announcementCarousel" class="announcement-carousel-card" onmouseenter="pauseAnnouncementRotation()" onmouseleave="resumeAnnouncementRotation()">
-            {% for msg in announcements %}
-            <div class="announcement-slide {% if loop.first %}active{% endif %}" data-index="{{ loop.index0 }}" data-duration="{{ msg.display_duration or 7 }}">
-                <div class="announcement-header">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        {% if msg.msg_type == 'awareness' %}
-                            <span class="announcement-badge badge-type-awareness">
-                                <i data-lucide="lightbulb" style="width: 15px; height: 15px;"></i> رسالة توعوية
+            <div class="announcement-slides-wrapper">
+                {% for msg in announcements %}
+                <div class="announcement-slide {% if loop.first %}active{% endif %}" data-index="{{ loop.index0 }}" data-duration="{{ msg.display_duration or 7 }}">
+                    <div class="announcement-header">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            {% if msg.msg_type == 'awareness' %}
+                                <span class="announcement-badge badge-type-awareness">
+                                    <i data-lucide="lightbulb" style="width: 15px; height: 15px;"></i> رسالة توعوية
+                                </span>
+                            {% elif msg.msg_type == 'educational' %}
+                                <span class="announcement-badge badge-type-educational">
+                                    <i data-lucide="book-open" style="width: 15px; height: 15px;"></i> رسالة تعليمية
+                                </span>
+                            {% elif msg.msg_type == 'reminder' %}
+                                <span class="announcement-badge badge-type-reminder">
+                                    <i data-lucide="clock" style="width: 15px; height: 15px;"></i> رسالة تذكيرية
+                                </span>
+                            {% elif msg.msg_type == 'urgent' %}
+                                <span class="announcement-badge badge-type-urgent">
+                                    <i data-lucide="alert-triangle" style="width: 15px; height: 15px;"></i> تنبيه هام وعاجل
+                                </span>
+                            {% else %}
+                                <span class="announcement-badge badge-type-general">
+                                    <i data-lucide="megaphone" style="width: 15px; height: 15px;"></i> إعلان عام
+                                </span>
+                            {% endif %}
+                            <span style="font-size: 0.78rem; color: #94a3b8; background: rgba(0,0,0,0.3); padding: 3px 10px; border-radius: 12px;">
+                                {{ loop.index }} من {{ announcements|length }}
                             </span>
-                        {% elif msg.msg_type == 'educational' %}
-                            <span class="announcement-badge badge-type-educational">
-                                <i data-lucide="book-open" style="width: 15px; height: 15px;"></i> رسالة تعليمية
-                            </span>
-                        {% elif msg.msg_type == 'reminder' %}
-                            <span class="announcement-badge badge-type-reminder">
-                                <i data-lucide="clock" style="width: 15px; height: 15px;"></i> رسالة تذكيرية
-                            </span>
-                        {% elif msg.msg_type == 'urgent' %}
-                            <span class="announcement-badge badge-type-urgent">
-                                <i data-lucide="alert-triangle" style="width: 15px; height: 15px;"></i> تنبيه هام وعاجل
-                            </span>
-                        {% else %}
-                            <span class="announcement-badge badge-type-general">
-                                <i data-lucide="megaphone" style="width: 15px; height: 15px;"></i> إعلان عام
-                            </span>
+                        </div>
+
+                        <div class="announcement-controls">
+                            <button type="button" class="announcement-nav-btn" onclick="prevAnnouncementSlide()" title="السابق">‹</button>
+                            <button type="button" id="btnPauseResume" class="announcement-nav-btn" onclick="togglePauseAnnouncement()" title="إيقاف مؤقت / تشغيل">⏸</button>
+                            <button type="button" class="announcement-nav-btn" onclick="nextAnnouncementSlide()" title="التالي">›</button>
+                        </div>
+                    </div>
+
+                    <div class="announcement-title">
+                        <span>✨</span>
+                        <span>{{ msg.title }}</span>
+                    </div>
+
+                    <div class="announcement-body">{{ msg.content }}</div>
+
+                    <div class="announcement-footer">
+                        <div>
+                            {% if msg.end_date %}
+                                <span><i data-lucide="calendar" style="width: 12px; height: 12px; vertical-align: middle;"></i> متاح حتى: {{ msg.end_date.strftime('%Y-%m-%d %H:%M') }}</span>
+                            {% else %}
+                                <span><i data-lucide="info" style="width: 12px; height: 12px; vertical-align: middle;"></i> تنبيه من إدارة هكبة المليون</span>
+                            {% endif %}
+                        </div>
+                        {% if announcements|length > 1 %}
+                        <div class="announcement-dots">
+                            {% for d in announcements %}
+                                <span class="announcement-dot {% if loop.index0 == 0 %}active{% endif %}" data-slide-index="{{ loop.index0 }}" onclick="goToAnnouncementSlide(parseInt(this.getAttribute('data-slide-index')))"></span>
+                            {% endfor %}
+                        </div>
                         {% endif %}
-                        <span style="font-size: 0.78rem; color: #94a3b8; background: rgba(0,0,0,0.3); padding: 3px 10px; border-radius: 12px;">
-                            {{ loop.index }} من {{ announcements|length }}
-                        </span>
-                    </div>
-
-                    <div class="announcement-controls">
-                        <button type="button" class="announcement-nav-btn" onclick="prevAnnouncementSlide()" title="السابق">‹</button>
-                        <button type="button" id="btnPauseResume" class="announcement-nav-btn" onclick="togglePauseAnnouncement()" title="إيقاف مؤقت / تشغيل">⏸</button>
-                        <button type="button" class="announcement-nav-btn" onclick="nextAnnouncementSlide()" title="التالي">›</button>
                     </div>
                 </div>
-
-                <div class="announcement-title">
-                    <span>✨</span>
-                    <span>{{ msg.title }}</span>
-                </div>
-
-                <div class="announcement-body">{{ msg.content }}</div>
-
-                <div class="announcement-footer">
-                    <div>
-                        {% if msg.end_date %}
-                            <span><i data-lucide="calendar" style="width: 12px; height: 12px; vertical-align: middle;"></i> متاح حتى: {{ msg.end_date.strftime('%Y-%m-%d %H:%M') }}</span>
-                        {% else %}
-                            <span><i data-lucide="info" style="width: 12px; height: 12px; vertical-align: middle;"></i> تنبيه من إدارة هكبة المليون</span>
-                        {% endif %}
-                    </div>
-                    {% if announcements|length > 1 %}
-                    <div class="announcement-dots">
-                        {% for d in announcements %}
-                            <span class="announcement-dot {% if loop.index0 == 0 %}active{% endif %}" data-slide-index="{{ loop.index0 }}" onclick="goToAnnouncementSlide(parseInt(this.getAttribute('data-slide-index')))"></span>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
             <div id="announcementProgress" class="announcement-progress-bar"></div>
         </div>
         {% endif %}
@@ -2139,6 +2220,7 @@
         let announcementProgressStartTime = 0;
         let announcementCurrentDuration = 7000;
         let isAnnouncementPaused = false;
+        let isAnnouncementTransitioning = false;
 
         function getAnnouncementSlides() {
             return document.querySelectorAll('.announcement-slide');
@@ -2148,50 +2230,97 @@
             return document.querySelectorAll('.announcement-dot');
         }
 
-        function showAnnouncementSlide(index) {
-            const slides = getAnnouncementSlides();
-            if (!slides || slides.length === 0) return;
-
-            if (index < 0) index = slides.length - 1;
-            if (index >= slides.length) index = 0;
-            currentAnnouncementIndex = index;
-
-            slides.forEach((s, idx) => {
-                if (idx === currentAnnouncementIndex) {
-                    s.classList.add('active');
-                    s.style.display = 'block';
-                    setTimeout(() => {
-                        s.style.opacity = '1';
-                        s.style.transform = 'translateY(0)';
-                    }, 10);
-                } else {
-                    s.classList.remove('active');
-                    s.style.opacity = '0';
-                    s.style.transform = 'translateY(8px)';
-                    setTimeout(() => {
-                        if (idx !== currentAnnouncementIndex) {
-                            s.style.display = 'none';
-                        }
-                    }, 300);
-                }
-            });
-
-            // Update dots
+        function updateAnnouncementDots(activeIndex) {
             const dots = getAnnouncementDots();
             dots.forEach((d, idx) => {
-                if (idx === currentAnnouncementIndex) {
+                if (idx === activeIndex) {
                     d.classList.add('active');
                 } else {
                     d.classList.remove('active');
                 }
             });
+        }
 
-            // Read duration
-            const activeSlide = slides[currentAnnouncementIndex];
+        function showAnnouncementSlide(index, direction = 'forward') {
+            const slides = getAnnouncementSlides();
+            if (!slides || slides.length === 0) return;
+
+            if (index < 0) index = slides.length - 1;
+            if (index >= slides.length) index = 0;
+
+            const oldIndex = currentAnnouncementIndex;
+            const oldSlide = slides[oldIndex];
+            const newSlide = slides[index];
+
+            // If only 1 slide or initial load for same slide
+            if (slides.length === 1 || oldIndex === index) {
+                currentAnnouncementIndex = index;
+                slides.forEach((s, idx) => {
+                    s.classList.remove('slide-entering-from-left', 'slide-exiting-to-right', 'slide-entering-from-right', 'slide-exiting-to-left');
+                    if (idx === index) {
+                        s.classList.add('active');
+                        s.style.display = 'block';
+                    } else {
+                        s.classList.remove('active');
+                        s.style.display = 'none';
+                    }
+                });
+                updateAnnouncementDots(index);
+                prepareNextTimer(newSlide);
+                return;
+            }
+
+            if (isAnnouncementTransitioning) return;
+            isAnnouncementTransitioning = true;
+            currentAnnouncementIndex = index;
+
+            // Forward (التالي / تدوير تلقائي): الرسالة تنسحب من اليسار إلى اليمين
+            // Backward (السابق): حركة عكسية من اليمين إلى اليسار
+            const enterClass = (direction === 'forward') ? 'slide-entering-from-left' : 'slide-entering-from-right';
+            const exitClass = (direction === 'forward') ? 'slide-exiting-to-right' : 'slide-exiting-to-left';
+
+            // Clean up old classes
+            slides.forEach((s, idx) => {
+                s.classList.remove('slide-entering-from-left', 'slide-exiting-to-right', 'slide-entering-from-right', 'slide-exiting-to-left');
+                if (idx !== oldIndex && idx !== index) {
+                    s.classList.remove('active');
+                    s.style.display = 'none';
+                }
+            });
+
+            // Start slide transition
+            oldSlide.classList.remove('active');
+            oldSlide.classList.add(exitClass);
+
+            newSlide.classList.add(enterClass);
+
+            updateAnnouncementDots(index);
+
+            setTimeout(() => {
+                oldSlide.classList.remove(exitClass);
+                oldSlide.style.display = 'none';
+
+                newSlide.classList.remove(enterClass);
+                newSlide.classList.add('active');
+                newSlide.style.display = 'block';
+
+                isAnnouncementTransitioning = false;
+            }, 390);
+
+            prepareNextTimer(newSlide);
+        }
+
+        function prepareNextTimer(activeSlide) {
+            clearTimeout(announcementSlideTimer);
+            clearInterval(announcementProgressInterval);
+
+            const slides = getAnnouncementSlides();
+            if (slides.length <= 1) return;
+
             const durSeconds = parseInt(activeSlide.getAttribute('data-duration') || '7', 10);
             announcementCurrentDuration = Math.max(durSeconds, 3) * 1000;
 
-            if (slides.length > 1 && !isAnnouncementPaused) {
+            if (!isAnnouncementPaused) {
                 startAnnouncementTimer(announcementCurrentDuration);
             }
         }
@@ -2219,15 +2348,17 @@
         }
 
         function nextAnnouncementSlide() {
-            showAnnouncementSlide(currentAnnouncementIndex + 1);
+            showAnnouncementSlide(currentAnnouncementIndex + 1, 'forward');
         }
 
         function prevAnnouncementSlide() {
-            showAnnouncementSlide(currentAnnouncementIndex - 1);
+            showAnnouncementSlide(currentAnnouncementIndex - 1, 'backward');
         }
 
-        function goToAnnouncementSlide(index) {
-            showAnnouncementSlide(index);
+        function goToAnnouncementSlide(targetIndex) {
+            if (targetIndex === currentAnnouncementIndex) return;
+            const dir = targetIndex > currentAnnouncementIndex ? 'forward' : 'backward';
+            showAnnouncementSlide(targetIndex, dir);
         }
 
         function pauseAnnouncementRotation() {
