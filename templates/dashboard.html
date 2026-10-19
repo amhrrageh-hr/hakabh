@@ -311,6 +311,140 @@
             margin-bottom: 0.4rem;
             line-height: 1.3;
         }
+        /* تنسيق شريط فئة الهكبة ورقم المشترك */
+        .subscriber-meta-bar {
+            display: inline-flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 0.35rem;
+        }
+        .sub-meta-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border-radius: 50px;
+            padding: 0.45rem 1.15rem;
+            font-size: 0.88rem;
+            color: #e2e8f0;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+            transition: all 0.25s ease;
+        }
+        .sub-meta-pill:hover {
+            transform: translateY(-2px);
+        }
+        .sub-meta-pill.category-pill {
+            background: linear-gradient(135deg, rgba(212, 175, 55, 0.15) 0%, rgba(15, 23, 42, 0.65) 100%);
+            border: 1px solid rgba(212, 175, 55, 0.45);
+        }
+        .sub-meta-pill.category-pill:hover {
+            border-color: rgba(212, 175, 55, 0.75);
+            box-shadow: 0 6px 18px rgba(212, 175, 55, 0.2);
+        }
+        .sub-meta-pill.number-pill {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(15, 23, 42, 0.65) 100%);
+            border: 1px solid rgba(16, 185, 129, 0.45);
+        }
+        .sub-meta-pill.number-pill:hover {
+            border-color: rgba(16, 185, 129, 0.75);
+            box-shadow: 0 6px 18px rgba(16, 185, 129, 0.2);
+        }
+        .sub-meta-pill .meta-icon {
+            font-size: 1rem;
+            display: inline-flex;
+            align-items: center;
+        }
+        .sub-meta-pill .meta-title {
+            color: #94a3b8;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+        .sub-meta-pill.category-pill .meta-highlight {
+            color: var(--primary);
+            font-weight: 800;
+            font-size: 0.95rem;
+        }
+        .sub-meta-pill.number-pill .meta-highlight {
+            color: #34d399;
+            font-weight: 800;
+            font-size: 0.95rem;
+        }
+
+        /* تنسيق بطاقتي إجمالي المسدد والمتبقي في نفس السطر */
+        .totals-overview-row {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .stat-card-paid {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(15, 23, 42, 0.7) 100%);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            border-radius: 20px;
+            padding: 1.4rem 1.6rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.4);
+        }
+        .stat-card-paid:hover {
+            border-color: rgba(16, 185, 129, 0.65);
+            box-shadow: 0 12px 30px -5px rgba(16, 185, 129, 0.22);
+            transform: translateY(-3px);
+        }
+        .stat-card-due {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(15, 23, 42, 0.7) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            border-radius: 20px;
+            padding: 1.4rem 1.6rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.4);
+        }
+        .stat-card-due:hover {
+            border-color: rgba(239, 68, 68, 0.65);
+            box-shadow: 0 12px 30px -5px rgba(239, 68, 68, 0.22);
+            transform: translateY(-3px);
+        }
+        .stat-card-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 0.6rem;
+        }
+        .stat-icon-wrap {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .totals-overview-row .label {
+            color: #94a3b8;
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+        .totals-overview-row .value {
+            font-size: 2rem;
+            font-weight: 800;
+            line-height: 1.2;
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+        .value-paid {
+            color: #10b981 !important;
+            text-shadow: 0 0 20px rgba(16, 185, 129, 0.25);
+        }
+        .value-due {
+            color: #f87171 !important;
+            text-shadow: 0 0 20px rgba(239, 68, 68, 0.25);
+        }
+        .currency {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #94a3b8;
+        }
         .dash-header-actions {
             display: flex;
             gap: 8px;
@@ -996,6 +1130,14 @@
                 flex-wrap: wrap;
                 margin-bottom: 0.4rem;
             }
+            .subscriber-meta-bar {
+                justify-content: center;
+                gap: 7px;
+            }
+            .sub-meta-pill {
+                padding: 0.35rem 0.85rem;
+                font-size: 0.8rem;
+            }
             .dash-header-actions {
                 width: 100% !important;
                 display: grid !important;
@@ -1014,17 +1156,38 @@
                 height: 36px !important;
                 padding: 0.45rem !important;
             }
-            .dashboard-grid {
-                grid-template-columns: 1fr !important;
-                gap: 0.85rem !important;
+            .totals-overview-row {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 0.75rem !important;
                 margin-top: 1rem !important;
+                margin-bottom: 1.5rem !important;
             }
-            .stat-card {
-                padding: 1.25rem 1rem !important;
-                border-radius: 18px !important;
+            .stat-card-paid,
+            .stat-card-due {
+                padding: 1rem 0.85rem !important;
+                border-radius: 16px !important;
             }
-            .stat-card .value {
-                font-size: 1.75rem !important;
+            .stat-card-header {
+                gap: 6px !important;
+                margin-bottom: 0.4rem !important;
+            }
+            .stat-icon-wrap {
+                width: 28px !important;
+                height: 28px !important;
+                border-radius: 8px !important;
+            }
+            .stat-icon-wrap svg {
+                width: 16px !important;
+                height: 16px !important;
+            }
+            .totals-overview-row .label {
+                font-size: 0.8rem !important;
+            }
+            .totals-overview-row .value {
+                font-size: 1.25rem !important;
+            }
+            .currency {
+                font-size: 0.75rem !important;
             }
             .glass-card {
                 padding: 1.25rem 0.85rem !important;
@@ -1120,7 +1283,18 @@
                         <span class="status-badge" style="font-size: 0.85rem; padding: 4px 10px; border-radius: 20px; background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.3);">موقوف 🚫</span>
                     {% endif %}
                 </h1>
-                <p style="margin-bottom: 0;">رقم المشترك: <span style="color: var(--primary); font-weight: 700;">{{ sub.subscriber_number }}</span></p>
+                <div class="subscriber-meta-bar">
+                    <div class="sub-meta-pill category-pill" title="فئة الهكبة">
+                        <span class="meta-icon">🏷️</span>
+                        <span class="meta-title">فئة الهكبة:</span>
+                        <span class="meta-highlight">{{ sub.category }}</span>
+                    </div>
+                    <div class="sub-meta-pill number-pill" title="رقم المشترك في هذه الفئة">
+                        <span class="meta-icon">🔢</span>
+                        <span class="meta-title">رقم المشترك:</span>
+                        <span class="meta-highlight">#{{ sub.subscriber_number }}</span>
+                    </div>
+                </div>
             </div>
             <div class="dash-header-actions">
                 <!-- زر الإشعارات (الجرس) -->
@@ -1591,19 +1765,26 @@
         </div>
         {% endif %}
 
-        <!-- Stats Overview -->
-        <div class="dashboard-grid">
-            <div class="stat-card">
-                <span class="label">إجمالي المسدد</span>
-                <span class="value" style="color: var(--accent);">{{ "{:,.2f}".format(total_paid or 0) }} ريال</span>
+        <!-- Stats Overview: إجمالي المسدد والمتبقي بجانب بعضهما في نفس السطر -->
+        <div class="totals-overview-row">
+            <div class="stat-card stat-card-paid">
+                <div class="stat-card-header">
+                    <span class="stat-icon-wrap" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                    </span>
+                    <span class="label">إجمالي المسدد</span>
+                </div>
+                <div class="value value-paid">{{ "{:,.2f}".format(total_paid or 0) }} <span class="currency">ريال</span></div>
             </div>
-            <div class="stat-card">
-                <span class="label">المتبقي</span>
-                <span class="value" style="color: var(--danger);">{{ "{:,.2f}".format(total_due or 0) }} ريال</span>
-            </div>
-            <div class="stat-card">
-                <span class="label">فئة الهكبة</span>
-                <span class="value" style="color: var(--primary);">{{ sub.category }}</span>
+
+            <div class="stat-card stat-card-due">
+                <div class="stat-card-header">
+                    <span class="stat-icon-wrap" style="background: rgba(239, 68, 68, 0.15); color: #f87171;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    </span>
+                    <span class="label">المتبقي</span>
+                </div>
+                <div class="value value-due">{{ "{:,.2f}".format(total_due or 0) }} <span class="currency">ريال</span></div>
             </div>
         </div>
 
