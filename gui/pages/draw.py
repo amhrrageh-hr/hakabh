@@ -753,9 +753,19 @@ class DrawMixin:
                     if child.widget():
                         child.widget().setParent(None)
 
-        # جلب الفئات والدورات في استعلام واحد خفيف
+        # جلب الفئات والدورات في استعلام واحد خفيف للموسم النشط
         try:
-            categories = self.db.query(db_mod.Category).all()
+            curr_sid = None
+            if hasattr(self, 'combo_header_season'):
+                curr_sid = self.combo_header_season.currentData()
+            if not curr_sid:
+                curr_s = db_mod.get_current_season(self.db)
+                curr_sid = curr_s.id if curr_s else None
+            
+            q_cat = self.db.query(db_mod.Category)
+            if curr_sid and curr_sid != -1:
+                q_cat = q_cat.filter(db_mod.Category.season_id == curr_sid)
+            categories = q_cat.all()
         except Exception:
             categories = []
         
@@ -1432,11 +1442,15 @@ class DrawMixin:
                     ).order_by(db_mod.Payment.due_date.desc()).first()
                     cycle_num = active_p.cycle_number if active_p else 1
 
+                w_season_id = getattr(w, 'season_id', None)
+                if not w_season_id and hasattr(self, 'combo_header_season'):
+                    w_season_id = self.combo_header_season.currentData()
                 new_w = db_mod.Winner(
                     subscriber_number=w.subscriber_number, 
                     draw_type=draw_label,
                     draw_date=datetime.datetime.now(),
-                    cycle_number=cycle_num
+                    cycle_number=cycle_num,
+                    season_id=w_season_id
                 )
                 self.db.add(new_w)
                 res_msg += f"الاسم: {w.name} - الفئة: {w.category} - رقم الحساب: {w.subscriber_number}\n"
@@ -1461,11 +1475,15 @@ class DrawMixin:
             ).order_by(db_mod.Payment.due_date.desc()).first()
             cycle_num = active_p.cycle_number if active_p else 1
 
+        winner_season_id = getattr(winner, 'season_id', None)
+        if not winner_season_id and hasattr(self, 'combo_header_season'):
+            winner_season_id = self.combo_header_season.currentData()
         new_w = db_mod.Winner(
             subscriber_number=winner.subscriber_number, 
             draw_type=draw_name,
             draw_date=datetime.datetime.now(),
-            cycle_number=cycle_num
+            cycle_number=cycle_num,
+            season_id=winner_season_id
         )
         self.db.add(new_w)
         self.db.commit()

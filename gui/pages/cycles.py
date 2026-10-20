@@ -64,7 +64,18 @@ class CyclesMixin:
         layout.addStretch(); page.setWidget(container); return page
     def refresh_cycles_cat_list(self):
         self.cyc_cat.clear()
-        for c in self.db.query(db_mod.Category).all(): self.cyc_cat.addItem(c.name, c.id)
+        curr_season_id = None
+        if hasattr(self, 'combo_header_season'):
+            curr_season_id = self.combo_header_season.currentData()
+        if not curr_season_id:
+            curr_s = db_mod.get_current_season(self.db)
+            curr_season_id = curr_s.id if curr_s else None
+
+        q = self.db.query(db_mod.Category)
+        if curr_season_id and curr_season_id != -1:
+            q = q.filter(db_mod.Category.season_id == curr_season_id)
+        for c in q.all():
+            self.cyc_cat.addItem(c.name, c.id)
     def load_category_cycle_settings(self):
         cat_id = self.cyc_cat.currentData()
         if not cat_id: return

@@ -1094,13 +1094,24 @@ class AddSubscriberDialog(QDialog):
         self.ent_phone = QLineEdit()
         self.ent_phone.setPlaceholderText("05xxxxxxxx")
         form.addRow("رقم الهاتف:", self.ent_phone)
+
+        self.cb_season = QComboBox()
+        seasons = db_mod.get_all_seasons(self.db)
+        curr_season = db_mod.get_current_season(self.db)
+        for s in seasons:
+            label = f"{s.name} (النشط ⭐)" if s.is_current else s.name
+            self.cb_season.addItem(label, s.id)
+        if curr_season:
+            idx = self.cb_season.findData(curr_season.id)
+            if idx >= 0:
+                self.cb_season.setCurrentIndex(idx)
+        self.cb_season.currentIndexChanged.connect(self.load_categories)
+        form.addRow("الموسم:", self.cb_season)
         
         self.cb_cat = QComboBox()
-        self.cb_cat.addItem("اختر الفئة...", None)
-        for cat in db.query(db_mod.Category).all():
-            self.cb_cat.addItem(cat.name, cat.id)
         self.cb_cat.currentIndexChanged.connect(self.load_numbers)
         form.addRow("الفئة:", self.cb_cat)
+        self.load_categories()
         
         self.cb_num = QComboBox()
         self.cb_num.addItem("اختر الرقم...", None)
@@ -1117,6 +1128,19 @@ class AddSubscriberDialog(QDialog):
         self.btn_save.setObjectName("PrimaryBtn"); self.btn_save.setFixedHeight(45)
         self.btn_save.clicked.connect(self.validate_and_accept)
         layout.addWidget(self.btn_save)
+
+    def load_categories(self):
+        self.cb_cat.blockSignals(True)
+        self.cb_cat.clear()
+        self.cb_cat.addItem("اختر الفئة...", None)
+        season_id = self.cb_season.currentData()
+        q = self.db.query(db_mod.Category)
+        if season_id:
+            q = q.filter(db_mod.Category.season_id == season_id)
+        for cat in q.all():
+            self.cb_cat.addItem(cat.name, cat.id)
+        self.cb_cat.blockSignals(False)
+        self.load_numbers()
 
     def load_numbers(self):
         self.cb_num.clear()

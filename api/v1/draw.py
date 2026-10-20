@@ -319,13 +319,16 @@ def perform_draw_api(
         for cat_name, cat_candidates in cand_by_cat.items():
             chosen = random.choice(cat_candidates)
             draw_label = f"{draw_type} - {cat_name}"
+            sub_obj = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.subscriber_number == chosen.number).first()
+            s_id = sub_obj.season_id if sub_obj else None
             new_w = db_mod.Winner(
                 subscriber_number=chosen.number,
                 draw_type=draw_label,
                 draw_date=now,
                 cycle_number=chosen.cycle,
                 payout_amount=0.0,
-                is_received=False
+                is_received=False,
+                season_id=s_id
             )
             db.add(new_w)
             winners_created.append({
@@ -349,13 +352,16 @@ def perform_draw_api(
         draw_label = f"الجائزة الكبرى - الفترة {period}" if period > 1 else "الجائزة الكبرى"
 
         for chosen in chosen_list:
+            sub_obj = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.subscriber_number == chosen.number).first()
+            s_id = sub_obj.season_id if sub_obj else None
             new_w = db_mod.Winner(
                 subscriber_number=chosen.number,
                 draw_type=draw_label,
                 draw_date=now,
                 cycle_number=chosen.cycle,
                 payout_amount=0.0,
-                is_received=False
+                is_received=False,
+                season_id=s_id
             )
             db.add(new_w)
             winners_created.append({

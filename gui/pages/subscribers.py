@@ -101,10 +101,25 @@ class SubscribersMixin:
             
         self.sub_tabs.clear()
         
-        pending_count = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "pending").count()
+        curr_season_id = None
+        if hasattr(self, 'combo_header_season'):
+            curr_season_id = self.combo_header_season.currentData()
+        if not curr_season_id:
+            curr_s = db_mod.get_current_season(self.db)
+            curr_season_id = curr_s.id if curr_s else None
+
+        cats_q = self.db.query(db_mod.Category)
+        if curr_season_id and curr_season_id != -1:
+            cats_q = cats_q.filter(db_mod.Category.season_id == curr_season_id)
+        active_cats = cats_q.all()
+
+        pending_q = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "pending")
+        if curr_season_id and curr_season_id != -1:
+            pending_q = pending_q.filter(db_mod.Subscriber.season_id == curr_season_id)
+        pending_count = pending_q.count()
         pending_label = f"طلبات الانضمام ({pending_count})" if pending_count > 0 else "طلبات الانضمام"
         
-        self._categories_cache = ["الكل", pending_label] + [c.name for c in self.db.query(db_mod.Category).all()] + ["قائمة المستبعدين"]
+        self._categories_cache = ["الكل", pending_label] + [c.name for c in active_cats] + ["قائمة المستبعدين"]
         
         for cat_name in self._categories_cache:
             # Placeholder widget for lazy loading
@@ -139,7 +154,17 @@ class SubscribersMixin:
             self.show_loading("جاري جلب المشتركين", f"يرجى الانتظار، جاري تحميل المشتركين في ({cat_name})...")
 
         try:
+            curr_season_id = None
+            if hasattr(self, 'combo_header_season'):
+                curr_season_id = self.combo_header_season.currentData()
+            if not curr_season_id:
+                curr_s = db_mod.get_current_season(self.db)
+                curr_season_id = curr_s.id if curr_s else None
+
             base_query = self.db.query(db_mod.Subscriber)
+            if curr_season_id and curr_season_id != -1:
+                base_query = base_query.filter(db_mod.Subscriber.season_id == curr_season_id)
+
             if hasattr(self, '_current_search_text') and self._current_search_text:
                 search_text = self._current_search_text
                 base_query = base_query.filter(
@@ -325,6 +350,21 @@ class SubscribersMixin:
         
         header_lay.addLayout(info_lay)
         header_lay.addStretch()
+
+        # Season Pill
+        s_name = s.season.name if (hasattr(s, 'season') and s.season) else ""
+        if s_name:
+            season_pill = QLabel(f"🏆 {s_name}")
+            season_pill.setFont(QFont("Tajawal", 8, QFont.Weight.Bold))
+            season_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            season_pill.setStyleSheet("""
+                background: #fef3c7;
+                color: #92400e;
+                padding: 4px 8px;
+                border-radius: 10px;
+                border: 1px solid #fde68a;
+            """)
+            header_lay.addWidget(season_pill)
         
         # Category Pill
         cat_pill = QLabel(s.category or "بدون فئة")
@@ -715,12 +755,20 @@ class SubscribersMixin:
                     ModernDialog(self, "خطأ", "هذا الرقم تم حجزه مؤخراً، يرجى اختيار رقم آخر.").exec()
                     return
 
+                cat_id = dlg.cb_cat.currentData()
+                cat_obj = self.db.get(db_mod.Category, cat_id) if cat_id else self.db.query(db_mod.Category).filter(db_mod.Category.name == cat_name).first()
+                season_id = cat_obj.season_id if cat_obj else None
+                if not season_id:
+                    curr_s = db_mod.get_current_season(self.db)
+                    season_id = curr_s.id if curr_s else None
+
                 # 1. Create Subscriber (don't set selected_number_id until validated)
                 new_sub = db_mod.Subscriber(
                     name=name,
                     phone=phone,
                     password=security.hash_password(pwd),
                     category=cat_name,
+                    season_id=season_id,
                     subscriber_number=sub_num_text,
                     status="accepted"
                 )
