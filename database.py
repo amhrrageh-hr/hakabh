@@ -303,7 +303,7 @@ def init_db(force_migration=False):
         # إذا تم التحقق من الجداول مسبقاً، تخطي الفحص البطيء لتسريع فتح البرنامج
         if not force_migration:
             try:
-                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v1").first()
+                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v2").first()
                 if mig_setting and mig_setting.value == "true":
                     return
             except Exception:
@@ -433,9 +433,9 @@ def init_db(force_migration=False):
             db.add(Setting(key="registration_open", value="true"))
 
         # حفظ علامة اكتمال تهيئة الجداول لتسريع الفتح اللاحق
-        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v1").first()
+        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v2").first()
         if not mig_setting:
-            db.add(Setting(key="schema_migrated_v1", value="true"))
+            db.add(Setting(key="schema_migrated_v2", value="true"))
         else:
             mig_setting.value = "true"
 
