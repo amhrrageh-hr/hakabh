@@ -205,6 +205,7 @@ class Winner(Base):
     payout_amount = Column(Float, default=0.0)
     received_date = Column(DateTime, nullable=True)
     payout_note = Column(String, nullable=True)
+    is_notif_seen = Column(Boolean, default=False)  # هل رأى المشترك هذا الإشعار
 
 class Category(Base):
     __tablename__ = "categories"
@@ -399,6 +400,9 @@ def init_db(force_migration=False):
             if 'payout_note' not in winner_columns:
                 print("جاري تحديث قاعدة البيانات لإضافة حقل ملاحظات تسليم الفائز...")
                 db.execute(text("ALTER TABLE winners ADD COLUMN payout_note TEXT"))
+            if 'is_notif_seen' not in winner_columns:
+                print("جاري تحديث قاعدة البيانات لإضافة حقل حالة مشاهدة الإشعار...")
+                db.execute(text(f"ALTER TABLE winners ADD COLUMN is_notif_seen BOOLEAN DEFAULT {bool_false}"))
         except Exception as e:
             print(f"Error migrating winners table: {e}")
 

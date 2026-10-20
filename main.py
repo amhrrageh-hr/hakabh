@@ -649,15 +649,18 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 
         # جلب جوائز هذا المشترك تحديداً
         today_dt = datetime.datetime.now()
-        sub_winnings = db.query(db_mod.Winner).filter(db_mod.Winner.subscriber_number == sub.subscriber_number).order_by(db_mod.Winner.draw_date.desc()).all()
+        all_sub_winnings = db.query(db_mod.Winner).filter(db_mod.Winner.subscriber_number == sub.subscriber_number).order_by(db_mod.Winner.draw_date.desc()).all()
         
         # الجوائز الحديثة التي تم الفوز بها خلال آخر 24 ساعة (تظهر في البانر التنبيهي المؤقت لليوم الأول فقط)
         recent_winnings = []
-        for w in sub_winnings:
+        for w in all_sub_winnings:
             if w.draw_date:
                 diff_sec = (today_dt - w.draw_date).total_seconds()
                 if 0 <= diff_sec <= 86400:  # 86400 ثانية = 24 ساعة
                     recent_winnings.append(w)
+
+        # الإشعارات غير المشاهدة فقط لجرس التنبيهات والنافذة المنبثقة (تختفي بمجرد فتحها ورؤيتها)
+        sub_winnings = [w for w in all_sub_winnings if not getattr(w, 'is_notif_seen', False)]
         
         # Fetch category info
         category_info = None
@@ -852,6 +855,24 @@ async def pending_page(request: Request, db: Session = Depends(get_db)):
         "sub": sub,
         "category_info": category_info
     })
+
+
+@app.post("/mark-notifications-seen")
+async def mark_notifications_seen(request: Request, db: Session = Depends(get_db)):
+    """تحديث حالة إشعارات الفوز للمشترك لتصبح مقروءة/مشاهدة فتختفي من جرس التنبيهات"""
+    sub_id = request.session.get("sub_id")
+    if not sub_id:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    sub = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.id == sub_id).first()
+    if not sub:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Subscriber not found"})
+    
+    db.query(db_mod.Winner).filter(
+        db_mod.Winner.subscriber_number == sub.subscriber_number,
+        or_(db_mod.Winner.is_notif_seen == False, db_mod.Winner.is_notif_seen == None)
+    ).update({"is_notif_seen": True}, synchronize_session=False)
+    db.commit()
+    return JSONResponse(content={"ok": True})
 
 
 # وظيفة إرسال الرسائل النصية

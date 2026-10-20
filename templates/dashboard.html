@@ -1329,13 +1329,13 @@
             </div>
             <div class="dash-header-actions">
                 <!-- زر الإشعارات (الجرس) -->
-                <button onclick="document.getElementById('notificationModal').style.display='flex'" class="hdr-btn hdr-btn-glass hdr-btn-icon" style="position: relative;">
+                <button onclick="openNotificationsModal()" class="hdr-btn hdr-btn-glass hdr-btn-icon" style="position: relative;" title="الإشعارات والتنبيهات">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
                         <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
                     </svg>
                     {% if sub_winnings %}
-                        <span style="position: absolute; top: -4px; right: -4px; background: var(--danger); color: white; border-radius: 50%; width: 16px; height: 16px; font-size: 0.65rem; display: flex; align-items: center; justify-content: center; font-weight: bold;">{{ sub_winnings|length }}</span>
+                        <span id="notif-badge" style="position: absolute; top: -4px; right: -4px; background: var(--danger); color: white; border-radius: 50%; width: 16px; height: 16px; font-size: 0.65rem; display: flex; align-items: center; justify-content: center; font-weight: bold;">{{ sub_winnings|length }}</span>
                     {% endif %}
                 </button>
                 <button onclick="document.getElementById('editProfileModal').style.display='flex'" class="hdr-btn hdr-btn-primary">
@@ -2324,12 +2324,12 @@
         <!-- Notifications Modal -->
         <div id="notificationModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; backdrop-filter: blur(5px);">
             <div class="glass-card" style="width: 90%; max-width: 500px; padding: 2rem; position: relative; border: 1px solid var(--glass-border); animation: fadeIn 0.3s ease-out;">
-                <button onclick="document.getElementById('notificationModal').style.display='none'" style="position: absolute; top: 1.5rem; right: 1.5rem; background: none; border: none; color: white; cursor: pointer; font-size: 1.8rem; line-height: 1;">&times;</button>
+                <button onclick="closeNotificationsModal()" style="position: absolute; top: 1.5rem; right: 1.5rem; background: none; border: none; color: white; cursor: pointer; font-size: 1.8rem; line-height: 1;">&times;</button>
                 <h3 style="margin-bottom: 1.5rem; font-size: 1.4rem; color: var(--primary); display: flex; align-items: center; gap: 10px;">
                     🔔 الإشعارات والتنبيهات
                 </h3>
                 
-                <div style="max-height: 350px; overflow-y: auto; padding-left: 5px;">
+                <div id="notificationList" style="max-height: 350px; overflow-y: auto; padding-left: 5px;">
                     {% if sub_winnings %}
                         {% for winner in sub_winnings %}
                             <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem; position: relative;">
@@ -2618,6 +2618,46 @@
                 clearInterval(announcementProgressInterval);
             }
         }
+
+        // إدارة نافذة الإشعارات وحفظ حالة المشاهدة
+        let notificationsWereMarkedSeen = false;
+        function openNotificationsModal() {
+            document.getElementById('notificationModal').style.display = 'flex';
+            const badge = document.getElementById('notif-badge');
+            if (badge && badge.style.display !== 'none') {
+                fetch('/mark-notifications-seen', { method: 'POST' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data && data.ok) {
+                            badge.style.display = 'none';
+                            notificationsWereMarkedSeen = true;
+                        }
+                    })
+                    .catch(err => console.error('Error marking notifications seen:', err));
+            }
+        }
+
+        function closeNotificationsModal() {
+            document.getElementById('notificationModal').style.display = 'none';
+            if (notificationsWereMarkedSeen) {
+                const notifList = document.getElementById('notificationList');
+                if (notifList) {
+                    notifList.innerHTML = `
+                        <div style="text-align: center; padding: 3rem 0; color: #94a3b8;">
+                            <p style="font-size: 3rem; margin-bottom: 1rem;">📭</p>
+                            <p>لا توجد إشعارات أو تنبيهات جديدة حالياً.</p>
+                        </div>
+                    `;
+                }
+            }
+        }
+
+        window.addEventListener('click', function(e) {
+            const notifModal = document.getElementById('notificationModal');
+            if (e.target === notifModal) {
+                closeNotificationsModal();
+            }
+        });
 
         // Initialize carousel and progress bars on page load
         document.addEventListener('DOMContentLoaded', () => {
