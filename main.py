@@ -595,8 +595,21 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         today_dt = datetime.datetime.now()
         # إجمالي المسدد: جميع الأقساط المدفوعة ضمن الحدود
         total_paid = sum((p.amount or 0) for p in valid_payments if p.is_paid)
-        # إجمالي المتبقي: الأقساط غير المدفوعة المستحقة حتى اليوم فقط (لا المستقبلية)
+        # إجمالي المتبقي (المتأخر): الأقساط غير المدفوعة المستحقة حتى اليوم فقط (لا المستقبلية)
         total_due  = sum((p.amount or 0) for p in valid_payments if not p.is_paid and (p.due_date or today_dt) <= today_dt)
+
+        # المبلغ المستهدف الإجمالي من أول الهكبة إلى نهايتها
+        target_amount = 0.0
+        if category_info:
+            if category_info.prize_amount and category_info.prize_amount > 0:
+                target_amount = float(category_info.prize_amount)
+            elif category_info.amount:
+                max_c = category_info.max_cycles or 1
+                max_i = category_info.max_installments or 1
+                target_amount = float(category_info.amount * max_c * max_i)
+
+        # المبلغ المستحق = المستهدف الكلي ناقص المسدد
+        remaining_target = max(0.0, target_amount - total_paid)
         # الاستبدال: payments تُستخدم لاحقاً للعرض - نستخدم valid_payments بدلاً منها
         payments = valid_payments
         for p in payments:
@@ -706,6 +719,8 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             "workflow_data": workflow_data,
             "total_paid": total_paid,
             "total_due": total_due,
+            "target_amount": target_amount,
+            "remaining_target": remaining_target,
             "fin_status": fin_status,
             "sub_winnings": sub_winnings,
             "recent_winnings": recent_winnings,
