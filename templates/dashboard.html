@@ -370,10 +370,10 @@
             font-size: 0.95rem;
         }
 
-        /* تنسيق بطاقات إجمالي المسدد والمبلغ المستحق والمبلغ المتأخر (حجم مدمج وأنيق) */
+        /* تنسيق بطاقات إجمالي المسدد والمبلغ المستحق في السطر الأول، والمبلغ المتأخر في السطر الثاني */
         .totals-overview-row {
             display: grid;
-            grid-template-columns: repeat(3, 1fr) !important;
+            grid-template-columns: repeat(2, 1fr) !important;
             gap: 1rem;
             margin-top: 1.1rem;
             margin-bottom: 1.6rem;
@@ -405,17 +405,29 @@
             transform: translateY(-2px);
         }
         .stat-card-due {
+            grid-column: 1 / -1;
             background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(15, 23, 42, 0.7) 100%);
             border: 1px solid rgba(239, 68, 68, 0.35);
             border-radius: 16px;
-            padding: 0.95rem 1.15rem;
+            padding: 0.85rem 1.25rem;
             transition: all 0.3s ease;
             box-shadow: 0 8px 25px -8px rgba(0, 0, 0, 0.35);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
         }
         .stat-card-due:hover {
             border-color: rgba(239, 68, 68, 0.65);
             box-shadow: 0 10px 25px -5px rgba(239, 68, 68, 0.22);
             transform: translateY(-2px);
+        }
+        .stat-card-due .stat-card-header {
+            margin-bottom: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         .stat-card-header {
             display: flex;
