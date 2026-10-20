@@ -595,20 +595,8 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         today_dt = datetime.datetime.now()
         # إجمالي المسدد: جميع الأقساط المدفوعة ضمن الحدود
         total_paid = sum((p.amount or 0) for p in valid_payments if p.is_paid)
-        # إجمالي المتأخر: الأقساط غير المدفوعة المستحقة حتى اليوم فقط (لا المستقبلية)
+        # إجمالي المتبقي: الأقساط غير المدفوعة المستحقة حتى اليوم فقط (لا المستقبلية)
         total_due  = sum((p.amount or 0) for p in valid_payments if not p.is_paid and (p.due_date or today_dt) <= today_dt)
-
-        # حساب المبلغ المستهدف للفئة من أول الهكبة إلى نهايتها (المبلغ المستهدف مثل 1,000,000 للفئة الأولى)
-        category_target = 0.0
-        if category_info:
-            if category_info.prize_amount and category_info.prize_amount > 0:
-                category_target = float(category_info.prize_amount)
-            elif category_info.amount and category_info.max_cycles and category_info.max_installments:
-                category_target = float(category_info.amount * category_info.max_cycles * category_info.max_installments)
-
-        # المبلغ المستحق = المبلغ المستهدف للفئة ناقص إجمالي المسدد
-        target_due_amount = max(0.0, category_target - total_paid) if category_target > 0 else 0.0
-
         # الاستبدال: payments تُستخدم لاحقاً للعرض - نستخدم valid_payments بدلاً منها
         payments = valid_payments
         for p in payments:
@@ -718,8 +706,6 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             "workflow_data": workflow_data,
             "total_paid": total_paid,
             "total_due": total_due,
-            "target_due_amount": target_due_amount,
-            "category_target": category_target,
             "fin_status": fin_status,
             "sub_winnings": sub_winnings,
             "recent_winnings": recent_winnings,
