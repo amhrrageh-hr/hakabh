@@ -461,6 +461,86 @@ async def login_auth(
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"message": "حدث خطأ داخلي أثناء محاولة تسجيل الدخول"})
 
+
+
+def _ensure_daily_payments(db: Session, sub) -> None:
+    """
+    يُولّد الأقساط اليومية المفقودة للمشترك حتى تاريخ اليوم،
+    بناءً على تاريخ بداية فئته وحدودها (max_cycles × max_installments).
+    يُستدعى تلقائياً عند كل زيارة للوحة تحكم المشترك.
+    """
+    import datetime as _dt
+
+    if not sub.category:
+        return
+
+    cat = db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first()
+    if not cat or not cat.start_date:
+        return
+
+    start_date = cat.start_date.date() if hasattr(cat.start_date, 'date') else cat.start_date
+    today = _dt.date.today()
+    days_passed = (today - start_date).days
+
+    if days_passed < 0:
+        return
+
+    max_c = int(cat.max_cycles or 1)
+    max_i = int(cat.max_installments or 1)
+    total_possible = max_c * max_i
+
+    # عدد الأقساط التي يجب أن تكون موجودة حتى اليوم
+    count_to_gen = min(days_passed + 1, total_possible)
+
+    if count_to_gen <= 0:
+        return
+
+    # تحقق من أعلى قسط موجود حالياً لتجنب استعلامات التحقق الزائدة
+    from sqlalchemy import func as _func
+    existing_count = db.query(_func.count(db_mod.Payment.id)).filter(
+        db_mod.Payment.subscriber_id == sub.id
+    ).scalar() or 0
+
+    if existing_count >= count_to_gen:
+        return  # لا توجد أقساط مفقودة
+
+    # توليد الأقساط المفقودة فقط
+    added = 0
+    for i in range(count_to_gen):
+        c_idx = (i // max_i) + 1
+        i_idx = (i % max_i) + 1
+
+        if c_idx > max_c:
+            break
+
+        due_dt = _dt.datetime.combine(
+            start_date + _dt.timedelta(days=i),
+            _dt.time.min
+        )
+
+        already_exists = db.query(db_mod.Payment).filter(
+            db_mod.Payment.subscriber_id == sub.id,
+            db_mod.Payment.cycle_number == c_idx,
+            db_mod.Payment.installment_number == i_idx
+        ).first()
+
+        if not already_exists:
+            db.add(db_mod.Payment(
+                subscriber_id=sub.id,
+                amount=cat.amount,
+                due_date=due_dt,
+                is_paid=False,
+                cycle_number=c_idx,
+                installment_number=i_idx,
+                note=db_mod.build_installment_note(is_paid=False, due_date=due_dt)
+            ))
+            added += 1
+
+    if added > 0:
+        db.commit()
+        print(f"[Dashboard] تم توليد {added} قسط مفقود للمشترك {sub.id} ({sub.name})", flush=True)
+
+
 @app.get("/million-hakbah", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
     try:
@@ -507,6 +587,14 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         # إذا لم يتم قبول المشترك بعد، أعد توجيهه لصفحة الانتظار
         if (sub.status or "pending") == "pending":
             return RedirectResponse(url="/pending")
+
+        # ─── توليد الأقساط اليومية المفقودة حتى اليوم ───
+        # يضمن هذا أن رقم الدورة الظاهر للمشترك يتزامن مع التاريخ الفعلي
+        try:
+            _ensure_daily_payments(db, sub)
+        except Exception as _epay_err:
+            print(f"[Dashboard] تحذير: فشل توليد الأقساط التلقائية: {_epay_err}", flush=True)
+
         # Load payments for the subscriber
         payments = db.query(db_mod.Payment).filter(db_mod.Payment.subscriber_id == sub_id)\
                      .order_by(db_mod.Payment.cycle_number, db_mod.Payment.installment_number).all()
@@ -633,14 +721,20 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         max_installments = category_info.max_installments if category_info else 12
 
         if sorted_payments:
-            unpaid = [p for p in sorted_payments if not p.is_paid]
-            if unpaid:
-                current_cycle = int(unpaid[0].cycle_number or 1)
-                current_installment = int(unpaid[0].installment_number or 1)
+            # الدورة الحالية = أعلى رقم دورة موجود في سجلات المشترك
+            # (أحدث دورة حسب التاريخ بغض النظر عن وضع السداد)
+            current_cycle = max((p.cycle_number or 1) for p in sorted_payments)
+
+            # القسط الحالي = أول قسط غير مسدد في الدورة الحالية (إن وُجد)
+            # أو آخر قسط في الدورة الحالية إن كانت كلها مسدودة
+            current_cycle_all = [p for p in sorted_payments if (p.cycle_number or 1) == current_cycle]
+            unpaid_current = [p for p in current_cycle_all if not p.is_paid]
+            if unpaid_current:
+                current_installment = int(unpaid_current[0].installment_number or 1)
+            elif current_cycle_all:
+                current_installment = int(current_cycle_all[-1].installment_number or 1)
             else:
-                last = sorted_payments[-1]
-                current_cycle = last.cycle_number or 1
-                current_installment = last.installment_number or 1
+                current_installment = 1
 
             if category_info:
                 cycle_groups = {}
