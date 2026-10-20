@@ -1315,6 +1315,13 @@
                     {% endif %}
                 </h1>
                 <div class="subscriber-meta-bar">
+                    {% if season_name %}
+                    <div class="sub-meta-pill season-pill" title="موسم الهكبة" style="border-color: rgba(212, 175, 55, 0.4); background: rgba(212, 175, 55, 0.08);">
+                        <span class="meta-icon">🏆</span>
+                        <span class="meta-title" style="color: #d4af37;">الموسم:</span>
+                        <span class="meta-highlight" style="color: #fff; font-weight: 700;">{{ season_name }}</span>
+                    </div>
+                    {% endif %}
                     <div class="sub-meta-pill category-pill" title="فئة الهكبة">
                         <span class="meta-icon">🏷️</span>
                         <span class="meta-title">فئة الهكبة:</span>

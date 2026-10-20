@@ -496,6 +496,99 @@ class SubscriberEditDialog(QDialog):
         self.btn_save.clicked.connect(self.accept)
         layout.addWidget(self.btn_save)
 
+class SeasonDialog(QDialog):
+    def __init__(self, parent=None, season=None):
+        super().__init__(parent)
+        self.setWindowTitle("تعديل الموسم" if season else "إضافة موسم جديد")
+        self.setFixedWidth(460)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.season = season
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(25, 25, 25, 25)
+        layout.setSpacing(14)
+
+        title = QLabel("بيانات الموسم")
+        title.setObjectName("SectionTitle")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1e3a8a;")
+        layout.addWidget(title)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self.ent_name = QLineEdit(season.name if season else "")
+        self.ent_name.setPlaceholderText("مثال: الموسم الثاني 2026")
+        form.addRow("اسم الموسم:", self.ent_name)
+
+        self.ent_number = QLineEdit(str(season.season_number) if season and season.season_number else "1")
+        form.addRow("رقم الموسم التسلسلي:", self.ent_number)
+
+        self.ent_code = QLineEdit(season.code if season and season.code else "")
+        self.ent_code.setPlaceholderText("مثال: S2")
+        form.addRow("رمز الموسم (اختياري):", self.ent_code)
+
+        self.combo_status = QComboBox()
+        self.combo_status.addItem("نشط (Active)", "active")
+        self.combo_status.addItem("قريباً / تسجيل مبكر (Upcoming)", "upcoming")
+        self.combo_status.addItem("مكتمل (Completed)", "completed")
+        self.combo_status.addItem("مؤرشف (Archived)", "archived")
+        if season:
+            idx = self.combo_status.findData(season.status)
+            if idx >= 0:
+                self.combo_status.setCurrentIndex(idx)
+        form.addRow("حالة الموسم:", self.combo_status)
+
+        self.chk_current = QCheckBox("تعيين كموسم نشط حالي للنظام")
+        self.chk_current.setChecked(season.is_current if season else True)
+        form.addRow("", self.chk_current)
+
+        self.dt_start = QDateEdit()
+        self.dt_start.setCalendarPopup(True)
+        self.dt_start.setDisplayFormat("yyyy-MM-dd")
+        if season and season.start_date:
+            self.dt_start.setDate(QDate(season.start_date.year, season.start_date.month, season.start_date.day))
+        else:
+            self.dt_start.setDate(QDate.currentDate())
+        form.addRow("تاريخ بدء الموسم:", self.dt_start)
+
+        self.dt_end = QDateEdit()
+        self.dt_end.setCalendarPopup(True)
+        self.dt_end.setDisplayFormat("yyyy-MM-dd")
+        if season and season.end_date:
+            self.dt_end.setDate(QDate(season.end_date.year, season.end_date.month, season.end_date.day))
+        else:
+            self.dt_end.setDate(QDate.currentDate().addMonths(10))
+        form.addRow("تاريخ الانتهاء المتوقع:", self.dt_end)
+
+        self.ent_desc = QTextEdit(season.description if season and season.description else "")
+        self.ent_desc.setFixedHeight(60)
+        self.ent_desc.setPlaceholderText("ملاحظات أو وصف خاص بهذا الموسم...")
+        form.addRow("وصف الموسم:", self.ent_desc)
+
+        layout.addLayout(form)
+
+        btn_box = QHBoxLayout()
+        self.btn_save = QPushButton("حفظ الموسم")
+        self.btn_save.setObjectName("PrimaryBtn")
+        self.btn_save.setFixedHeight(38)
+        self.btn_save.clicked.connect(self.validate_and_accept)
+
+        self.btn_cancel = QPushButton("إلغاء")
+        self.btn_cancel.setObjectName("DangerBtn")
+        self.btn_cancel.setFixedHeight(38)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        btn_box.addWidget(self.btn_save)
+        btn_box.addWidget(self.btn_cancel)
+        layout.addLayout(btn_box)
+
+    def validate_and_accept(self):
+        name = self.ent_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "تنبيه", "يرجى كتابة اسم الموسم.")
+            return
+        self.accept()
+
 class CategoryEditDialog(QDialog):
     def __init__(self, parent, cat):
         super().__init__(parent)
@@ -527,10 +620,24 @@ class CategoryEditDialog(QDialog):
         self.ent_prize.setText(str(prize) if prize else "0")
         layout.addWidget(QLabel("مبلغ الجائزة:"))
         layout.addWidget(self.ent_prize)
+
+        self.combo_season = QComboBox()
+        if hasattr(parent, 'db') and parent.db:
+            seasons = db_mod.get_all_seasons(parent.db)
+            for s in seasons:
+                self.combo_season.addItem(s.name, s.id)
+            if getattr(cat, 'season_id', None):
+                idx = self.combo_season.findData(cat.season_id)
+                if idx >= 0:
+                    self.combo_season.setCurrentIndex(idx)
+        layout.addWidget(QLabel("الموسم التابع له:"))
+        layout.addWidget(self.combo_season)
         
         self.btn_save = QPushButton("حفظ التغييرات")
         self.btn_save.setObjectName("PrimaryBtn")
         self.btn_save.clicked.connect(self.accept)
+        layout.addWidget(self.btn_save)
+
 class CreateGroupBatchDialog(QDialog):
     def __init__(self, parent, cat=None):
         super().__init__(parent)
@@ -550,6 +657,18 @@ class CreateGroupBatchDialog(QDialog):
         
         form = QFormLayout()
         form.setSpacing(10)
+
+        # Season
+        self.combo_season = QComboBox()
+        if hasattr(parent, 'db') and parent.db:
+            seasons = db_mod.get_all_seasons(parent.db)
+            for s in seasons:
+                self.combo_season.addItem(s.name, s.id)
+            if cat and getattr(cat, 'season_id', None):
+                idx = self.combo_season.findData(cat.season_id)
+                if idx >= 0:
+                    self.combo_season.setCurrentIndex(idx)
+        form.addRow("الموسم التابع له:", self.combo_season)
         
         # Name
         default_name = f"{cat.name} - المجموعة 2" if cat else "فئة جديدة - المجموعة 1"

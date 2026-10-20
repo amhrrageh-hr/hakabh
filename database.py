@@ -123,6 +123,7 @@ class Subscriber(Base):
     address = Column(String, nullable=True)        # العنوان
     email = Column(String, nullable=True)          # البريد الإلكتروني
     category = Column(String, index=True)
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=True, index=True)
     selected_number_id = Column(Integer, ForeignKey("subscriber_numbers.id"), nullable=True)
     status = Column(String, default="pending", index=True)  # pending, accepted, rejected, excluded
     subscriber_number = Column(String, index=True, nullable=True)
@@ -131,6 +132,7 @@ class Subscriber(Base):
     excluded_at = Column(DateTime, nullable=True)       # تاريخ الاستبعاد
     created_at = Column(DateTime, server_default=func.now())
 
+    season = relationship("Season", foreign_keys=[season_id], uselist=False)
     selected_number = relationship(
         "SubscriberNumber",
         foreign_keys=[selected_number_id],
@@ -193,6 +195,22 @@ def build_installment_note(is_paid, due_date, paid_date=None, user_note=None, st
         return f"{base_msg} ({' | '.join(extra)})"
     return base_msg
 
+class Season(Base):
+    __tablename__ = "seasons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)                     # e.g., "الموسم الأول 2026"
+    season_number = Column(Integer, default=1)             # رقم تسلسلي للموسم
+    code = Column(String, nullable=True)                  # كود مختصر اختياري
+    status = Column(String, default="active", index=True) # active, upcoming, completed, archived
+    is_current = Column(Boolean, default=True, index=True)# هل هو الموسم النشط الحالي
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    categories = relationship("Category", back_populates="season", cascade="all, delete-orphan")
+
 class Winner(Base):
     __tablename__ = "winners"
 
@@ -206,6 +224,7 @@ class Winner(Base):
     received_date = Column(DateTime, nullable=True)
     payout_note = Column(String, nullable=True)
     is_notif_seen = Column(Boolean, default=False)  # هل رأى المشترك هذا الإشعار
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=True, index=True)
 
 class Category(Base):
     __tablename__ = "categories"
@@ -219,6 +238,9 @@ class Category(Base):
     max_installments = Column(Integer, default=12)
     start_date = Column(DateTime, nullable=True)
     end_date = Column(DateTime, nullable=True)
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=True, index=True)
+
+    season = relationship("Season", back_populates="categories")
     available_numbers = relationship("SubscriberNumber", back_populates="category")
 
 class SubscriberNumber(Base):
@@ -303,7 +325,7 @@ def init_db(force_migration=False):
         # إذا تم التحقق من الجداول مسبقاً، تخطي الفحص البطيء لتسريع فتح البرنامج
         if not force_migration:
             try:
-                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v2").first()
+                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v3_seasons").first()
                 if mig_setting and mig_setting.value == "true":
                     return
             except Exception:
@@ -347,13 +369,16 @@ def init_db(force_migration=False):
             db.execute(text(f"ALTER TABLE categories ADD COLUMN start_date {datetime_type}"))
         if 'end_date' not in cat_columns:
             db.execute(text(f"ALTER TABLE categories ADD COLUMN end_date {datetime_type}"))
+        if 'season_id' not in cat_columns:
+            print("جاري تحديث قاعدة البيانات لإضافة حقل معرف الموسم في جدول الفئات...")
+            db.execute(text("ALTER TABLE categories ADD COLUMN season_id INTEGER REFERENCES seasons(id)"))
         
         # إضافة حقل فئة المشتركين لجدول المصاريف
         exp_columns = [c['name'] for c in inspector.get_columns('expenses')]
         if 'subscriber_category' not in exp_columns:
             db.execute(text("ALTER TABLE expenses ADD COLUMN subscriber_category TEXT"))
 
-        # إضافة الحقول الجديدة لجدول المشتركين (رقم الهوية، العنوان، البريد الإلكتروني)
+        # إضافة الحقول الجديدة لجدول المشتركين (رقم الهوية، العنوان، البريد الإلكتروني، معرف الموسم)
         sub_columns = [c['name'] for c in inspector.get_columns('subscribers')]
         if 'national_id' not in sub_columns:
             print("جاري تحديث قاعدة البيانات لإضافة حقل رقم الهوية...")
@@ -370,6 +395,9 @@ def init_db(force_migration=False):
         if 'excluded_at' not in sub_columns:
             print("جاري تحديث قاعدة البيانات لإضافة حقل تاريخ الاستبعاد...")
             db.execute(text(f"ALTER TABLE subscribers ADD COLUMN excluded_at {datetime_type}"))
+        if 'season_id' not in sub_columns:
+            print("جاري تحديث قاعدة البيانات لإضافة حقل معرف الموسم في جدول المشتركين...")
+            db.execute(text("ALTER TABLE subscribers ADD COLUMN season_id INTEGER REFERENCES seasons(id)"))
 
         # Ensure `role` exists on staff table regardless of payments changes
         try:
@@ -403,8 +431,54 @@ def init_db(force_migration=False):
             if 'is_notif_seen' not in winner_columns:
                 print("جاري تحديث قاعدة البيانات لإضافة حقل حالة مشاهدة الإشعار...")
                 db.execute(text(f"ALTER TABLE winners ADD COLUMN is_notif_seen BOOLEAN DEFAULT {bool_false}"))
+            if 'season_id' not in winner_columns:
+                print("جاري تحديث قاعدة البيانات لإضافة حقل معرف الموسم لجدول الفائزين...")
+                db.execute(text("ALTER TABLE winners ADD COLUMN season_id INTEGER REFERENCES seasons(id)"))
         except Exception as e:
             print(f"Error migrating winners table: {e}")
+
+        # فحص وترحيل البيانات إلى الموسم الأول الافتراضي
+        try:
+            season_count = db.query(Season).count()
+            if season_count == 0:
+                print("جاري إنشاء الموسم الأول الافتراضي وترحيل البيانات السابقة...")
+                first_season = Season(
+                    name="الموسم الأول",
+                    season_number=1,
+                    code="S1",
+                    status="active",
+                    is_current=True,
+                    description="الموسم التأسيسي الأول للهكبة"
+                )
+                db.add(first_season)
+                db.commit()
+                db.refresh(first_season)
+
+                # تحديث الفئات السابقة
+                db.execute(text(f"UPDATE categories SET season_id = {first_season.id} WHERE season_id IS NULL"))
+                # تحديث المشتركين السابقين
+                db.execute(text(f"UPDATE subscribers SET season_id = {first_season.id} WHERE season_id IS NULL"))
+                # تحديث الفائزين السابقين
+                db.execute(text(f"UPDATE winners SET season_id = {first_season.id} WHERE season_id IS NULL"))
+                db.commit()
+                print(f"تم ربط جميع البيانات السابقة بـ '{first_season.name}' بنجاح.")
+            else:
+                # التأكد من وجود موسم حالي نشط
+                curr = db.query(Season).filter(Season.is_current == True).first()
+                if not curr:
+                    latest = db.query(Season).order_by(Season.id.desc()).first()
+                    if latest:
+                        latest.is_current = True
+                        db.commit()
+                # ربط أي فئات أو مشتركين ليس لديهم موسم بالموسم الحالي
+                curr = db.query(Season).filter(Season.is_current == True).first()
+                if curr:
+                    db.execute(text(f"UPDATE categories SET season_id = {curr.id} WHERE season_id IS NULL"))
+                    db.execute(text(f"UPDATE subscribers SET season_id = {curr.id} WHERE season_id IS NULL"))
+                    db.commit()
+        except Exception as e:
+            print(f"Error migrating seasons data: {e}")
+            db.rollback()
 
         # إنشاء الفهارس الهامة لتحسين سرعة الاستعلامات ومنع الفحص الكامل (Full Table Scan)
         index_queries = [
@@ -418,7 +492,10 @@ def init_db(force_migration=False):
             "CREATE INDEX IF NOT EXISTS idx_subscribers_status ON subscribers (status)",
             "CREATE INDEX IF NOT EXISTS idx_subscribers_cat_status ON subscribers (category, status)",
             "CREATE INDEX IF NOT EXISTS idx_sub_numbers_cat_res ON subscriber_numbers (category_id, is_reserved)",
-            "CREATE INDEX IF NOT EXISTS idx_winners_sub_num ON winners (subscriber_number)"
+            "CREATE INDEX IF NOT EXISTS idx_winners_sub_num ON winners (subscriber_number)",
+            "CREATE INDEX IF NOT EXISTS idx_categories_season ON categories (season_id)",
+            "CREATE INDEX IF NOT EXISTS idx_subscribers_season ON subscribers (season_id)",
+            "CREATE INDEX IF NOT EXISTS idx_winners_season ON winners (season_id)"
         ]
         for iq in index_queries:
             try:
@@ -433,9 +510,9 @@ def init_db(force_migration=False):
             db.add(Setting(key="registration_open", value="true"))
 
         # حفظ علامة اكتمال تهيئة الجداول لتسريع الفتح اللاحق
-        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v2").first()
+        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v3_seasons").first()
         if not mig_setting:
-            db.add(Setting(key="schema_migrated_v2", value="true"))
+            db.add(Setting(key="schema_migrated_v3_seasons", value="true"))
         else:
             mig_setting.value = "true"
 
@@ -606,3 +683,52 @@ def calculate_financial_status_batch(subscribers, db):
             results[s.id] = "committed"
             
     return results
+
+def get_current_season(db):
+    """جلب الموسم النشط الحالي"""
+    try:
+        s = db.query(Season).filter(Season.is_current == True).first()
+        if not s:
+            s = db.query(Season).filter(Season.status == "active").order_by(Season.id.desc()).first()
+        if not s:
+            s = db.query(Season).order_by(Season.id.desc()).first()
+        if not s:
+            s = Season(
+                name="الموسم الأول",
+                season_number=1,
+                code="S1",
+                status="active",
+                is_current=True,
+                start_date=datetime.datetime.now()
+            )
+            db.add(s)
+            db.commit()
+            db.refresh(s)
+        return s
+    except Exception as e:
+        print(f"Error in get_current_season: {e}")
+        return None
+
+def set_current_season(db, season_id: int):
+    """تحديد الموسم النشط الحالي"""
+    try:
+        db.query(Season).update({Season.is_current: False})
+        target = db.get(Season, season_id)
+        if target:
+            target.is_current = True
+            db.commit()
+            return target
+        db.rollback()
+        return None
+    except Exception as e:
+        print(f"Error in set_current_season: {e}")
+        db.rollback()
+        return None
+
+def get_all_seasons(db):
+    """جلب جميع المواسم مرتبة"""
+    try:
+        return db.query(Season).order_by(Season.season_number.asc(), Season.id.asc()).all()
+    except Exception as e:
+        print(f"Error in get_all_seasons: {e}")
+        return []

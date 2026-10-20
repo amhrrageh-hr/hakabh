@@ -235,9 +235,15 @@
     <!-- تبويب الفئات -->
     <section id="content-categories" class="tab-content px-6 py-20 max-w-6xl mx-auto">
         <div class="text-center mb-16">
-            <p class="gold-text text-sm font-bold mb-2">الفئات الرسمية</p>
+            {% if current_season %}
+            <div class="inline-flex items-center gap-2 bg-[#d4af37]/15 border border-[#d4af37]/30 text-[#d4af37] px-4 py-1.5 rounded-full text-xs font-bold mb-3">
+                <span>🏷️</span>
+                <span>{{ current_season.name }}</span>
+            </div>
+            {% endif %}
+            <p class="gold-text text-sm font-bold mb-2">الفئات الرسمية للموسم</p>
             <h2 class="text-4xl font-extrabold mb-4 text-white">اختر طموحك المالي</h2>
-            <p class="greenish-white text-lg">خمس فئات مصممة لكل مستوى ادخاري . من البداية حتى النخبة</p>
+            <p class="greenish-white text-lg">فئات ادخارية مصممة لتناسب قدرتك . من البداية حتى النخبة</p>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {% for cat in categories %}

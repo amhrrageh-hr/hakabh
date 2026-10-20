@@ -98,6 +98,7 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.setup_ui()
         self.apply_styles()
         self.update_logged_in_user()
+        self.update_header_season_selector()
         self.show_dashboard()
         
         # تشغيل فحص الأقساط المتأخرة وكل ساعة
@@ -134,6 +135,44 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
                 self.lbl_current_user.setText(f"مرحباً، {self.logged_in_staff.name or self.logged_in_staff.staff_id_code}")
             else:
                 self.lbl_current_user.setText("")
+
+    def update_header_season_selector(self):
+        if not hasattr(self, 'combo_header_season') or not self.db:
+            return
+        seasons = db_mod.get_all_seasons(self.db)
+        curr = db_mod.get_current_season(self.db)
+        self.combo_header_season.blockSignals(True)
+        self.combo_header_season.clear()
+        for s in seasons:
+            label = f"{s.name} (النشط ⭐)" if s.is_current else s.name
+            self.combo_header_season.addItem(label, s.id)
+        if curr:
+            idx = self.combo_header_season.findData(curr.id)
+            if idx >= 0:
+                self.combo_header_season.setCurrentIndex(idx)
+        self.combo_header_season.blockSignals(False)
+
+    def on_header_season_changed(self, index):
+        if index < 0 or not hasattr(self, 'combo_header_season'):
+            return
+        sid = self.combo_header_season.currentData()
+        if not sid:
+            return
+        curr = db_mod.get_current_season(self.db)
+        if curr and curr.id == sid:
+            return
+        db_mod.set_current_season(self.db, sid)
+        self.update_header_season_selector()
+        if hasattr(self, 'refresh_seasons_list'):
+            self.refresh_seasons_list()
+        if hasattr(self, 'refresh_cat_list'):
+            self.refresh_cat_list()
+        if hasattr(self, 'load_dashboard_data'):
+            try: self.load_dashboard_data()
+            except Exception: pass
+        if hasattr(self, 'load_subscribers'):
+            try: self.load_subscribers()
+            except Exception: pass
 
     def prompt_admin_access(self):
         if self.logged_in_staff:
@@ -290,6 +329,38 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.btn_toggle_sidebar.setCursor(Qt.CursorShape.PointingHandCursor)
         
         header_layout.addWidget(self.btn_toggle_sidebar)
+
+        # Season Selector Widget in Header
+        self.season_widget = QWidget()
+        season_lay = QHBoxLayout(self.season_widget)
+        season_lay.setContentsMargins(10, 0, 10, 0)
+        season_lay.setSpacing(6)
+
+        lbl_s_icon = QLabel("🏷️")
+        lbl_s_icon.setStyleSheet("font-size: 15px;")
+        season_lay.addWidget(lbl_s_icon)
+
+        lbl_s_title = QLabel("الموسم:")
+        lbl_s_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #64748b;")
+        season_lay.addWidget(lbl_s_title)
+
+        self.combo_header_season = QComboBox()
+        self.combo_header_season.setMinimumWidth(160)
+        self.combo_header_season.setStyleSheet("""
+            QComboBox {
+                padding: 3px 8px;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 12px;
+                background-color: #f8fafc;
+                color: #0f172a;
+            }
+        """)
+        self.combo_header_season.currentIndexChanged.connect(self.on_header_season_changed)
+        season_lay.addWidget(self.combo_header_season)
+
+        header_layout.addWidget(self.season_widget)
         header_layout.addStretch()
 
         # Theme Switch Button

@@ -31,28 +31,78 @@ class SettingsMixin:
         layout.addWidget(title)
         
         self.settings_tabs = QTabWidget()
+
+        # --- TAB 0: Seasons Management ---
+        tab0 = QScrollArea(); tab0.setWidgetResizable(True)
+        con0 = QWidget(); lay0 = QVBoxLayout(con0); lay0.setContentsMargins(20, 20, 20, 20); lay0.setSpacing(25)
+
+        f0 = QFrame(); f0.setObjectName("StatCard"); v_lay0 = QVBoxLayout(f0)
+        
+        # Seasons header with action button
+        season_header_lay = QHBoxLayout()
+        season_title_lbl = QLabel("مواسم الهكبة المسجلة:")
+        season_title_lbl.setStyleSheet("font-weight: bold; font-size: 15px; color: #1e3a8a;")
+        season_header_lay.addWidget(season_title_lbl)
+        season_header_lay.addStretch()
+
+        btn_add_season = QPushButton("➕ إنشاء موسم جديد")
+        btn_add_season.setObjectName("PrimaryBtn")
+        btn_add_season.setStyleSheet("background-color: #059669; color: white; padding: 6px 14px; font-weight: bold; font-size: 12px;")
+        btn_add_season.clicked.connect(self.add_season)
+        season_header_lay.addWidget(btn_add_season)
+        v_lay0.addLayout(season_header_lay)
+
+        self.table_seasons = QTableWidget()
+        self.table_seasons.setColumnCount(7)
+        self.table_seasons.setHorizontalHeaderLabels(["اسم الموسم", "الرقم", "الحالة", "الموسم الحالي", "عدد الفئات", "تاريخ البدء", "إجراءات"])
+        self.table_seasons.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table_seasons.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_seasons.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_seasons.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_seasons.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_seasons.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_seasons.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.table_seasons.setColumnWidth(6, 260)
+        self.table_seasons.setMinimumHeight(280)
+        v_lay0.addWidget(self.table_seasons)
+        lay0.addWidget(f0)
+
+        lay0.addStretch()
+        tab0.setWidget(con0)
+        self.settings_tabs.addTab(tab0, "إدارة المواسم")
         
         # --- TAB 1: Categories Management ---
         tab1 = QScrollArea(); tab1.setWidgetResizable(True)
         con1 = QWidget(); lay1 = QVBoxLayout(con1); lay1.setContentsMargins(20, 20, 20, 20); lay1.setSpacing(25)
-        
 
         # Add Category
         f1 = QFrame(); f1.setObjectName("StatCard"); v_lay1 = QVBoxLayout(f1)
         v_lay1.addWidget(QLabel("إضافة فئة جديدة"))
         form_cat = QFormLayout()
         self.en1 = QLineEdit(); self.en2 = QLineEdit(); self.en3 = QLineEdit()
+        self.com_add_cat_season = QComboBox()
+        form_cat.addRow("الموسم التابع له:", self.com_add_cat_season)
         form_cat.addRow("اسم الفئة:", self.en1)
         form_cat.addRow("المبلغ اليومي:", self.en2)
         form_cat.addRow("مبلغ الجائزة:", self.en3)
         v_lay1.addLayout(form_cat)
         ba = QPushButton("إضافة فئة"); ba.setObjectName("PrimaryBtn"); ba.clicked.connect(self.add_category); v_lay1.addWidget(ba)
         
-        # Categories header with action button
+        # Categories header with action button & season filter
         cat_header_lay = QHBoxLayout()
         cat_title_lbl = QLabel("الفئات والمجموعات الحالية:")
         cat_title_lbl.setStyleSheet("font-weight: bold; font-size: 15px; color: #1e3a8a; margin-top: 10px;")
         cat_header_lay.addWidget(cat_title_lbl)
+
+        cat_header_lay.addSpacing(15)
+        lbl_flt = QLabel("تصفية بحسب الموسم:")
+        lbl_flt.setStyleSheet("font-size: 12px; color: #64748b;")
+        cat_header_lay.addWidget(lbl_flt)
+        self.com_filter_season = QComboBox()
+        self.com_filter_season.setMinimumWidth(160)
+        self.com_filter_season.currentIndexChanged.connect(self.refresh_cat_list)
+        cat_header_lay.addWidget(self.com_filter_season)
+
         cat_header_lay.addStretch()
 
         btn_top_batch = QPushButton("➕ فتح مجموعة / دفعة جديدة")
@@ -63,14 +113,15 @@ class SettingsMixin:
         v_lay1.addLayout(cat_header_lay)
 
         self.table_cats = QTableWidget()
-        self.table_cats.setColumnCount(5)
-        self.table_cats.setHorizontalHeaderLabels(["اسم الفئة / المجموعة", "المبلغ اليومي", "مبلغ الجائزة", "إجمالي الأرقام", "إجراء"])
+        self.table_cats.setColumnCount(6)
+        self.table_cats.setHorizontalHeaderLabels(["اسم الفئة / المجموعة", "الموسم", "المبلغ اليومي", "مبلغ الجائزة", "إجمالي الأرقام", "إجراء"])
         self.table_cats.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table_cats.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table_cats.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table_cats.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_cats.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.table_cats.setColumnWidth(4, 270)
+        self.table_cats.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_cats.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.table_cats.setColumnWidth(5, 270)
         self.table_cats.setMinimumHeight(300)
         v_lay1.addWidget(self.table_cats)
         lay1.addWidget(f1)
@@ -111,6 +162,7 @@ class SettingsMixin:
         self.settings_tabs.addTab(tab2, "إدارة الأرقام")
         
         layout.addWidget(self.settings_tabs)
+        self.refresh_seasons_list()
         self.refresh_cat_list()
         return page
 
@@ -518,10 +570,19 @@ class SettingsMixin:
 
         layout.addWidget(self.company_settings_tabs)
         return page
+
     def refresh_cat_list(self):
         self.com.clear()
-        cats = self.db.query(db_mod.Category).all()
-        for c in cats: self.com.addItem(c.name, c.id)
+        filter_season_id = getattr(self, 'com_filter_season', None)
+        selected_sid = filter_season_id.currentData() if filter_season_id else None
+        
+        query = self.db.query(db_mod.Category)
+        if selected_sid and selected_sid != -1:
+            query = query.filter(db_mod.Category.season_id == selected_sid)
+        cats = query.all()
+
+        for c in cats:
+            self.com.addItem(c.name, c.id)
         self.refresh_numbers_list()
         self.refresh_cat_table(cats)
 
@@ -755,10 +816,17 @@ class SettingsMixin:
         self.table_cats.setRowCount(len(cats))
         for i, c in enumerate(cats):
             self.table_cats.setItem(i, 0, QTableWidgetItem(c.name))
-            self.table_cats.setItem(i, 1, QTableWidgetItem(f"{c.amount:,.2f}"))
+
+            # Season Name
+            s_name = c.season.name if (hasattr(c, 'season') and c.season) else "—"
+            s_item = QTableWidgetItem(s_name)
+            s_item.setForeground(QColor("#0369a1"))
+            self.table_cats.setItem(i, 1, s_item)
+
+            self.table_cats.setItem(i, 2, QTableWidgetItem(f"{c.amount:,.2f}"))
             
             prize = getattr(c, 'prize_amount', 0.0)
-            self.table_cats.setItem(i, 2, QTableWidgetItem(f"{prize:,.2f}"))
+            self.table_cats.setItem(i, 3, QTableWidgetItem(f"{prize:,.2f}"))
             
             # Number count & reservations
             nums = c.available_numbers if hasattr(c, 'available_numbers') and c.available_numbers else []
@@ -771,7 +839,7 @@ class SettingsMixin:
                 num_item.setForeground(QColor("#059669")) # Green if has capacity
             else:
                 num_item.setForeground(QColor("#94a3b8"))
-            self.table_cats.setItem(i, 3, num_item)
+            self.table_cats.setItem(i, 4, num_item)
 
             # Action buttons container
             container = QWidget()
@@ -798,7 +866,7 @@ class SettingsMixin:
             btn_del.clicked.connect(lambda checked, cid=c.id: self.delete_category(cid))
             btn_layout.addWidget(btn_del)
 
-            self.table_cats.setCellWidget(i, 4, container)
+            self.table_cats.setCellWidget(i, 5, container)
 
     def create_new_group_batch_from_top(self):
         cats = self.db.query(db_mod.Category).all()
@@ -843,10 +911,17 @@ class SettingsMixin:
             if exists:
                 ModernDialog(self, "خطأ", "هذا الاسم موجود بالفعل").exec()
                 return
+            
+            season_id = self.com_add_cat_season.currentData() if hasattr(self, 'com_add_cat_season') else None
+            if not season_id:
+                curr_s = db_mod.get_current_season(self.db)
+                season_id = curr_s.id if curr_s else None
                 
-            self.db.add(db_mod.Category(name=name, amount=amount, prize_amount=prize))
+            self.db.add(db_mod.Category(name=name, amount=amount, prize_amount=prize, season_id=season_id))
             self.db.commit()
             self.en1.clear(); self.en2.clear(); self.en3.clear(); self.refresh_cat_list()
+            if hasattr(self, 'refresh_seasons_list'):
+                self.refresh_seasons_list()
             ModernDialog(self, "نجاح", "تمت إضافة الفئة بنجاح").exec()
         except ValueError:
             ModernDialog(self, "خطأ", "المبلغ يجب أن يكون رقماً").exec()
@@ -861,6 +936,7 @@ class SettingsMixin:
                 new_name = dialog.ent_name.text().strip()
                 new_amount_str = dialog.ent_amount.text().strip()
                 new_prize_str = dialog.ent_prize.text().strip()
+                new_season_id = dialog.combo_season.currentData()
                 
                 if not new_name or not new_amount_str:
                     ModernDialog(self, "خطأ", "يرجى ملء الحقول المطلوبة").exec()
@@ -880,8 +956,12 @@ class SettingsMixin:
                 cat.name = new_name
                 cat.amount = new_amount
                 cat.prize_amount = new_prize
+                if new_season_id:
+                    cat.season_id = new_season_id
                 self.db.commit()
                 self.refresh_cat_list()
+                if hasattr(self, 'refresh_seasons_list'):
+                    self.refresh_seasons_list()
                 ModernDialog(self, "نجاح", "تم تعديل الفئة بنجاح").exec()
             except ValueError:
                 ModernDialog(self, "خطأ", "المبلغ يجب أن يكون رقماً").exec()
@@ -901,6 +981,9 @@ class SettingsMixin:
                 inst = int(dlg.ent_inst.text().strip())
                 start_date_q = dlg.dt_start.date()
                 start_date = datetime.datetime(start_date_q.year(), start_date_q.month(), start_date_q.day())
+                season_id = dlg.combo_season.currentData() if hasattr(dlg, 'combo_season') else None
+                if not season_id and cat:
+                    season_id = cat.season_id
                 
                 prefix = dlg.ent_prefix.text().strip()
                 num_start = int(dlg.ent_num_start.text().strip())
@@ -922,7 +1005,8 @@ class SettingsMixin:
                     max_cycles=cycles,
                     max_installments=inst,
                     start_date=start_date,
-                    is_active=True
+                    is_active=True,
+                    season_id=season_id
                 )
                 self.db.add(new_cat)
                 self.db.flush()
@@ -939,10 +1023,194 @@ class SettingsMixin:
                 self.db.commit()
                 
                 self.refresh_cat_list()
+                if hasattr(self, 'refresh_seasons_list'):
+                    self.refresh_seasons_list()
                 ModernDialog(self, "نجاح", f"تم إنشاء المجموعة '{name}' بنجاح وتوليد {len(nums_to_add)} رقماً لها.").exec()
             except Exception as e:
                 self.db.rollback()
                 ModernDialog(self, "خطأ", f"حدث خطأ أثناء إنشاء المجموعة: {e}").exec()
+
+    # --- SEASONS MANAGEMENT METHODS ---
+    def refresh_seasons_list(self):
+        seasons = db_mod.get_all_seasons(self.db)
+        if hasattr(self, 'table_seasons'):
+            self.table_seasons.setRowCount(len(seasons))
+            for i, s in enumerate(seasons):
+                self.table_seasons.setItem(i, 0, QTableWidgetItem(s.name or ""))
+                self.table_seasons.setItem(i, 1, QTableWidgetItem(str(s.season_number or i + 1)))
+                
+                st_map = {"active": "نشط 🟢", "upcoming": "قريباً 🟡", "completed": "مكتمل 🔵", "archived": "مؤرشف ⚪"}
+                self.table_seasons.setItem(i, 2, QTableWidgetItem(st_map.get(s.status, s.status or "")))
+
+                curr_item = QTableWidgetItem("الموسم الحالي ⭐" if s.is_current else "—")
+                if s.is_current:
+                    curr_item.setForeground(QColor("#059669"))
+                    curr_item.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+                self.table_seasons.setItem(i, 3, curr_item)
+
+                cat_count = self.db.query(db_mod.Category).filter(db_mod.Category.season_id == s.id).count()
+                self.table_seasons.setItem(i, 4, QTableWidgetItem(f"{cat_count} فئات"))
+
+                d_str = s.start_date.strftime("%Y-%m-%d") if s.start_date else "غير محدد"
+                self.table_seasons.setItem(i, 5, QTableWidgetItem(d_str))
+
+                container = QWidget()
+                btn_lay = QHBoxLayout(container)
+                btn_lay.setContentsMargins(4, 2, 4, 2)
+                btn_lay.setSpacing(6)
+
+                if not s.is_current:
+                    btn_curr = QPushButton("تحديد كنشط")
+                    btn_curr.setObjectName("PrimaryBtn")
+                    btn_curr.setStyleSheet("background-color: #0d9488; color: white; border: none; font-size: 11px; padding: 4px 8px;")
+                    btn_curr.clicked.connect(lambda checked, sid=s.id: self.set_season_as_current(sid))
+                    btn_lay.addWidget(btn_curr)
+
+                btn_edit = QPushButton("تعديل")
+                btn_edit.setObjectName("PrimaryBtn")
+                btn_edit.setStyleSheet("background-color: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; font-size: 11px;")
+                btn_edit.clicked.connect(lambda checked, sid=s.id: self.edit_season(sid))
+                btn_lay.addWidget(btn_edit)
+
+                btn_del = QPushButton("حذف")
+                btn_del.setObjectName("DangerBtn")
+                btn_del.setStyleSheet("font-size: 11px;")
+                btn_del.setEnabled(not s.is_current and cat_count == 0)
+                btn_del.clicked.connect(lambda checked, sid=s.id: self.delete_season(sid))
+                btn_lay.addWidget(btn_del)
+
+                self.table_seasons.setCellWidget(i, 6, container)
+
+        if hasattr(self, 'com_add_cat_season'):
+            curr_id = self.com_add_cat_season.currentData()
+            self.com_add_cat_season.blockSignals(True)
+            self.com_add_cat_season.clear()
+            for s in seasons:
+                label = f"{s.name} (الحالي)" if s.is_current else s.name
+                self.com_add_cat_season.addItem(label, s.id)
+            if curr_id:
+                idx = self.com_add_cat_season.findData(curr_id)
+                if idx >= 0: self.com_add_cat_season.setCurrentIndex(idx)
+            else:
+                curr_s = next((s for s in seasons if s.is_current), None)
+                if curr_s:
+                    idx = self.com_add_cat_season.findData(curr_s.id)
+                    if idx >= 0: self.com_add_cat_season.setCurrentIndex(idx)
+            self.com_add_cat_season.blockSignals(False)
+
+        if hasattr(self, 'com_filter_season'):
+            curr_filter = self.com_filter_season.currentData()
+            self.com_filter_season.blockSignals(True)
+            self.com_filter_season.clear()
+            self.com_filter_season.addItem("جميع المواسم", -1)
+            for s in seasons:
+                label = f"{s.name} (الحالي)" if s.is_current else s.name
+                self.com_filter_season.addItem(label, s.id)
+            if curr_filter is not None and curr_filter != -1:
+                idx = self.com_filter_season.findData(curr_filter)
+                if idx >= 0: self.com_filter_season.setCurrentIndex(idx)
+            self.com_filter_season.blockSignals(False)
+
+        if hasattr(self, 'update_header_season_selector'):
+            self.update_header_season_selector()
+
+    def add_season(self):
+        dlg = SeasonDialog(self)
+        if dlg.exec():
+            name = dlg.ent_name.text().strip()
+            num_str = dlg.ent_number.text().strip()
+            code = dlg.ent_code.text().strip()
+            status = dlg.combo_status.currentData()
+            is_current = dlg.chk_current.isChecked()
+            start_q = dlg.dt_start.date()
+            start_date = datetime.datetime(start_q.year(), start_q.month(), start_q.day())
+            end_q = dlg.dt_end.date()
+            end_date = datetime.datetime(end_q.year(), end_q.month(), end_q.day())
+            desc = dlg.ent_desc.toPlainText().strip()
+
+            try:
+                num = int(num_str) if num_str else 1
+            except ValueError:
+                num = 1
+
+            if is_current:
+                self.db.query(db_mod.Season).update({db_mod.Season.is_current: False})
+
+            new_season = db_mod.Season(
+                name=name,
+                season_number=num,
+                code=code,
+                status=status,
+                is_current=is_current,
+                start_date=start_date,
+                end_date=end_date,
+                description=desc
+            )
+            self.db.add(new_season)
+            self.db.commit()
+            self.refresh_seasons_list()
+            self.refresh_cat_list()
+            ModernDialog(self, "نجاح", f"تم إنشاء الموسم '{name}' بنجاح.").exec()
+
+    def edit_season(self, season_id):
+        s = self.db.get(db_mod.Season, season_id)
+        if not s: return
+        dlg = SeasonDialog(self, season=s)
+        if dlg.exec():
+            name = dlg.ent_name.text().strip()
+            num_str = dlg.ent_number.text().strip()
+            code = dlg.ent_code.text().strip()
+            status = dlg.combo_status.currentData()
+            is_current = dlg.chk_current.isChecked()
+            start_q = dlg.dt_start.date()
+            start_date = datetime.datetime(start_q.year(), start_q.month(), start_q.day())
+            end_q = dlg.dt_end.date()
+            end_date = datetime.datetime(end_q.year(), end_q.month(), end_q.day())
+            desc = dlg.ent_desc.toPlainText().strip()
+
+            try:
+                num = int(num_str) if num_str else s.season_number
+            except ValueError:
+                num = s.season_number
+
+            if is_current and not s.is_current:
+                self.db.query(db_mod.Season).update({db_mod.Season.is_current: False})
+
+            s.name = name
+            s.season_number = num
+            s.code = code
+            s.status = status
+            s.is_current = is_current
+            s.start_date = start_date
+            s.end_date = end_date
+            s.description = desc
+            self.db.commit()
+            self.refresh_seasons_list()
+            self.refresh_cat_list()
+            ModernDialog(self, "نجاح", f"تم تعديل بيانات الموسم '{name}' بنجاح.").exec()
+
+    def set_season_as_current(self, season_id):
+        res = db_mod.set_current_season(self.db, season_id)
+        if res:
+            self.refresh_seasons_list()
+            self.refresh_cat_list()
+            ModernDialog(self, "نجاح", f"تم تعيين '{res.name}' كموسم نشط حالي بنجاح.").exec()
+
+    def delete_season(self, season_id):
+        s = self.db.get(db_mod.Season, season_id)
+        if not s: return
+        if s.is_current:
+            ModernDialog(self, "خطأ", "لا يمكن حذف الموسم النشط الحالي.").exec()
+            return
+        cat_count = self.db.query(db_mod.Category).filter(db_mod.Category.season_id == season_id).count()
+        if cat_count > 0:
+            ModernDialog(self, "خطأ", f"لا يمكن حذف هذا الموسم لاحتوائه على {cat_count} فئات.").exec()
+            return
+        if ModernDialog(self, "تأكيد", f"هل أنت متأكد من حذف الموسم '{s.name}'؟", is_confirm=True).exec():
+            self.db.delete(s)
+            self.db.commit()
+            self.refresh_seasons_list()
+            ModernDialog(self, "نجاح", "تم حذف الموسم بنجاح.").exec()
 
     def delete_category(self, cid):
         # Check if category has subscribers

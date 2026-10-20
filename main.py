@@ -233,11 +233,19 @@ async def cleanup_expired_pending_subscribers():
 @app.get("/", response_class=HTMLResponse)
 async def read_registration(request: Request, db: Session = Depends(get_db)):
     is_open = is_registration_open(db)
-    categories = db.query(db_mod.Category).filter(db_mod.Category.is_active == True).all()
+    current_season = db_mod.get_current_season(db)
+    cat_query = db.query(db_mod.Category).filter(db_mod.Category.is_active == True)
+    if current_season:
+        cat_query = cat_query.filter(db_mod.Category.season_id == current_season.id)
+    categories = cat_query.all()
+    if not categories:
+        categories = db.query(db_mod.Category).filter(db_mod.Category.is_active == True).all()
+
     return templates.TemplateResponse(request=request, name="registration.html", context={
         "request": request, 
         "is_open": is_open,
-        "categories": categories
+        "categories": categories,
+        "current_season": current_season
     })
 
 @app.get("/api/numbers/{cat_id}")
@@ -301,6 +309,7 @@ async def register_subscriber(
             address=address.strip() or None,
             email=email.strip() or None,
             category=cat_record.name,
+            season_id=cat_record.season_id,
             selected_number_id=number_id,
             subscriber_number=num_record.number
         )
@@ -803,9 +812,12 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                 else:
                     setattr(p, 'punctuality_status', 'upcoming')
 
+        season_name = sub.season.name if (hasattr(sub, 'season') and sub.season) else (category_info.season.name if (category_info and hasattr(category_info, 'season') and category_info.season) else "الموسم الأول")
+
         return templates.TemplateResponse(request=request, name="dashboard.html", context={
             "request": request,
             "sub": sub,
+            "season_name": season_name,
             "payments": sorted_payments_desc,
             "winners": category_winners,
             "winners_table_rows": winners_table_rows,
