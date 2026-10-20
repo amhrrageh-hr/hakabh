@@ -370,63 +370,63 @@
             font-size: 0.95rem;
         }
 
-        /* تنسيق بطاقات إجمالي المسدد والمبلغ المستحق والمبلغ المتأخر */
+        /* تنسيق بطاقات إجمالي المسدد والمبلغ المستحق والمبلغ المتأخر (حجم مدمج وأنيق) */
         .totals-overview-row {
             display: grid;
             grid-template-columns: repeat(3, 1fr) !important;
-            gap: 1.25rem;
-            margin-top: 1.5rem;
-            margin-bottom: 2rem;
+            gap: 1rem;
+            margin-top: 1.1rem;
+            margin-bottom: 1.6rem;
         }
         .stat-card-paid {
             background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(15, 23, 42, 0.7) 100%);
             border: 1px solid rgba(16, 185, 129, 0.35);
-            border-radius: 20px;
-            padding: 1.35rem 1.5rem;
+            border-radius: 16px;
+            padding: 0.95rem 1.15rem;
             transition: all 0.3s ease;
-            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 25px -8px rgba(0, 0, 0, 0.35);
         }
         .stat-card-paid:hover {
             border-color: rgba(16, 185, 129, 0.65);
-            box-shadow: 0 12px 30px -5px rgba(16, 185, 129, 0.22);
-            transform: translateY(-3px);
+            box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.22);
+            transform: translateY(-2px);
         }
         .stat-card-target {
             background: linear-gradient(135deg, rgba(212, 175, 55, 0.1) 0%, rgba(15, 23, 42, 0.7) 100%);
             border: 1px solid rgba(212, 175, 55, 0.35);
-            border-radius: 20px;
-            padding: 1.35rem 1.5rem;
+            border-radius: 16px;
+            padding: 0.95rem 1.15rem;
             transition: all 0.3s ease;
-            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 25px -8px rgba(0, 0, 0, 0.35);
         }
         .stat-card-target:hover {
             border-color: rgba(212, 175, 55, 0.7);
-            box-shadow: 0 12px 30px -5px rgba(212, 175, 55, 0.25);
-            transform: translateY(-3px);
+            box-shadow: 0 10px 25px -5px rgba(212, 175, 55, 0.25);
+            transform: translateY(-2px);
         }
         .stat-card-due {
             background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(15, 23, 42, 0.7) 100%);
             border: 1px solid rgba(239, 68, 68, 0.35);
-            border-radius: 20px;
-            padding: 1.35rem 1.5rem;
+            border-radius: 16px;
+            padding: 0.95rem 1.15rem;
             transition: all 0.3s ease;
-            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 25px -8px rgba(0, 0, 0, 0.35);
         }
         .stat-card-due:hover {
             border-color: rgba(239, 68, 68, 0.65);
-            box-shadow: 0 12px 30px -5px rgba(239, 68, 68, 0.22);
-            transform: translateY(-3px);
+            box-shadow: 0 10px 25px -5px rgba(239, 68, 68, 0.22);
+            transform: translateY(-2px);
         }
         .stat-card-header {
             display: flex;
             align-items: center;
-            gap: 10px;
-            margin-bottom: 0.6rem;
+            gap: 8px;
+            margin-bottom: 0.4rem;
         }
         .stat-icon-wrap {
-            width: 36px;
-            height: 36px;
-            border-radius: 10px;
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -434,31 +434,31 @@
         }
         .totals-overview-row .label {
             color: #94a3b8;
-            font-size: 0.95rem;
+            font-size: 0.85rem;
             font-weight: 700;
         }
         .totals-overview-row .value {
-            font-size: 1.85rem;
+            font-size: 1.45rem;
             font-weight: 800;
             line-height: 1.2;
             display: flex;
             align-items: baseline;
-            gap: 6px;
+            gap: 5px;
         }
         .value-paid {
             color: #10b981 !important;
-            text-shadow: 0 0 20px rgba(16, 185, 129, 0.25);
+            text-shadow: 0 0 16px rgba(16, 185, 129, 0.22);
         }
         .value-target {
             color: var(--primary) !important;
-            text-shadow: 0 0 20px rgba(212, 175, 55, 0.25);
+            text-shadow: 0 0 16px rgba(212, 175, 55, 0.22);
         }
         .value-due {
             color: #f87171 !important;
-            text-shadow: 0 0 20px rgba(239, 68, 68, 0.25);
+            text-shadow: 0 0 16px rgba(239, 68, 68, 0.22);
         }
         .currency {
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             font-weight: 600;
             color: #94a3b8;
         }
@@ -1789,7 +1789,7 @@
             <div class="stat-card stat-card-paid">
                 <div class="stat-card-header">
                     <span class="stat-icon-wrap" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
                     </span>
                     <span class="label">إجمالي المسدد</span>
                 </div>
@@ -1799,7 +1799,7 @@
             <div class="stat-card stat-card-target">
                 <div class="stat-card-header">
                     <span class="stat-icon-wrap" style="background: rgba(212, 175, 55, 0.15); color: var(--primary);">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="m16 12-4-4-4 4"></path><path d="M12 16V8"></path></svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="m16 12-4-4-4 4"></path><path d="M12 16V8"></path></svg>
                     </span>
                     <span class="label">المبلغ المستحق</span>
                 </div>
@@ -1809,7 +1809,7 @@
             <div class="stat-card stat-card-due">
                 <div class="stat-card-header">
                     <span class="stat-icon-wrap" style="background: rgba(239, 68, 68, 0.15); color: #f87171;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
                     </span>
                     <span class="label">المبلغ المتأخر</span>
                 </div>
