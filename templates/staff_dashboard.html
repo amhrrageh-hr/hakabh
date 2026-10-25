@@ -829,6 +829,9 @@
             <button class="tab-btn" onclick="switchMainTab('cycles-tab', this)">
                 <span>🔄</span> إدارة الدورات والأقساط
             </button>
+            <button class="tab-btn" onclick="switchMainTab('messaging-tab', this); loadMessagesTab();">
+                <span>📣</span> إدارة الرسائل والتوعية
+            </button>
         </div>
         {% endif %}
 
@@ -1287,8 +1290,183 @@
         </div>
 
         <!-- ============================================== -->
+        <!-- Tab 4: Messaging & Awareness Management (إدارة الرسائل والتوعية) -->
+        <!-- ============================================== -->
+        <div id="messaging-tab" class="tab-pane">
+            <div style="max-width: 1100px; margin: 0 auto;">
+
+                <!-- Page Header -->
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; flex-wrap: wrap; gap: 12px;">
+                    <div>
+                        <h2 style="margin: 0 0 4px 0; font-size: 1.3rem; font-weight: 900; color: #0f172a;">📣 إدارة الرسائل والتوعية للموقع</h2>
+                        <p style="margin: 0; color: #64748b; font-size: 0.88rem;">أضف وأدِر الرسائل التوعوية والتنبيهية التي تظهر للمشتركين في حساباتهم</p>
+                    </div>
+                    <button type="button" class="btn-compact btn-weekly" onclick="openMessageModal()" style="height: 40px; padding: 0 18px; font-size: 0.9rem;">
+                        <span>➕</span> إضافة رسالة جديدة
+                    </button>
+                </div>
+
+                <!-- Stats Cards Row -->
+                <div id="msg-stats-row" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px;">
+                    <div style="background: #fff; border: 1px solid #e2e8f0; border-top: 4px solid #3b82f6; border-radius: 12px; padding: 16px 20px;">
+                        <div style="font-size: 0.8rem; color: #64748b; font-weight: 700; margin-bottom: 6px;">إجمالي الرسائل</div>
+                        <div id="msg-stat-total" style="font-size: 2rem; font-weight: 900; color: #3b82f6;">-</div>
+                    </div>
+                    <div style="background: #fff; border: 1px solid #e2e8f0; border-top: 4px solid #10b981; border-radius: 12px; padding: 16px 20px;">
+                        <div style="font-size: 0.8rem; color: #64748b; font-weight: 700; margin-bottom: 6px;">الرسائل المعروضة حالياً 🟢</div>
+                        <div id="msg-stat-active" style="font-size: 2rem; font-weight: 900; color: #10b981;">-</div>
+                    </div>
+                    <div style="background: #fff; border: 1px solid #e2e8f0; border-top: 4px solid #ef4444; border-radius: 12px; padding: 16px 20px;">
+                        <div style="font-size: 0.8rem; color: #64748b; font-weight: 700; margin-bottom: 6px;">الرسائل المنتهية ⌛</div>
+                        <div id="msg-stat-expired" style="font-size: 2rem; font-weight: 900; color: #ef4444;">-</div>
+                    </div>
+                </div>
+
+                <!-- Filter Bar -->
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px;">
+                    <span style="font-size: 0.88rem; font-weight: 700; color: #475569;">تصفية:</span>
+                    <select id="msg-filter-type" onchange="applyMsgFilters()" style="height: 36px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0 10px; font-size: 0.85rem; background: #fff; font-family: inherit;">
+                        <option value="all">جميع الأنواع</option>
+                        <option value="awareness">💡 توعوية</option>
+                        <option value="educational">📚 تعليمية</option>
+                        <option value="reminder">⏰ تذكيرية</option>
+                        <option value="urgent">⚠️ تنبيه هام</option>
+                        <option value="general">📢 إعلان عام</option>
+                    </select>
+                    <select id="msg-filter-status" onchange="applyMsgFilters()" style="height: 36px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0 10px; font-size: 0.85rem; background: #fff; font-family: inherit;">
+                        <option value="all">جميع الحالات</option>
+                        <option value="active">🟢 نشطة فقط</option>
+                        <option value="inactive">⚪ معطلة</option>
+                        <option value="expired">⌛ منتهية</option>
+                    </select>
+                    <button type="button" class="btn-compact btn-outline" onclick="loadMessagesTab()" style="height: 36px;">🔄 تحديث</button>
+                </div>
+
+                <!-- Alert Box -->
+                <div id="msg-alert-box" class="alert" style="display: none; margin-bottom: 14px; font-size: 0.88rem;"></div>
+
+                <!-- Messages Table -->
+                <div class="table-responsive" style="border-radius: 12px;">
+                    <table id="msg-table" style="font-size: 0.83rem;">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;">#</th>
+                                <th style="width: 110px;">النوع</th>
+                                <th>عنوان الرسالة</th>
+                                <th>المحتوى (مختصر)</th>
+                                <th style="width: 80px;">مدة العرض</th>
+                                <th style="width: 80px;">الأولوية</th>
+                                <th style="width: 110px;">تاريخ الانتهاء</th>
+                                <th style="width: 100px;">الحالة</th>
+                                <th style="width: 160px;">الإجراءات</th>
+                            </tr>
+                        </thead>
+                        <tbody id="msg-table-body">
+                            <tr><td colspan="9" style="text-align: center; color: #94a3b8; padding: 30px;">جاري التحميل...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Empty State -->
+                <div id="msg-empty-state" style="display: none; text-align: center; padding: 50px 20px; color: #94a3b8;">
+                    <div style="font-size: 3rem; margin-bottom: 12px;">📭</div>
+                    <div style="font-size: 1rem; font-weight: 700; margin-bottom: 6px;">لا توجد رسائل بعد</div>
+                    <div style="font-size: 0.85rem;">اضغط على "إضافة رسالة جديدة" لإنشاء أول رسالة توعوية للمشتركين</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- MODAL: Add/Edit Message (نموذج إضافة/تعديل رسالة) -->
+        <!-- ============================================== -->
+        <div id="msg-modal" class="modal-overlay-custom" style="display: none;">
+            <div class="modal-box-custom" style="max-width: 600px;">
+                <div class="modal-header-custom">
+                    <h3 id="msg-modal-title" style="margin: 0; font-size: 1rem; font-weight: 800; color: #10b981;">➕ إضافة رسالة جديدة</h3>
+                    <button type="button" onclick="closeMsgModal()" style="background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #94a3b8; line-height: 1;">×</button>
+                </div>
+                <div class="modal-body-custom" style="max-height: 70vh; overflow-y: auto;">
+                    <div style="display: flex; flex-direction: column; gap: 14px;">
+
+                        <div class="form-group" style="margin: 0;">
+                            <label for="msg-in-title">عنوان الرسالة *</label>
+                            <input type="text" id="msg-in-title" placeholder="مثال: تذكير بموعد السداد أو نصيحة للمشتركين">
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                            <div class="form-group" style="margin: 0;">
+                                <label for="msg-in-type">نوع الرسالة</label>
+                                <select id="msg-in-type" style="height: 44px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 0 12px; font-size: 0.95rem; width: 100%; font-family: inherit;">
+                                    <option value="awareness">💡 توعوية (Awareness)</option>
+                                    <option value="educational">📚 تعليمية (Educational)</option>
+                                    <option value="reminder">⏰ تذكيرية (Reminder)</option>
+                                    <option value="urgent">⚠️ تنبيه هام (Urgent)</option>
+                                    <option value="general">📢 إعلان عام (General)</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <label for="msg-in-category">الفئة المستهدفة</label>
+                                <select id="msg-in-category" style="height: 44px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 0 12px; font-size: 0.95rem; width: 100%; font-family: inherit;">
+                                    <option value="all">🌐 جميع المشتركين</option>
+                                    {% for category in categories %}
+                                        <option value="{{ category.name }}">{{ category.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group" style="margin: 0;">
+                            <label for="msg-in-content">نص ومحتوى الرسالة *</label>
+                            <textarea id="msg-in-content" rows="4" placeholder="اكتب النص الكامل للرسالة التي ستظهر للمشتركين في شريط حساباتهم..." style="width: 100%; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; font-size: 0.95rem; font-family: inherit; resize: vertical; box-sizing: border-box; line-height: 1.6;"></textarea>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                            <div class="form-group" style="margin: 0;">
+                                <label for="msg-in-duration">مدة العرض (ثواني)</label>
+                                <input type="number" id="msg-in-duration" value="7" min="3" max="60" style="height: 44px;">
+                                <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 4px;">مدة بقاء الرسالة قبل الانتقال للتالية</div>
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <label for="msg-in-priority">ترتيب الأولوية</label>
+                                <input type="number" id="msg-in-priority" value="1" min="1" max="100" style="height: 44px;">
+                                <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 4px;">الأصغر = يُعرض أولاً</div>
+                            </div>
+                        </div>
+
+                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px;">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 0; font-weight: 700;">
+                                <input type="checkbox" id="msg-has-expiry" onchange="toggleMsgExpiry(this.checked)" style="width: 16px; height: 16px;">
+                                تحديد موعد انتهاء الرسالة تلقائياً
+                            </label>
+                            <div id="msg-expiry-inputs" style="display: none; margin-top: 12px;">
+                                <label for="msg-in-enddate" style="font-size: 0.85rem; color: #475569; margin-bottom: 6px; display: block;">تاريخ ووقت الانتهاء</label>
+                                <input type="datetime-local" id="msg-in-enddate" style="height: 40px; font-size: 0.88rem; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0 10px; width: 100%; box-sizing: border-box;">
+                                <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+                                    <button type="button" onclick="setMsgExpiry(1)" style="background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; cursor: pointer; font-family: inherit;">+يوم</button>
+                                    <button type="button" onclick="setMsgExpiry(3)" style="background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; cursor: pointer; font-family: inherit;">+3 أيام</button>
+                                    <button type="button" onclick="setMsgExpiry(7)" style="background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; cursor: pointer; font-family: inherit;">+أسبوع</button>
+                                    <button type="button" onclick="setMsgExpiry(30)" style="background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; cursor: pointer; font-family: inherit;">+شهر</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;">
+                            <input type="checkbox" id="msg-in-active" checked style="width: 16px; height: 16px;">
+                            <label for="msg-in-active" style="cursor: pointer; margin: 0; font-weight: 700; color: #065f46; font-size: 0.9rem;">تفعيل الرسالة فوراً وعرضها في الموقع</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer-custom">
+                    <button type="button" class="btn-compact btn-outline" onclick="closeMsgModal()">إلغاء</button>
+                    <button type="button" class="btn-compact btn-weekly" id="msg-modal-save-btn" onclick="saveMsgForm()" style="min-width: 120px;">💾 حفظ الرسالة</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================== -->
         <!-- MODAL: Grand Prize Period Selection (مثل تطبيق الإدارة) -->
         <!-- ============================================== -->
+
         <div id="grand-period-modal" class="modal-overlay-custom">
             <div class="modal-box-custom" style="max-width: 440px;">
                 <div class="modal-header-custom" style="background: #fffbeb;">
@@ -2512,6 +2690,276 @@
         document.addEventListener('DOMContentLoaded', () => {
             loadAllDrawStats(false);
             loadDrawSettingsTab();
+        });
+
+        // =========================================================================
+        // Messaging & Awareness Management JavaScript
+        // =========================================================================
+        let allMsgData = [];
+        let editingMsgId = null;
+
+        async function loadMessagesTab() {
+            try {
+                const res = await fetch('/api/admin/messages');
+                if (!res.ok) {
+                    showMsgAlert('فشل تحميل الرسائل. تأكد من صلاحيات المدير.', 'danger');
+                    return;
+                }
+                const data = await res.json();
+                allMsgData = data.messages || [];
+
+                // Update stats
+                document.getElementById('msg-stat-total').textContent = data.stats.total;
+                document.getElementById('msg-stat-active').textContent = data.stats.active;
+                document.getElementById('msg-stat-expired').textContent = data.stats.expired;
+
+                applyMsgFilters();
+            } catch(e) {
+                showMsgAlert('خطأ في الاتصال بالخادم', 'danger');
+            }
+        }
+
+        function applyMsgFilters() {
+            const typeFilter = document.getElementById('msg-filter-type').value;
+            const statusFilter = document.getElementById('msg-filter-status').value;
+
+            let filtered = allMsgData.filter(m => {
+                const typeMatch = (typeFilter === 'all') || (m.msg_type === typeFilter);
+                let statusMatch = true;
+                if (statusFilter === 'active') statusMatch = m.is_effectively_active;
+                else if (statusFilter === 'inactive') statusMatch = !m.is_active;
+                else if (statusFilter === 'expired') statusMatch = m.is_expired;
+                return typeMatch && statusMatch;
+            });
+
+            renderMsgTable(filtered);
+        }
+
+        const MSG_TYPE_MAP = {
+            awareness:   { label: '💡 توعوية',      color: '#10b981', bg: '#d1fae5' },
+            educational: { label: '📚 تعليمية',      color: '#3b82f6', bg: '#dbeafe' },
+            reminder:    { label: '⏰ تذكيرية',      color: '#f59e0b', bg: '#fef3c7' },
+            urgent:      { label: '⚠️ تنبيه هام',   color: '#ef4444', bg: '#fee2e2' },
+            general:     { label: '📢 إعلان عام',    color: '#8b5cf6', bg: '#ede9fe' }
+        };
+
+        function renderMsgTable(messages) {
+            const tbody = document.getElementById('msg-table-body');
+            const emptyState = document.getElementById('msg-empty-state');
+
+            if (!messages || messages.length === 0) {
+                tbody.innerHTML = '';
+                emptyState.style.display = 'block';
+                return;
+            }
+            emptyState.style.display = 'none';
+
+            tbody.innerHTML = messages.map((m, idx) => {
+                const typeInfo = MSG_TYPE_MAP[m.msg_type] || { label: m.msg_type, color: '#64748b', bg: '#f1f5f9' };
+                const contentPreview = (m.content || '').length > 55 ? m.content.substring(0, 52) + '...' : m.content;
+                const endDateStr = m.end_date
+                    ? `<span style="color: ${m.is_expired ? '#ef4444' : '#64748b'};">${m.is_expired ? '⌛ ' : ''}${m.end_date.replace('T', ' ')}</span>`
+                    : '<span style="color: #94a3b8;">♾️ دائمة</span>';
+
+                let statusBadge;
+                if (!m.is_active) {
+                    statusBadge = '<span class="badge-status" style="background: #f1f5f9; color: #64748b;">⚪ معطلة</span>';
+                } else if (m.is_expired) {
+                    statusBadge = '<span class="badge-status" style="background: #fee2e2; color: #991b1b;">⌛ منتهية</span>';
+                } else {
+                    statusBadge = '<span class="badge-status" style="background: #d1fae5; color: #065f46;">🟢 نشطة</span>';
+                }
+
+                return `<tr>
+                    <td style="text-align:center; color:#64748b;">${idx + 1}</td>
+                    <td style="text-align:center;">
+                        <span style="background:${typeInfo.bg}; color:${typeInfo.color}; padding:2px 7px; border-radius:6px; font-size:0.78rem; font-weight:700;">${typeInfo.label}</span>
+                    </td>
+                    <td style="font-weight:700; color:#0f172a;" title="${m.title}">${m.title}</td>
+                    <td style="color:#475569;" title="${m.content}">${contentPreview}</td>
+                    <td style="text-align:center; color:#64748b;">${m.display_duration} ث</td>
+                    <td style="text-align:center; color:#64748b;">${m.priority}</td>
+                    <td style="text-align:center; font-size:0.78rem;">${endDateStr}</td>
+                    <td style="text-align:center;">${statusBadge}</td>
+                    <td style="text-align:center;">
+                        <div style="display:flex; gap:5px; justify-content:center;">
+                            <button onclick="toggleMsg(${m.id})"
+                                style="background:${m.is_active ? '#fef3c7' : '#d1fae5'}; color:${m.is_active ? '#b45309' : '#065f46'}; border:none; padding:3px 8px; border-radius:5px; font-size:0.75rem; cursor:pointer; font-family:inherit;">
+                                ${m.is_active ? 'تعطيل' : 'تفعيل'}
+                            </button>
+                            <button onclick="editMsg(${m.id})"
+                                style="background:#dbeafe; color:#1e40af; border:none; padding:3px 8px; border-radius:5px; font-size:0.75rem; cursor:pointer; font-family:inherit;">
+                                تعديل
+                            </button>
+                            <button onclick="deleteMsg(${m.id}, '${m.title.replace(/'/g, "\\'")}')"
+                                style="background:#fee2e2; color:#991b1b; border:none; padding:3px 8px; border-radius:5px; font-size:0.75rem; cursor:pointer; font-family:inherit;">
+                                حذف
+                            </button>
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function showMsgAlert(text, type = 'info') {
+            const box = document.getElementById('msg-alert-box');
+            box.className = `alert alert-${type}`;
+            box.textContent = text;
+            box.style.display = 'flex';
+            setTimeout(() => { box.style.display = 'none'; }, 4000);
+        }
+
+        // --- Modal Management ---
+        function openMessageModal(msgData = null) {
+            editingMsgId = msgData ? msgData.id : null;
+            const modal = document.getElementById('msg-modal');
+            const title = document.getElementById('msg-modal-title');
+
+            if (msgData) {
+                title.textContent = '✏️ تعديل الرسالة';
+                document.getElementById('msg-in-title').value = msgData.title || '';
+                document.getElementById('msg-in-content').value = msgData.content || '';
+                document.getElementById('msg-in-type').value = msgData.msg_type || 'awareness';
+                document.getElementById('msg-in-category').value = msgData.target_category || 'all';
+                document.getElementById('msg-in-duration').value = msgData.display_duration || 7;
+                document.getElementById('msg-in-priority').value = msgData.priority || 1;
+                document.getElementById('msg-in-active').checked = msgData.is_active !== false;
+
+                const hasExpiry = !!msgData.end_date;
+                document.getElementById('msg-has-expiry').checked = hasExpiry;
+                document.getElementById('msg-expiry-inputs').style.display = hasExpiry ? 'block' : 'none';
+                if (hasExpiry && msgData.end_date) {
+                    document.getElementById('msg-in-enddate').value = msgData.end_date;
+                }
+            } else {
+                title.textContent = '➕ إضافة رسالة جديدة';
+                document.getElementById('msg-in-title').value = '';
+                document.getElementById('msg-in-content').value = '';
+                document.getElementById('msg-in-type').value = 'awareness';
+                document.getElementById('msg-in-category').value = 'all';
+                document.getElementById('msg-in-duration').value = 7;
+                document.getElementById('msg-in-priority').value = 1;
+                document.getElementById('msg-in-active').checked = true;
+                document.getElementById('msg-has-expiry').checked = false;
+                document.getElementById('msg-expiry-inputs').style.display = 'none';
+                document.getElementById('msg-in-enddate').value = '';
+            }
+
+            modal.style.display = 'flex';
+        }
+
+        function closeMsgModal() {
+            document.getElementById('msg-modal').style.display = 'none';
+            editingMsgId = null;
+        }
+
+        function toggleMsgExpiry(checked) {
+            document.getElementById('msg-expiry-inputs').style.display = checked ? 'block' : 'none';
+        }
+
+        function setMsgExpiry(days) {
+            const dt = new Date();
+            dt.setDate(dt.getDate() + days);
+            const pad = n => String(n).padStart(2, '0');
+            const val = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+            document.getElementById('msg-in-enddate').value = val;
+        }
+
+        async function saveMsgForm() {
+            const title = document.getElementById('msg-in-title').value.trim();
+            const content = document.getElementById('msg-in-content').value.trim();
+
+            if (!title) { showMsgAlert('يرجى كتابة عنوان الرسالة', 'danger'); return; }
+            if (!content) { showMsgAlert('يرجى كتابة نص ومحتوى الرسالة', 'danger'); return; }
+
+            const hasExpiry = document.getElementById('msg-has-expiry').checked;
+            let end_date = null;
+            if (hasExpiry) {
+                end_date = document.getElementById('msg-in-enddate').value || null;
+                if (end_date && new Date(end_date) <= new Date()) {
+                    showMsgAlert('تاريخ الانتهاء يجب أن يكون في المستقبل', 'danger');
+                    return;
+                }
+            }
+
+            const payload = {
+                title,
+                content,
+                msg_type: document.getElementById('msg-in-type').value,
+                target_category: document.getElementById('msg-in-category').value,
+                display_duration: parseInt(document.getElementById('msg-in-duration').value) || 7,
+                priority: parseInt(document.getElementById('msg-in-priority').value) || 1,
+                is_active: document.getElementById('msg-in-active').checked,
+                end_date
+            };
+
+            const saveBtn = document.getElementById('msg-modal-save-btn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'جاري الحفظ...';
+
+            try {
+                const url = editingMsgId ? `/api/admin/messages/${editingMsgId}` : '/api/admin/messages';
+                const method = editingMsgId ? 'PUT' : 'POST';
+                const res = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    closeMsgModal();
+                    showMsgAlert(data.message || 'تم الحفظ بنجاح ✅', 'success');
+                    await loadMessagesTab();
+                } else {
+                    showMsgAlert(data.error || 'فشل حفظ الرسالة', 'danger');
+                }
+            } catch(e) {
+                showMsgAlert('خطأ في الاتصال بالخادم', 'danger');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 حفظ الرسالة';
+            }
+        }
+
+        function editMsg(id) {
+            const msg = allMsgData.find(m => m.id === id);
+            if (msg) openMessageModal(msg);
+        }
+
+        async function toggleMsg(id) {
+            try {
+                const res = await fetch(`/api/admin/messages/${id}/toggle`, { method: 'PATCH' });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    showMsgAlert(data.message, 'success');
+                    await loadMessagesTab();
+                } else {
+                    showMsgAlert(data.error || 'فشل تغيير حالة الرسالة', 'danger');
+                }
+            } catch(e) {
+                showMsgAlert('خطأ في الاتصال', 'danger');
+            }
+        }
+
+        async function deleteMsg(id, title) {
+            if (!confirm(`هل أنت متأكد من حذف الرسالة:\n«${title}»\n\nهذا الإجراء لا يمكن التراجع عنه.`)) return;
+            try {
+                const res = await fetch(`/api/admin/messages/${id}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    showMsgAlert(data.message || 'تم حذف الرسالة بنجاح', 'success');
+                    await loadMessagesTab();
+                } else {
+                    showMsgAlert(data.error || 'فشل حذف الرسالة', 'danger');
+                }
+            } catch(e) {
+                showMsgAlert('خطأ في الاتصال', 'danger');
+            }
+        }
+
+        // Close msg modal on overlay click
+        document.getElementById('msg-modal').addEventListener('click', function(e) {
+            if (e.target === this) closeMsgModal();
         });
     </script>
     {% endif %}

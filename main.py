@@ -1658,6 +1658,166 @@ async def check_subscriber_status(request: Request, db: Session = Depends(get_db
         return JSONResponse(status_code=404, content={"status": "not_found"})
     return JSONResponse(content={"status": sub.status or "pending", "name": sub.name})
 
+
+# =========================================================================
+# API: إدارة رسائل وتوعية الموقع (Manager Only)
+# =========================================================================
+
+def _is_manager(request: Request, db: Session) -> bool:
+    """التحقق من أن المستخدم الحالي هو مدير"""
+    staff_id = request.session.get("staff_id")
+    if not staff_id:
+        return False
+    staff = db.query(db_mod.Staff).filter(db_mod.Staff.id == staff_id).first()
+    return staff is not None and staff.role == "مدير"
+
+@app.get("/api/admin/messages")
+async def get_all_messages(request: Request, db: Session = Depends(get_db)):
+    """جلب جميع رسائل الموقع للمدير"""
+    if not _is_manager(request, db):
+        return JSONResponse(status_code=403, content={"error": "غير مصرح"})
+    
+    now = datetime.datetime.now()
+    messages = db.query(db_mod.SubscriberMessage).order_by(
+        db_mod.SubscriberMessage.priority.asc(),
+        db_mod.SubscriberMessage.id.desc()
+    ).all()
+    
+    result = []
+    for m in messages:
+        is_expired = (m.end_date is not None and m.end_date < now)
+        is_effectively_active = m.is_active and not is_expired
+        result.append({
+            "id": m.id,
+            "title": m.title or "",
+            "content": m.content or "",
+            "msg_type": m.msg_type or "awareness",
+            "is_active": bool(m.is_active),
+            "is_effectively_active": is_effectively_active,
+            "is_expired": is_expired,
+            "priority": m.priority or 1,
+            "display_duration": m.display_duration or 7,
+            "target_category": m.target_category or "all",
+            "start_date": m.start_date.strftime("%Y-%m-%dT%H:%M") if m.start_date else None,
+            "end_date": m.end_date.strftime("%Y-%m-%dT%H:%M") if m.end_date else None,
+            "created_at": m.created_at.strftime("%Y-%m-%d") if m.created_at else ""
+        })
+    
+    # إحصائيات
+    total = len(result)
+    active_count = sum(1 for r in result if r["is_effectively_active"])
+    expired_count = sum(1 for r in result if r["is_expired"])
+    
+    return JSONResponse(content={
+        "messages": result,
+        "stats": {"total": total, "active": active_count, "expired": expired_count}
+    })
+
+@app.post("/api/admin/messages")
+async def create_message(request: Request, db: Session = Depends(get_db)):
+    """إضافة رسالة جديدة"""
+    if not _is_manager(request, db):
+        return JSONResponse(status_code=403, content={"error": "غير مصرح"})
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "بيانات غير صحيحة"})
+    
+    title = (data.get("title") or "").strip()
+    content = (data.get("content") or "").strip()
+    if not title or not content:
+        return JSONResponse(status_code=400, content={"error": "العنوان والمحتوى مطلوبان"})
+    
+    end_date = None
+    if data.get("end_date"):
+        try:
+            end_date = datetime.datetime.fromisoformat(data["end_date"])
+        except Exception:
+            pass
+    
+    new_msg = db_mod.SubscriberMessage(
+        title=title,
+        content=content,
+        msg_type=data.get("msg_type", "awareness"),
+        is_active=bool(data.get("is_active", True)),
+        priority=int(data.get("priority", 1)),
+        display_duration=int(data.get("display_duration", 7)),
+        target_category=data.get("target_category", "all"),
+        end_date=end_date
+    )
+    db.add(new_msg)
+    db.commit()
+    db.refresh(new_msg)
+    return JSONResponse(content={"success": True, "message": "تمت إضافة الرسالة بنجاح", "id": new_msg.id})
+
+@app.put("/api/admin/messages/{msg_id}")
+async def update_message(msg_id: int, request: Request, db: Session = Depends(get_db)):
+    """تحديث رسالة موجودة"""
+    if not _is_manager(request, db):
+        return JSONResponse(status_code=403, content={"error": "غير مصرح"})
+    
+    msg = db.query(db_mod.SubscriberMessage).filter(db_mod.SubscriberMessage.id == msg_id).first()
+    if not msg:
+        return JSONResponse(status_code=404, content={"error": "الرسالة غير موجودة"})
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "بيانات غير صحيحة"})
+    
+    title = (data.get("title") or "").strip()
+    content = (data.get("content") or "").strip()
+    if not title or not content:
+        return JSONResponse(status_code=400, content={"error": "العنوان والمحتوى مطلوبان"})
+    
+    end_date = None
+    if data.get("end_date"):
+        try:
+            end_date = datetime.datetime.fromisoformat(data["end_date"])
+        except Exception:
+            pass
+    
+    msg.title = title
+    msg.content = content
+    msg.msg_type = data.get("msg_type", msg.msg_type)
+    msg.is_active = bool(data.get("is_active", msg.is_active))
+    msg.priority = int(data.get("priority", msg.priority or 1))
+    msg.display_duration = int(data.get("display_duration", msg.display_duration or 7))
+    msg.target_category = data.get("target_category", msg.target_category or "all")
+    msg.end_date = end_date
+    db.commit()
+    return JSONResponse(content={"success": True, "message": "تم تحديث الرسالة بنجاح"})
+
+@app.patch("/api/admin/messages/{msg_id}/toggle")
+async def toggle_message(msg_id: int, request: Request, db: Session = Depends(get_db)):
+    """تفعيل/تعطيل رسالة"""
+    if not _is_manager(request, db):
+        return JSONResponse(status_code=403, content={"error": "غير مصرح"})
+    
+    msg = db.query(db_mod.SubscriberMessage).filter(db_mod.SubscriberMessage.id == msg_id).first()
+    if not msg:
+        return JSONResponse(status_code=404, content={"error": "الرسالة غير موجودة"})
+    
+    msg.is_active = not msg.is_active
+    db.commit()
+    status_text = "نشطة" if msg.is_active else "معطلة"
+    return JSONResponse(content={"success": True, "is_active": msg.is_active, "message": f"الرسالة الآن {status_text}"})
+
+@app.delete("/api/admin/messages/{msg_id}")
+async def delete_message(msg_id: int, request: Request, db: Session = Depends(get_db)):
+    """حذف رسالة"""
+    if not _is_manager(request, db):
+        return JSONResponse(status_code=403, content={"error": "غير مصرح"})
+    
+    msg = db.query(db_mod.SubscriberMessage).filter(db_mod.SubscriberMessage.id == msg_id).first()
+    if not msg:
+        return JSONResponse(status_code=404, content={"error": "الرسالة غير موجودة"})
+    
+    db.delete(msg)
+    db.commit()
+    return JSONResponse(content={"success": True, "message": "تم حذف الرسالة بنجاح"})
+
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()
