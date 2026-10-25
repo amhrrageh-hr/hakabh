@@ -826,6 +826,9 @@
             <button class="tab-btn" onclick="switchMainTab('draw-tab', this)">
                 <span>🏆</span> إدارة القرعة والجوائز
             </button>
+            <button class="tab-btn" onclick="switchMainTab('cycles-tab', this)">
+                <span>🔄</span> إدارة الدورات والأقساط
+            </button>
         </div>
         {% endif %}
 
@@ -1185,6 +1188,100 @@
                             <span>💾</span> حفظ إعدادات الجائزة الكبرى
                         </button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- Tab 3: Cycles & Installments Management (إدارة الدورات والأقساط) -->
+        <!-- ============================================== -->
+        <div id="cycles-tab" class="tab-pane">
+            <div class="cycles-management-wrapper" style="max-width: 860px; margin: 0 auto;">
+                <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 25px 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.04);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f1f5f9; padding-bottom: 15px; margin-bottom: 22px;">
+                        <div>
+                            <h2 style="margin: 0 0 5px 0; font-size: 1.45rem; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 10px;">
+                                <span style="font-size: 1.6rem;">🔄</span> إدارة الدورات والأقساط
+                            </h2>
+                            <p style="margin: 0; color: #64748b; font-size: 0.9rem;">
+                                ضبط عدد الدورات وتاريخ بدايتها وتوليد جدول الأقساط اليومية للمشتركين
+                            </p>
+                        </div>
+                        <span style="background: rgba(16, 185, 129, 0.1); color: #059669; font-weight: 800; font-size: 0.85rem; padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.25);">
+                            نظام الهكبة اليومية ⚡
+                        </span>
+                    </div>
+
+                    <div id="cycles-alert" class="alert" style="display: none; margin-bottom: 20px;"></div>
+
+                    <form id="cycles-form" onsubmit="return false;">
+                        <div class="form-group" style="margin-bottom: 18px;">
+                            <label for="cyc_cat" style="font-weight: 700; color: #1e293b; display: block; margin-bottom: 7px;">اختر الفئة:</label>
+                            <select id="cyc_cat" onchange="loadCategoryCycleSettings()" style="height: 46px; font-weight: 700; width: 100%; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 8px 12px; background: #fff;">
+                                <option value="">-- اختر الفئة --</option>
+                                {% for category in categories %}
+                                    <option value="{{ category.id }}">{{ category.name }} (قسط: {{ "{:,.2f}".format(category.amount or 0) }} ريال)</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-bottom: 18px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="cyc_count" style="font-weight: 700; color: #1e293b; display: block; margin-bottom: 7px;">إجمالي عدد الدورات:</label>
+                                <input type="number" id="cyc_count" placeholder="مثال: 2" min="1" oninput="updateAutoEndDate()" style="height: 46px; font-weight: 700; width: 100%; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 8px 12px;">
+                            </div>
+
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="cyc_inst_count" style="font-weight: 700; color: #1e293b; display: block; margin-bottom: 7px;">عدد الأقساط في كل دورة:</label>
+                                <input type="number" id="cyc_inst_count" placeholder="مثال: 12" min="1" oninput="updateAutoEndDate()" style="height: 46px; font-weight: 700; width: 100%; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 8px 12px;">
+                            </div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-bottom: 22px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="cyc_start" style="font-weight: 700; color: #1e293b; display: block; margin-bottom: 7px;">تاريخ بداية أول دورة:</label>
+                                <input type="date" id="cyc_start" onchange="updateAutoEndDate()" style="height: 46px; font-weight: 700; width: 100%; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 8px 12px;">
+                            </div>
+
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="cyc_end" style="font-weight: 700; color: #1e293b; display: block; margin-bottom: 7px;">تاريخ نهاية آخر دورة (تلقائي):</label>
+                                <input type="date" id="cyc_end" readonly style="height: 46px; font-weight: 700; width: 100%; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 8px 12px; background-color: #f8fafc; cursor: not-allowed;">
+                            </div>
+                        </div>
+
+                        <!-- Live Calculation Summary Strip -->
+                        <div id="cycles-calc-box" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 14px 20px; margin-bottom: 22px; display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; gap: 12px;">
+                            <div style="text-align: center;">
+                                <span style="font-size: 0.8rem; color: #64748b; display: block; margin-bottom: 2px;">إجمالي الأقساط المقررة</span>
+                                <strong id="cyc-preview-total" style="color: #0f172a; font-size: 1.25rem; font-weight: 800;">0 قسط</strong>
+                            </div>
+                            <div style="width: 1px; height: 35px; background: #cbd5e1;"></div>
+                            <div style="text-align: center;">
+                                <span style="font-size: 0.8rem; color: #64748b; display: block; margin-bottom: 2px;">المعدل الزمني</span>
+                                <strong style="color: #059669; font-size: 1.05rem; font-weight: 700;">قسط يومي (1 يوم/قسط)</strong>
+                            </div>
+                            <div style="width: 1px; height: 35px; background: #cbd5e1;"></div>
+                            <div style="text-align: center;">
+                                <span style="font-size: 0.8rem; color: #64748b; display: block; margin-bottom: 2px;">إجمالي مدة الهكبة</span>
+                                <strong id="cyc-preview-days" style="color: #2563eb; font-size: 1.15rem; font-weight: 800;">0 يوماً</strong>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px;">
+                            <button type="button" id="btn-save-cycle" onclick="saveCycleSettings()" class="btn-submit" style="background: #1e293b; color: white; height: 48px; font-size: 1rem; font-weight: 700; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; border: none; transition: background 0.2s;">
+                                <span>💾</span> حفظ الإعدادات لهذه الفئة فقط
+                            </button>
+
+                            <button type="button" id="btn-gen-cycle" onclick="generateCycleSchedule()" class="btn-submit" style="background: var(--primary); color: white; height: 48px; font-size: 1rem; font-weight: 700; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; border: none; transition: background 0.2s;">
+                                <span>⚡</span> توليد جدول الأقساط لجميع المشتركين
+                            </button>
+                        </div>
+
+                        <div style="background: #f1f5f9; border-right: 4px solid #64748b; border-radius: 8px; padding: 12px 16px; color: #475569; font-size: 0.88rem; line-height: 1.6;">
+                            <strong>تنبيه:</strong> هذا الإجراء سيقوم بإنشاء سجلات دفع مستقبلية لجميع المشتركين في الفئة المختارة بناءً على الإعدادات أعلاه (بمعدل قسط واحد يومياً).
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>

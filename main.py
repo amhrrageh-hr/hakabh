@@ -563,6 +563,20 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             
             # جلب الفئات لعرضها في القائمة المنسدلة للموظف
             categories = db.query(db_mod.Category).all()
+            categories_dict = [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "amount": float(c.amount or 0.0),
+                    "max_cycles": int(c.max_cycles or 1),
+                    "max_installments": int(c.max_installments or 12),
+                    "start_date": c.start_date.strftime("%Y-%m-%d") if c.start_date else "",
+                    "end_date": c.end_date.strftime("%Y-%m-%d") if c.end_date else ""
+                }
+                for c in categories
+            ]
+            import json
+            categories_json = json.dumps(categories_dict)
             
             # تحميل جميع المشتركين مسبقا وتمريرهم كمتغير JSON
             subs = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
@@ -572,13 +586,13 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
                 if cat not in subscribers_dict:
                     subscribers_dict[cat] = []
                 subscribers_dict[cat].append({"id": s.id, "number": s.subscriber_number, "name": s.name})
-            import json
             subscribers_json = json.dumps(subscribers_dict)
 
             return templates.TemplateResponse(request=request, name="staff_dashboard.html", context={
                 "request": request,
                 "staff": staff,
                 "categories": categories,
+                "categories_json": categories_json,
                 "subscribers_json": subscribers_json,
                 "now": datetime.datetime.now()
             })
@@ -1143,6 +1157,148 @@ async def staff_sync_payments(request: Request, db: Session = Depends(get_db)):
         db.rollback()
         print(f"[Staff Sync Payment Error]: {str(e)}")
         return JSONResponse(status_code=500, content={"message": "حدث خطأ أثناء مزامنة المدفوعات"})
+
+
+# ─── إدارة الدورات والأقساط للفئات (نفس منطق تطبيق سطح المكتب) ───
+@app.post("/api/cycles/save-settings")
+async def save_cycle_settings_api(request: Request, db: Session = Depends(get_db)):
+    """حفظ إعدادات الدورات والأقساط للفئة المحددة (متاح للمدير فقط)"""
+    staff_id = request.session.get("staff_id")
+    if not staff_id:
+        return JSONResponse(status_code=401, content={"success": False, "message": "غير مصرح - يرجى تسجيل الدخول كمدير"})
+    staff = db.query(db_mod.Staff).filter(db_mod.Staff.id == staff_id).first()
+    if not staff or staff.role != "مدير":
+        return JSONResponse(status_code=403, content={"success": False, "message": "صلاحية غير كافية - متاح للمدير فقط"})
+
+    try:
+        body = await request.json()
+        cat_id = int(body.get("category_id"))
+        cycles = int(body.get("max_cycles"))
+        inst_per_cycle = int(body.get("max_installments"))
+        start_date_str = body.get("start_date")
+        end_date_str = body.get("end_date")
+
+        cat = db.get(db_mod.Category, cat_id)
+        if not cat:
+            return JSONResponse(status_code=404, content={"success": False, "message": "الفئة غير موجودة"})
+
+        cat.max_cycles = cycles
+        cat.max_installments = inst_per_cycle
+
+        if start_date_str:
+            s_d = datetime.date.fromisoformat(start_date_str)
+            cat.start_date = datetime.datetime.combine(s_d, datetime.time.min)
+        if end_date_str:
+            e_d = datetime.date.fromisoformat(end_date_str)
+            cat.end_date = datetime.datetime.combine(e_d, datetime.time.min)
+
+        db.commit()
+        return JSONResponse(content={
+            "success": True,
+            "message": f"تم حفظ إعدادات الفئة {cat.name} بنجاح",
+            "category": {
+                "id": cat.id,
+                "name": cat.name,
+                "max_cycles": cat.max_cycles,
+                "max_installments": cat.max_installments,
+                "start_date": cat.start_date.strftime("%Y-%m-%d") if cat.start_date else "",
+                "end_date": cat.end_date.strftime("%Y-%m-%d") if cat.end_date else ""
+            }
+        })
+    except ValueError:
+        return JSONResponse(status_code=400, content={"success": False, "message": "يرجى إدخال أرقام وتواريخ صحيحة"})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"success": False, "message": f"خطأ أثناء الحفظ: {str(e)}"})
+
+
+@app.post("/api/cycles/generate-schedule")
+async def generate_cycle_schedule_api(request: Request, db: Session = Depends(get_db)):
+    """توليد جدول الأقساط لجميع المشتركين في الفئة المحددة (نفس منطق تطبيق سطح المكتب)"""
+    staff_id = request.session.get("staff_id")
+    if not staff_id:
+        return JSONResponse(status_code=401, content={"success": False, "message": "غير مصرح - يرجى تسجيل الدخول كمدير"})
+    staff = db.query(db_mod.Staff).filter(db_mod.Staff.id == staff_id).first()
+    if not staff or staff.role != "مدير":
+        return JSONResponse(status_code=403, content={"success": False, "message": "صلاحية غير كافية - متاح للمدير فقط"})
+
+    try:
+        body = await request.json()
+        cat_id = int(body.get("category_id"))
+        cycles = int(body.get("max_cycles"))
+        inst_per_cycle = int(body.get("max_installments"))
+        start_date_str = body.get("start_date")
+
+        total_installments = cycles * inst_per_cycle
+        if total_installments < 1:
+            return JSONResponse(status_code=400, content={"success": False, "message": "يجب أن يكون إجمالي الأقساط قسطاً واحداً على الأقل"})
+
+        start_date = datetime.date.fromisoformat(start_date_str) if start_date_str else datetime.date.today()
+
+        cat = db.get(db_mod.Category, cat_id)
+        if not cat:
+            return JSONResponse(status_code=404, content={"success": False, "message": "الفئة غير موجودة"})
+
+        cat.max_cycles = cycles
+        cat.max_installments = inst_per_cycle
+        cat.start_date = datetime.datetime.combine(start_date, datetime.time.min)
+
+        # حساب تاريخ النهاية تلقائياً
+        days = (total_installments - 1) * 1
+        end_date = start_date + datetime.timedelta(days=days)
+        cat.end_date = datetime.datetime.combine(end_date, datetime.time.min)
+        db.commit()
+
+        subs = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.category == cat.name).all()
+        if not subs:
+            return JSONResponse(status_code=400, content={"success": False, "message": "لا يوجد مشتركون في هذه الفئة حالياً"})
+
+        sub_ids = [sub.id for sub in subs]
+        existing = set(
+            db.query(db_mod.Payment.subscriber_id, db_mod.Payment.cycle_number, db_mod.Payment.installment_number)
+            .filter(db_mod.Payment.subscriber_id.in_(sub_ids))
+            .all()
+        )
+
+        total_created = 0
+        new_payments = []
+        for c_idx in range(1, cycles + 1):
+            for i_idx in range(1, inst_per_cycle + 1):
+                global_idx = (c_idx - 1) * inst_per_cycle + (i_idx - 1)
+                days_to_add = global_idx
+                due_date = start_date + datetime.timedelta(days=days_to_add)
+                due_datetime = datetime.datetime.combine(due_date, datetime.time.min)
+
+                for sub in subs:
+                    if (sub.id, c_idx, i_idx) not in existing:
+                        new_p = db_mod.Payment(
+                            subscriber_id=sub.id,
+                            amount=cat.amount,
+                            due_date=due_datetime,
+                            is_paid=False,
+                            cycle_number=c_idx,
+                            installment_number=i_idx,
+                            note=f"دورة {c_idx} - قسط {i_idx}"
+                        )
+                        new_payments.append(new_p)
+                        existing.add((sub.id, c_idx, i_idx))
+                        total_created += 1
+
+        if new_payments:
+            db.add_all(new_payments)
+            db.commit()
+
+        return JSONResponse(content={
+            "success": True,
+            "message": f"تم توليد {total_created} سجل دفع بنجاح لـ {len(subs)} مشترك",
+            "total_created": total_created,
+            "subs_count": len(subs)
+        })
+    except ValueError:
+        return JSONResponse(status_code=400, content={"success": False, "message": "يرجى إدخال أرقام وتواريخ صحيحة"})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"success": False, "message": f"حدث خطأ أثناء التوليد: {str(e)}"})
 
 
 def reshape_arabic(text: str) -> str:
