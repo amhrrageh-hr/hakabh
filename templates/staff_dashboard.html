@@ -1348,6 +1348,9 @@
             if (tabId === 'draw-tab' && typeof loadAllDrawStats === 'function') {
                 loadAllDrawStats(false);
             }
+            if (tabId === 'cycles-tab' && typeof onCyclesTabOpened === 'function') {
+                onCyclesTabOpened();
+            }
         }
 
         // --- Payment & Offline Logic ---
@@ -2300,6 +2303,209 @@
                 }
             }
             draw();
+        }
+
+        // ==============================================
+        // --- Cycles & Installments Logic (Manager Only) ---
+        // ==============================================
+        let categoriesCyclesData = [];
+        try {
+            categoriesCyclesData = JSON.parse('{{ categories_json | safe }}');
+        } catch (e) {
+            categoriesCyclesData = [];
+        }
+
+        function showCyclesAlert(message, type = 'info') {
+            const box = document.getElementById('cycles-alert');
+            if (!box) return;
+            box.textContent = message;
+            box.className = 'alert ' + (type === 'success' ? 'alert-success' : type === 'info' ? 'alert-info' : 'alert-danger');
+            box.style.display = 'block';
+            box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            setTimeout(() => {
+                if (box) box.style.display = 'none';
+            }, 6000);
+        }
+
+        function onCyclesTabOpened() {
+            const cycSel = document.getElementById('cyc_cat');
+            if (cycSel && !cycSel.value && cycSel.options.length > 1) {
+                cycSel.selectedIndex = 1;
+                loadCategoryCycleSettings();
+            }
+        }
+
+        function loadCategoryCycleSettings() {
+            const catId = Number(document.getElementById('cyc_cat').value);
+            if (!catId) return;
+
+            const cat = categoriesCyclesData.find(c => c.id === catId);
+            if (!cat) return;
+
+            document.getElementById('cyc_count').value = cat.max_cycles || 1;
+            document.getElementById('cyc_inst_count').value = cat.max_installments || 12;
+
+            if (cat.start_date) {
+                document.getElementById('cyc_start').value = cat.start_date;
+            } else {
+                const today = new Date().toISOString().split('T')[0];
+                document.getElementById('cyc_start').value = today;
+            }
+
+            if (cat.end_date) {
+                document.getElementById('cyc_end').value = cat.end_date;
+            }
+
+            updateAutoEndDate();
+        }
+
+        function updateAutoEndDate() {
+            const countInput = document.getElementById('cyc_count');
+            const instInput = document.getElementById('cyc_inst_count');
+            const startInput = document.getElementById('cyc_start');
+            const endInput = document.getElementById('cyc_end');
+
+            const previewTotal = document.getElementById('cyc-preview-total');
+            const previewDays = document.getElementById('cyc-preview-days');
+
+            const cycles = parseInt(countInput.value) || 0;
+            const inst = parseInt(instInput.value) || 0;
+            const totalInst = cycles * inst;
+
+            if (previewTotal) previewTotal.textContent = `${totalInst} قسط`;
+            if (previewDays) previewDays.textContent = `${totalInst} يوماً`;
+
+            if (!startInput.value || totalInst <= 0) return;
+
+            try {
+                const start = new Date(startInput.value);
+                if (isNaN(start.getTime())) return;
+
+                // Daily Hakbah logic: 1 day per installment -> (totalInst - 1) days added
+                const days = Math.max(0, totalInst - 1);
+                const end = new Date(start.getTime() + days * 24 * 60 * 60 * 1000);
+                endInput.value = end.toISOString().split('T')[0];
+            } catch (e) {
+                console.error("Auto end date error:", e);
+            }
+        }
+
+        async function saveCycleSettings() {
+            const catId = Number(document.getElementById('cyc_cat').value);
+            if (!catId) {
+                showCyclesAlert('يرجى اختيار الفئة أولاً', 'danger');
+                return;
+            }
+
+            const cycles = parseInt(document.getElementById('cyc_count').value);
+            const inst = parseInt(document.getElementById('cyc_inst_count').value);
+            const startDate = document.getElementById('cyc_start').value;
+            const endDate = document.getElementById('cyc_end').value;
+
+            if (!cycles || cycles < 1 || !inst || inst < 1) {
+                showCyclesAlert('يرجى إدخال أرقام صحيحة لعدد الدورات والأقساط (1 على الأقل)', 'danger');
+                return;
+            }
+
+            const btn = document.getElementById('btn-save-cycle');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span>⏳</span> جاري الحفظ...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/cycles/save-settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        category_id: catId,
+                        max_cycles: cycles,
+                        max_installments: inst,
+                        start_date: startDate,
+                        end_date: endDate
+                    })
+                });
+
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    showCyclesAlert(data.message, 'success');
+                    const idx = categoriesCyclesData.findIndex(c => c.id === catId);
+                    if (idx !== -1) {
+                        categoriesCyclesData[idx].max_cycles = cycles;
+                        categoriesCyclesData[idx].max_installments = inst;
+                        categoriesCyclesData[idx].start_date = startDate;
+                        categoriesCyclesData[idx].end_date = endDate;
+                    }
+                } else {
+                    showCyclesAlert(data.message || 'فشل حفظ الإعدادات', 'danger');
+                }
+            } catch (err) {
+                showCyclesAlert('حدث خطأ في الاتصال بالخادم', 'danger');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function generateCycleSchedule() {
+            const catId = Number(document.getElementById('cyc_cat').value);
+            if (!catId) {
+                showCyclesAlert('يرجى اختيار الفئة أولاً', 'danger');
+                return;
+            }
+
+            const cycles = parseInt(document.getElementById('cyc_count').value);
+            const inst = parseInt(document.getElementById('cyc_inst_count').value);
+            const startDate = document.getElementById('cyc_start').value;
+
+            if (!cycles || cycles < 1 || !inst || inst < 1) {
+                showCyclesAlert('يرجى إدخال أرقام صحيحة لعدد الدورات والأقساط', 'danger');
+                return;
+            }
+
+            const totalInst = cycles * inst;
+            const catSelect = document.getElementById('cyc_cat');
+            const catName = catSelect.options[catSelect.selectedIndex].text;
+
+            const confirmMsg = `سيتم إنشاء ${totalInst} سجل دفع (بمعدل قسط واحد يومياً) لكل مشترك في:\n${catName}\n\nهل أنت متأكد من المتابعة وتوليد الأقساط؟`;
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            const btn = document.getElementById('btn-gen-cycle');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span>⚡</span> جاري توليد جدول الأقساط...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/cycles/generate-schedule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        category_id: catId,
+                        max_cycles: cycles,
+                        max_installments: inst,
+                        start_date: startDate
+                    })
+                });
+
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    showCyclesAlert(data.message, 'success');
+                    const idx = categoriesCyclesData.findIndex(c => c.id === catId);
+                    if (idx !== -1) {
+                        categoriesCyclesData[idx].max_cycles = cycles;
+                        categoriesCyclesData[idx].max_installments = inst;
+                        categoriesCyclesData[idx].start_date = startDate;
+                    }
+                } else {
+                    showCyclesAlert(data.message || 'فشل توليد جدول الأقساط', 'danger');
+                }
+            } catch (err) {
+                showCyclesAlert('حدث خطأ في الاتصال بالخادم', 'danger');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
         }
 
         // Initialize Draw data when Manager views draw tab
