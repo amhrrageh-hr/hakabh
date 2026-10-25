@@ -134,6 +134,12 @@ class DrawStatsLoader(QThread):
             setting_inc = bg_db.query(db_mod.Setting).filter(db_mod.Setting.key == 'incentive_max_late_installments').first()
             max_late_allowed = int(setting_inc.value) if (setting_inc and setting_inc.value and str(setting_inc.value).isdigit()) else 1
 
+            weekly_won_subs = {
+                w[0] for w in bg_db.query(db_mod.Winner.subscriber_number).filter(
+                    (db_mod.Winner.draw_type.contains("الاسبوعية") | db_mod.Winner.draw_type.contains("الأسبوعية"))
+                ).all() if w[0]
+            }
+
             cat_stats = {}
             for cat in categories:
                 subs = disciplined_by_cat.get(cat.name, [])
@@ -165,7 +171,7 @@ class DrawStatsLoader(QThread):
                                 if p_paid and p_paid > p_due: late_count += 1
                     if late_count > max_late_allowed:
                         is_inc = False
-                    if is_finished: completed += 1
+                    if is_finished and (s.subscriber_number not in weekly_won_subs): completed += 1
                     if is_inc and has_paid: incentive += 1
                 cat_stats[cat.name] = (completed, incentive)
 
@@ -657,6 +663,11 @@ class DrawMixin:
             payments_by_sub.setdefault(p[0], []).append(p)
 
         max_late_allowed = self._get_incentive_max_late()
+        weekly_won_subs = {
+            w[0] for w in self.db.query(db_mod.Winner.subscriber_number).filter(
+                (db_mod.Winner.draw_type.contains("الاسبوعية") | db_mod.Winner.draw_type.contains("الأسبوعية"))
+            ).all() if w[0]
+        }
         completed_cycle_count = 0
         incentive_count = 0
         max_inst = cat.max_installments if cat else 0
@@ -700,7 +711,7 @@ class DrawMixin:
             if late_count > max_late_allowed:
                 is_incentive = False
 
-            if is_cycle_finished:
+            if is_cycle_finished and (sub.subscriber_number not in weekly_won_subs):
                 completed_cycle_count += 1
             if is_incentive and has_paid_something:
                 incentive_count += 1
@@ -1307,6 +1318,13 @@ class DrawMixin:
 
         max_late_allowed = self._get_incentive_max_late()
 
+        # جلب أرقام المشتركين الذين فازوا مسبقاً في القرعة الأسبوعية لمنع دخولهم مرة أخرى
+        weekly_winners_sub_numbers = {
+            w[0] for w in self.db.query(db_mod.Winner.subscriber_number).filter(
+                (db_mod.Winner.draw_type.contains("الاسبوعية") | db_mod.Winner.draw_type.contains("الأسبوعية"))
+            ).all() if w[0]
+        }
+
         for sub in disciplined_subs:
             payments = payments_by_sub.get(sub.id, [])
             if not payments:
@@ -1349,14 +1367,9 @@ class DrawMixin:
             if late_count > max_late_allowed:
                 is_incentive = False
             
-            if draw_name == "القرعة الاسبوعية":
-                # استبعاد المشتركين الذين فازوا سابقاً في القرعة الاسبوعية في نفس الدورة
-                already_won = self.db.query(db_mod.Winner).filter(
-                    db_mod.Winner.subscriber_number == sub.subscriber_number,
-                    db_mod.Winner.draw_type.contains(draw_name),
-                    (db_mod.Winner.cycle_number == sub_current_cycle) | (db_mod.Winner.cycle_number == None)
-                ).first()
-                if already_won:
+            if "الاسبوعية" in draw_name or "الأسبوعية" in draw_name:
+                # استبعاد المشتركين الذين فازوا سابقاً في أي قرعة أسبوعية من الدخول في السحوبات التالية
+                if sub.subscriber_number in weekly_winners_sub_numbers:
                     continue
 
                 if is_cycle_finished and is_date_reached:

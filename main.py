@@ -670,6 +670,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 
         # الإشعارات غير المشاهدة فقط لجرس التنبيهات والنافذة المنبثقة (تختفي بمجرد فتحها ورؤيتها)
         sub_winnings = [w for w in all_sub_winnings if not getattr(w, 'is_notif_seen', False)]
+        has_won_weekly = any("اسبوعية" in (w.draw_type or "") or "أسبوعية" in (w.draw_type or "") for w in all_sub_winnings)
         
         # Fetch category info
         category_info = None
@@ -832,7 +833,9 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             "remaining_target": remaining_target,
             "fin_status": fin_status,
             "sub_winnings": sub_winnings,
+            "all_sub_winnings": all_sub_winnings,
             "recent_winnings": recent_winnings,
+            "has_won_weekly": has_won_weekly,
             "announcements": announcements,
             "now": now_time,
             # إحصائيات الانضباط للأيقونات التحفيزية

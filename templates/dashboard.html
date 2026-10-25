@@ -1366,7 +1366,7 @@
         {% set cup_pct          = ((paid_count_total / (total_count_all if total_count_all > 0 else 1)) * 100) | round(0) | int %}
         {# ── الأهليات ── #}
         {% set is_committed      = (fin_status == 'committed') %}
-        {% set is_weekly_elig    = is_committed %}
+        {% set is_weekly_elig    = (is_committed and not has_won_weekly) %}
         {# ── حسابات النجمة التحفيزية (من backend) ── #}
         {# on_time_count, late_count, unpaid_overdue تُحسب في main.py #}
         {% set star_total     = total_count_all %}
@@ -1375,7 +1375,7 @@
         {% set has_any_red    = (late_count + unpaid_overdue) > 0 %}
         {% set is_incentive_elig = (on_time_count > 0 and late_count == 0 and unpaid_overdue == 0 and is_committed) %}
         {# ── تاج القرعة الكبرى ── #}
-        {% set is_grand_elig   = (is_weekly_elig and is_incentive_elig) %}
+        {% set is_grand_elig   = (is_committed and is_incentive_elig) %}
 
         <div class="eligibility-section">
 
@@ -1383,8 +1383,8 @@
                  بطاقة 1 — كأس السحب الأسبوعي
                  يمتلئ بكل قسط مسدد (خضر)
                  ══════════════════════════════════════════ -->
-            <div class="eligibility-card {% if is_weekly_elig %}eligible-weekly{% endif %}" id="elig-card-weekly"
-                 title="{% if is_weekly_elig %}أنت ملتزم ومؤهل للسحب الأسبوعي{% else %}اسدد أقساطك في موعدها للدخول في السحب الأسبوعي{% endif %}">
+            <div class="eligibility-card {% if has_won_weekly or is_weekly_elig %}eligible-weekly{% endif %}" id="elig-card-weekly"
+                 title="{% if has_won_weekly %}تهانينا! لقد فزت مسبقاً في القرعة الأسبوعية وتم استبعادك من السحوبات اللاحقة لإتاحة الفرصة للآخرين{% elif is_weekly_elig %}أنت ملتزم ومؤهل للسحب الأسبوعي{% else %}اسدد أقساطك في موعدها للدخول في السحب الأسبوعي{% endif %}">
 
                 {% if is_weekly_elig %}
                 <span class="sparkle" style="width:5px;height:5px;background:#10b981;top:18%;left:20%;animation-delay:0s;"></span>
@@ -1470,7 +1470,9 @@
                     {{ paid_count_total }} / {{ total_count_all }} قسط مسدد
                 </div>
                 <div class="fill-progress-label">{{ cup_pct }}% من الكأس ممتلئ</div>
-                {% if is_weekly_elig %}
+                {% if has_won_weekly %}
+                <span class="eligibility-badge elig-badge-yes" style="background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);">🏆 فائز بالقرعة الأسبوعية</span>
+                {% elif is_weekly_elig %}
                 <span class="eligibility-badge elig-badge-yes">✅ مؤهل للدخول</span>
                 {% else %}
                 <span class="eligibility-badge elig-badge-no">⏳ غير مؤهل حالياً</span>
@@ -1843,8 +1845,8 @@
                 <button class="tab-btn" onclick="switchTab('installments-tab', this)">سجل الأقساط الأسبوعية</button>
                 <button id="tab-btn-prizes" class="tab-btn" onclick="switchTab('prizes-tab', this)">
                     سجل الجوائز 🏆
-                    {% if sub_winnings %}
-                        <span style="background: rgba(212, 175, 55, 0.25); color: var(--primary); font-size: 0.75rem; font-weight: 800; padding: 2px 7px; border-radius: 12px; border: 1px solid rgba(212, 175, 55, 0.4); margin-right: 4px;">{{ sub_winnings|length }}</span>
+                    {% if all_sub_winnings %}
+                        <span style="background: rgba(212, 175, 55, 0.25); color: var(--primary); font-size: 0.75rem; font-weight: 800; padding: 2px 7px; border-radius: 12px; border: 1px solid rgba(212, 175, 55, 0.4); margin-right: 4px;">{{ all_sub_winnings|length }}</span>
                     {% endif %}
                 </button>
             </div>
@@ -2112,8 +2114,8 @@
                             </h2>
                         </div>
                         <div>
-                            {% if sub_winnings %}
-                                <span class="wf-badge wf-badge-paid" style="font-size: 0.95rem;">فائز بـ {{ sub_winnings|length }} جوائز 🌟</span>
+                            {% if all_sub_winnings %}
+                                <span class="wf-badge wf-badge-paid" style="font-size: 0.95rem;">فائز بـ {{ all_sub_winnings|length }} جوائز 🌟</span>
                             {% else %}
                                 <span class="wf-badge wf-badge-current" style="font-size: 0.95rem;">مؤهل للسحوبات القادمة ⏳</span>
                             {% endif %}
@@ -2127,7 +2129,7 @@
                                 إجمالي الجوائز
                             </div>
                             <div class="wf-stat-val" style="color: var(--primary);">
-                                {{ sub_winnings|length }}
+                                {{ all_sub_winnings|length }}
                             </div>
                             <div class="wf-stat-sub">الجوائز المكتسبة عبر السحوبات</div>
                         </div>
@@ -2137,7 +2139,7 @@
                                 <i data-lucide="check-circle" style="width: 1rem; height: 1rem; color: var(--accent);"></i>
                                 الجوائز المسلمة
                             </div>
-                            {% set received_count = sub_winnings | selectattr('is_received') | list | length %}
+                            {% set received_count = all_sub_winnings | selectattr('is_received') | list | length %}
                             <div class="wf-stat-val" style="color: var(--accent);">
                                 {{ received_count }}
                             </div>
@@ -2150,7 +2152,7 @@
                                 بانتظار التسليم
                             </div>
                             <div class="wf-stat-val" style="color: #f59e0b;">
-                                {{ sub_winnings|length - received_count }}
+                                {{ all_sub_winnings|length - received_count }}
                             </div>
                             <div class="wf-stat-sub">تحت الإجراء لدى الإدارة</div>
                         </div>
@@ -2164,9 +2166,9 @@
                         أرشيف الجوائز المكتسبة في حسابك
                     </h3>
 
-                    {% if sub_winnings %}
+                    {% if all_sub_winnings %}
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem;">
-                        {% for win in sub_winnings %}
+                        {% for win in all_sub_winnings %}
                         <div style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.7) 0%, rgba(10, 45, 18, 0.6) 100%); border: 1px solid rgba(212, 175, 55, 0.35); border-radius: 20px; padding: 1.5rem; position: relative; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5);">
                             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
                                 <div>

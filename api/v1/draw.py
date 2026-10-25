@@ -92,6 +92,14 @@ def get_draw_stats(db: Session = Depends(get_db)):
         subs_by_cat.setdefault(s.category, []).append(s)
 
     max_late_allowed = _get_incentive_max_late(db)
+    weekly_won_subs = {
+        w[0] for w in db.query(db_mod.Winner.subscriber_number).filter(
+            or_(
+                db_mod.Winner.draw_type.contains("الاسبوعية"),
+                db_mod.Winner.draw_type.contains("الأسبوعية")
+            )
+        ).all() if w[0]
+    }
     results = []
 
     for cat in categories:
@@ -138,7 +146,7 @@ def get_draw_stats(db: Session = Depends(get_db)):
             if late_count > max_late_allowed:
                 is_incentive = False
 
-            if is_cycle_finished:
+            if is_cycle_finished and (sub.subscriber_number not in weekly_won_subs):
                 completed_cycle_count += 1
             if is_incentive and has_paid_something:
                 incentive_count += 1
@@ -204,19 +212,18 @@ def get_draw_candidates(
     for p in payments_data:
         payments_by_sub.setdefault(p[0], []).append(p)
 
-    # تسريع فائق: جلب جميع الفائزين بالقرعة الأسبوعية في استعلام واحد مسبق لمنع N+1 Query
-    weekly_won_tuples = set()
-    weekly_won_any_cycle = set()
-    if draw_type == "القرعة الاسبوعية":
-        winners_q = db.query(db_mod.Winner.subscriber_number, db_mod.Winner.cycle_number).filter(
-            db_mod.Winner.draw_type.contains("القرعة الاسبوعية")
+    # استبعاد المشتركين الفائزين بالقرعة الأسبوعية سابقاً لمنع تكرار فوزهم في السحوبات اللاحقة
+    weekly_won_subs = set()
+    if "اسبوعية" in draw_type or "أسبوعية" in draw_type:
+        winners_q = db.query(db_mod.Winner.subscriber_number).filter(
+            or_(
+                db_mod.Winner.draw_type.contains("الاسبوعية"),
+                db_mod.Winner.draw_type.contains("الأسبوعية")
+            )
         ).all()
-        for w_num, w_cyc in winners_q:
+        for (w_num,) in winners_q:
             if w_num:
-                if w_cyc is None:
-                    weekly_won_any_cycle.add(w_num)
-                else:
-                    weekly_won_tuples.add((w_num, w_cyc))
+                weekly_won_subs.add(w_num)
 
     candidates = []
     for sub in disciplined_subs:
@@ -258,8 +265,8 @@ def get_draw_candidates(
             is_incentive = False
 
         is_qualified = False
-        if draw_type == "القرعة الاسبوعية":
-            if (sub.subscriber_number in weekly_won_any_cycle) or ((sub.subscriber_number, sub_cycle) in weekly_won_tuples):
+        if "اسبوعية" in draw_type or "أسبوعية" in draw_type:
+            if sub.subscriber_number in weekly_won_subs:
                 continue
             if is_cycle_finished:
                 is_qualified = True
