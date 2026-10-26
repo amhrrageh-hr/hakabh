@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" id="viewport-meta" content="width=device-width, initial-scale=1.0">
     <title>لوحة التحكم والإدارة - هكبة المليون</title>
     <!-- Google Fonts: Tajawal -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1107,7 +1107,173 @@
             pointer-events: none;
             z-index: 9999;
         }
+
+        /* ── Comprehensive Mobile Optimization (Eliminates Squishing) ── */
+        .table-scroll-hint {
+            display: none;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 8px 12px;
+            background: #f8fafc;
+            border-bottom: 1.5px solid var(--border-soft);
+            font-weight: 700;
+        }
+
+        @media (max-width: 992px) {
+            body {
+                padding: 10px 6px;
+            }
+
+            .dashboard-container,
+            .dashboard-container.is-admin {
+                padding: 18px 12px;
+                border-radius: var(--radius-lg);
+            }
+
+            .header-section {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 16px;
+                padding-bottom: 18px;
+                margin-bottom: 20px;
+            }
+
+            .header-brand-wrap {
+                gap: 12px;
+            }
+
+            .brand-logo-badge {
+                width: 44px;
+                height: 44px;
+                font-size: 1.3rem;
+            }
+
+            .user-info-box h1 {
+                font-size: 1.35rem;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .header-actions {
+                width: 100%;
+                display: flex;
+                justify-content: flex-end;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .header-actions button {
+                flex: 1 1 auto;
+                justify-content: center;
+            }
+
+            /* Un-squish Payment Workspace */
+            .is-admin .payment-workspace {
+                grid-template-columns: 1fr;
+                gap: 18px;
+            }
+
+            .admin-card {
+                padding: 16px 14px;
+                margin-bottom: 18px;
+            }
+
+            .admin-card-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+                padding-bottom: 12px;
+                margin-bottom: 16px;
+            }
+
+            /* Draw Subtabs horizontal smooth scroll */
+            .draw-subtabs {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding-bottom: 8px;
+                scrollbar-width: none;
+                gap: 6px;
+            }
+
+            .draw-subtabs::-webkit-scrollbar {
+                display: none;
+            }
+
+            .draw-subtab-btn {
+                flex-shrink: 0;
+                padding: 7px 14px;
+                font-size: 0.85rem;
+            }
+
+            /* Draw Toolbar on Mobile */
+            .draw-bar-compact {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+                padding: 12px;
+            }
+
+            .draw-bar-filters {
+                width: 100%;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+
+            .draw-bar-filters .compact-select,
+            .draw-bar-filters .compact-input,
+            .draw-bar-filters .btn-compact {
+                width: 100%;
+                height: 42px;
+            }
+
+            /* Draw Cards Un-squish */
+            .draw-cards-grid {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+
+            .cat-stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            /* Cycles Calculation Un-squish */
+            .cycles-calc-box-unified {
+                flex-direction: column;
+                gap: 14px;
+                padding: 14px;
+            }
+
+            .cycles-calc-box-unified > div[style*="width: 1px"] {
+                display: none;
+            }
+
+            /* Messages Stats Un-squish */
+            .msg-stats-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            /* Tables horizontal scroll support */
+            .table-responsive {
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .table-scroll-hint {
+                display: block;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .payment-form-grid {
+                grid-template-columns: 1fr;
+                gap: 14px;
+            }
+        }
     </style>
+
 </head>
 <body>
     <canvas id="confetti-canvas"></canvas>
@@ -1139,6 +1305,9 @@
                 </div>
             </div>
             <div class="header-actions">
+                <button type="button" id="btn-toggle-viewport" onclick="toggleDesktopView()" class="btn-compact btn-outline" style="height: 42px; padding: 0 16px; font-weight: 700; border-radius: 10px;" title="التبديل بين وضع متصفح الهاتف ووضع متصفح الحاسوب">
+                    <span id="viewport-toggle-icon">🖥️</span> <span id="viewport-toggle-text">عرض كالحاسوب</span>
+                </button>
                 <button class="btn-logout" onclick="window.location.href='/logout'">
                     <span>🚪</span> تسجيل الخروج
                 </button>
@@ -1364,6 +1533,7 @@
                         </div>
                     </div>
                     <div class="table-responsive">
+                        <div class="table-scroll-hint">👈 مرّر الجدول أفقياً لرؤية كافة التفاصيل 👉</div>
                         <table>
                             <thead>
                                 <tr>
@@ -1419,6 +1589,7 @@
                 </div>
 
                 <div class="table-responsive">
+                    <div class="table-scroll-hint">👈 مرّر الجدول أفقياً لرؤية كافة التفاصيل 👉</div>
                     <table>
                         <thead>
                             <tr>
@@ -1467,6 +1638,7 @@
                 </div>
 
                 <div class="table-responsive">
+                    <div class="table-scroll-hint">👈 مرّر الجدول أفقياً لرؤية كافة التفاصيل 👉</div>
                     <table>
                         <thead>
                             <tr>
@@ -1716,6 +1888,7 @@
 
                 <!-- Messages Table -->
                 <div class="table-responsive">
+                    <div class="table-scroll-hint">👈 مرّر الجدول أفقياً لرؤية كافة التفاصيل 👉</div>
                     <table id="msg-table">
                         <thead>
                             <tr>
@@ -3322,6 +3495,45 @@
         document.getElementById('msg-modal').addEventListener('click', function(e) {
             if (e.target === this) closeMsgModal();
         });
+
+        // --- Viewport Mode Toggle (Desktop View vs Mobile View) ---
+        function toggleDesktopView() {
+            const meta = document.getElementById('viewport-meta') || document.querySelector('meta[name="viewport"]');
+            const isDesktop = localStorage.getItem('hakbah_desktop_mode') === 'true';
+            const icon = document.getElementById('viewport-toggle-icon');
+            const text = document.getElementById('viewport-toggle-text');
+
+            if (!isDesktop) {
+                // Switch to authentic Desktop view as seen on PC
+                if (meta) meta.setAttribute('content', 'width=1280, initial-scale=0.32, minimum-scale=0.2, maximum-scale=3.0, user-scalable=yes');
+                localStorage.setItem('hakbah_desktop_mode', 'true');
+                if (icon) icon.textContent = '📱';
+                if (text) text.textContent = 'عرض كالهاتف';
+            } else {
+                // Switch back to responsive Mobile view
+                if (meta) meta.setAttribute('content', 'width=device-width, initial-scale=1.0');
+                localStorage.setItem('hakbah_desktop_mode', 'false');
+                if (icon) icon.textContent = '🖥️';
+                if (text) text.textContent = 'عرض كالحاسوب';
+            }
+        }
+
+        // Apply saved preference immediately on page load
+        (function() {
+            try {
+                if (localStorage.getItem('hakbah_desktop_mode') === 'true') {
+                    const meta = document.getElementById('viewport-meta') || document.querySelector('meta[name="viewport"]');
+                    if (meta) meta.setAttribute('content', 'width=1280, initial-scale=0.32, minimum-scale=0.2, maximum-scale=3.0, user-scalable=yes');
+                    document.addEventListener('DOMContentLoaded', function() {
+                        const icon = document.getElementById('viewport-toggle-icon');
+                        const text = document.getElementById('viewport-toggle-text');
+                        if (icon) icon.textContent = '📱';
+                        if (text) text.textContent = 'عرض كالهاتف';
+                    });
+                }
+            } catch(e) {}
+        })();
+
     </script>
     {% endif %}
     <!-- نظام تسجيل الخروج التلقائي عند عدم النشاط -->
