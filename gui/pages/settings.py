@@ -1276,14 +1276,29 @@ class SettingsMixin:
                 base_dir = os.path.dirname(sys.executable)
             else:
                 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            
-            db_path = os.path.join(base_dir, 'hakbah.db')
-            if not os.path.exists(db_path):
-                ModernDialog(self, "خطأ", "قاعدة البيانات غير موجودة").exec()
+
+            default_name = f"hakbah_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            file_path, _ = QFileDialog.getSaveFileName(self, "حفظ النسخة الاحتياطية", default_name, "Database Files (*.db)")
+            if not file_path:
                 return
 
-            file_path, _ = QFileDialog.getSaveFileName(self, "حفظ النسخة الاحتياطية", "", "Database Files (*.db)")
-            if not file_path:
+            # إذا كان التطبيق متصلاً بقاعدة بيانات PostgreSQL على السيرفر
+            db_mode = os.getenv("DB_MODE", "").lower().strip()
+            is_postgres = db_mod.DATABASE_URL.startswith("postgresql") or db_mod.DATABASE_URL.startswith("postgres") or db_mode == "server"
+
+            if is_postgres:
+                from scripts.backup_postgres import backup_postgres_to_local
+                success, msg = backup_postgres_to_local(custom_dest_file=file_path)
+                if success:
+                    ModernDialog(self, "نجاح", "تم إنشاء النسخة الاحتياطية بنجاح من قاعدة بيانات السيرفر السحابية وحفظها محلياً.").exec()
+                else:
+                    ModernDialog(self, "خطأ", f"تعذر إتمام النسخ الاحتياطي من السيرفر:\n{msg}").exec()
+                return
+
+            # في حالة قاعدة البيانات المحلية SQLite
+            db_path = os.path.join(base_dir, 'hakbah.db')
+            if not os.path.exists(db_path):
+                ModernDialog(self, "خطأ", "قاعدة البيانات المحلية غير موجودة").exec()
                 return
                 
             # استخدام مكتبة sqlite3 لعمل نسخة احتياطية آمنة (متوافقة مع وضع WAL)
@@ -1294,7 +1309,7 @@ class SettingsMixin:
             dest.close()
             source.close()
             
-            ModernDialog(self, "نجاح", "تم إنشاء النسخة الاحتياطية بنجاح").exec()
+            ModernDialog(self, "نجاح", "تم إنشاء النسخة الاحتياطية المحلية بنجاح").exec()
         except Exception as e:
             ModernDialog(self, "خطأ", f"حدث خطأ أثناء إنشاء النسخة الاحتياطية: {e}").exec()
 
