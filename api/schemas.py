@@ -30,6 +30,9 @@ class SubscriberOut(SubscriberBase):
     fin_status: Optional[str] = None
     paid_count: Optional[int] = 0
     total_paid: Optional[float] = 0.0
+    visit_count: Optional[int] = 0
+    last_seen: Optional[datetime.datetime] = None
+    is_online: Optional[bool] = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -95,6 +98,9 @@ class DashboardStatsOut(BaseModel):
     total_subscribers: int
     category_counts: Dict[str, int]
     registration_open: bool
+    online_count: Optional[int] = 0
+    total_visits: Optional[int] = 0
+    visiting_subscribers_count: Optional[int] = 0
 
 class CapitalCategoryItem(BaseModel):
     name: str

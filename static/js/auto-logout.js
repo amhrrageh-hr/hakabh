@@ -94,4 +94,15 @@
 
     // فحص دوري كل ثانيتين للتأكد من عدم تجاوز المهلة
     setInterval(checkInactivity, 2000);
+
+    // إرسال نبضات النشاط كل 60 ثانية للحفاظ على حالة "متصل الآن" وتحديث آخر ظهور
+    function sendHeartbeat() {
+        if (isLoggingOut) return;
+        try {
+            fetch('/api/heartbeat', { method: 'POST', keepalive: true }).catch(function(){});
+        } catch (e) {}
+    }
+    // إرسال نبضة أولية بعد ثانيتين ثم دورياً كل 60 ثانية
+    setTimeout(sendHeartbeat, 2000);
+    setInterval(sendHeartbeat, 60000);
 })();

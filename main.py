@@ -95,6 +95,25 @@ app = FastAPI(title="هكبة المليون - Million Hakbah", lifespan=lifespa
 # مهلة عدم النشاط لتسجيل الخروج التلقائي (5 دقائق)
 SESSION_IDLE_TIMEOUT_SECONDS = 5 * 60
 
+# كاش تتبع المشتركين المتصلين في الذاكرة لتسريع الاستجابة الفورية
+_online_subscribers: dict = {}
+
+def log_site_visit(db: Session, page: str = "/", sub_id: int = None, request: Request = None):
+    """تسجيل حركة زيارة إلى الموقع أو صفحة المشترك"""
+    try:
+        ip = None
+        ua = None
+        if request:
+            ip = request.headers.get("x-forwarded-for") or (request.client.host if request.client else None)
+            if ip and "," in ip:
+                ip = ip.split(",")[0].strip()
+            ua = request.headers.get("user-agent", "")[:250]
+        v = db_mod.VisitLog(subscriber_id=sub_id, ip_address=ip, page=page, user_agent=ua)
+        db.add(v)
+        db.commit()
+    except Exception:
+        db.rollback()
+
 class SessionInactivityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # التحقق من وجود جلسة لمستخدم مسجل (مشترك أو موظف)
@@ -116,6 +135,9 @@ class SessionInactivityMiddleware(BaseHTTPMiddleware):
                 # تحديث وقت آخر نشاط لجميع الطلبات ما عدا طلبات الفحص الخلفية التلقائية (polling)
                 if not path.startswith("/api/check-status"):
                     session["last_activity"] = now
+                    sub_id = session.get("sub_id")
+                    if sub_id:
+                        _online_subscribers[int(sub_id)] = float(now)
 
         return await call_next(request)
 
@@ -240,6 +262,9 @@ async def read_registration(request: Request, db: Session = Depends(get_db)):
     categories = cat_query.all()
     if not categories:
         categories = db.query(db_mod.Category).filter(db_mod.Category.is_active == True).all()
+
+    # تسجيل زيارة الموقع
+    log_site_visit(db, page="/", request=request)
 
     return templates.TemplateResponse(request=request, name="registration.html", context={
         "request": request, 
@@ -459,8 +484,17 @@ async def login_auth(
             return JSONResponse(status_code=401, content={"message": "بيانات الدخول غير صحيحة"})
 
         # تخزين معرف المشترك في الجلسة ووقت آخر نشاط
-        request.session["sub_id"] = int(sub.id)
-        request.session["last_activity"] = int(time.time())
+        sub_id_int = int(sub.id)
+        request.session["sub_id"] = sub_id_int
+        now_ts = int(time.time())
+        request.session["last_activity"] = now_ts
+        _online_subscribers[sub_id_int] = float(now_ts)
+
+        # تحديث عدد الزيارات وتاريخ آخر ظهور وتسجيل الزيارة
+        sub.visit_count = (sub.visit_count or 0) + 1
+        sub.last_seen = datetime.datetime.now()
+        db.commit()
+        log_site_visit(db, page="/login", sub_id=sub_id_int, request=request)
 
         # إرجاع حالة المشترك لتوجيهه للصفحة المناسبة
         return JSONResponse(content={"success": True, "status": sub.status or "pending"})
@@ -606,6 +640,12 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         if not sub:
             request.session.clear()
             return RedirectResponse(url="/login")
+
+        # تحديث وقت آخر ظهور وحالة الاتصال وتسجيل الزيارة
+        sub.last_seen = datetime.datetime.now()
+        _online_subscribers[int(sub.id)] = time.time()
+        db.commit()
+        log_site_visit(db, page="/million-hakbah", sub_id=int(sub.id), request=request)
 
         # إذا لم يتم قبول المشترك بعد، أعد توجيهه لصفحة الانتظار
         if (sub.status or "pending") == "pending":
@@ -1658,6 +1698,80 @@ async def check_subscriber_status(request: Request, db: Session = Depends(get_db
         return JSONResponse(status_code=404, content={"status": "not_found"})
     return JSONResponse(content={"status": sub.status or "pending", "name": sub.name})
 
+@app.api_route("/api/heartbeat", methods=["GET", "POST"])
+async def user_heartbeat(request: Request, db: Session = Depends(get_db)):
+    """تحديث نبضات اتصال المستخدم (مشترك أو موظف) للحفاظ على حالة المتصل الآن"""
+    sub_id = request.session.get("sub_id")
+    now_ts = time.time()
+    if sub_id:
+        sub_id_int = int(sub_id)
+        _online_subscribers[sub_id_int] = now_ts
+        request.session["last_activity"] = int(now_ts)
+        try:
+            db.query(db_mod.Subscriber).filter(db_mod.Subscriber.id == sub_id_int).update({
+                "last_seen": datetime.datetime.now()
+            }, synchronize_session=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+        return JSONResponse({"ok": True, "type": "subscriber", "id": sub_id_int})
+    staff_id = request.session.get("staff_id")
+    if staff_id:
+        request.session["last_activity"] = int(now_ts)
+        return JSONResponse({"ok": True, "type": "staff", "id": int(staff_id)})
+    return JSONResponse({"ok": False, "type": "guest"})
+
+@app.get("/api/stats/visitors")
+async def get_site_visitors_stats(request: Request, db: Session = Depends(get_db)):
+    """إحصائيات الزيارات والمشتركين المتصلين حالياً للموظفين والإدارة"""
+    staff_id = request.session.get("staff_id")
+    api_key_header = request.headers.get("x-api-key")
+    admin_key = os.getenv("ADMIN_API_KEY", "hakbah_api_sec_994a3bc1e8204d88e07a216f49b")
+    if not staff_id and api_key_header != admin_key:
+        return JSONResponse(status_code=403, content={"error": "غير مصرح"})
+
+    five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+    
+    online_subs = db.query(db_mod.Subscriber).filter(
+        db_mod.Subscriber.last_seen >= five_min_ago
+    ).order_by(db_mod.Subscriber.last_seen.desc()).all()
+    
+    now = datetime.datetime.now()
+    online_list = []
+    for s in online_subs:
+        diff_sec = (now - s.last_seen).total_seconds() if s.last_seen else 0
+        mins = max(0, int(diff_sec // 60))
+        online_list.append({
+            "id": s.id,
+            "name": s.name,
+            "phone": s.phone,
+            "subscriber_number": s.subscriber_number or "",
+            "category": s.category or "",
+            "last_seen": s.last_seen.strftime("%Y-%m-%d %H:%M:%S") if s.last_seen else "",
+            "minutes_ago": mins,
+            "visit_count": s.visit_count or 0
+        })
+
+    total_sub_visits = db.query(func.sum(db_mod.Subscriber.visit_count)).scalar() or 0
+    visiting_subs = db.query(func.count(db_mod.Subscriber.id)).filter(
+        or_(db_mod.Subscriber.visit_count > 0, db_mod.Subscriber.last_seen != None)
+    ).scalar() or 0
+
+    total_site_visits = db.query(func.count(db_mod.VisitLog.id)).scalar() or 0
+    today_start = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
+    today_visits = db.query(func.count(db_mod.VisitLog.id)).filter(
+        db_mod.VisitLog.created_at >= today_start
+    ).scalar() or 0
+
+    return JSONResponse(content={
+        "online_count": len(online_subs),
+        "online_subscribers": online_list,
+        "total_subscriber_visits": int(total_sub_visits),
+        "visiting_subscribers_count": int(visiting_subs),
+        "total_site_visits": int(total_site_visits),
+        "today_site_visits": int(today_visits)
+    })
+
 
 # =========================================================================
 # API: إدارة رسائل وتوعية الموقع (Manager Only)
@@ -1820,6 +1934,9 @@ async def delete_message(msg_id: int, request: Request, db: Session = Depends(ge
 
 @app.get("/logout")
 async def logout(request: Request):
+    sub_id = request.session.get("sub_id")
+    if sub_id and int(sub_id) in _online_subscribers:
+        _online_subscribers.pop(int(sub_id), None)
     request.session.clear()
     timeout = request.query_params.get("timeout")
     if timeout:

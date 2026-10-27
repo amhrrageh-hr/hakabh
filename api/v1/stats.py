@@ -2,7 +2,8 @@ from typing import List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
+import datetime
 import database as db_mod
 from api.auth import get_db, verify_admin_api_key
 from api.schemas import DashboardStatsOut, NotificationOut, CategoryOut, CategoryUpdate
@@ -30,11 +31,74 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     reg_setting = db.query(db_mod.Setting).filter(db_mod.Setting.key == "registration_open").first()
     reg_open = (reg_setting.value == "true") if reg_setting else False
 
+    # 4. إحصائيات المتصلين والزيارات
+    five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+    online_count = db.query(func.count(db_mod.Subscriber.id)).filter(
+        db_mod.Subscriber.last_seen >= five_min_ago
+    ).scalar() or 0
+
+    sub_visits = db.query(func.sum(db_mod.Subscriber.visit_count)).scalar() or 0
+    site_visits = db.query(func.count(db_mod.VisitLog.id)).scalar() or 0
+    total_visits = int(sub_visits) + int(site_visits)
+
+    visiting_subs_count = db.query(func.count(db_mod.Subscriber.id)).filter(
+        or_(db_mod.Subscriber.visit_count > 0, db_mod.Subscriber.last_seen != None)
+    ).scalar() or 0
+
     return DashboardStatsOut(
         total_subscribers=total_subs,
         category_counts=cat_counts,
-        registration_open=reg_open
+        registration_open=reg_open,
+        online_count=online_count,
+        total_visits=total_visits,
+        visiting_subscribers_count=visiting_subs_count
     )
+
+@router.get("/visitors")
+def get_visitors_stats(db: Session = Depends(get_db)):
+    """جلب إحصائيات مفصلة للزيارات والمشتركين المتصلين حالياً"""
+    five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+    
+    online_subs = db.query(db_mod.Subscriber).filter(
+        db_mod.Subscriber.last_seen >= five_min_ago
+    ).order_by(db_mod.Subscriber.last_seen.desc()).all()
+    
+    online_list = []
+    now = datetime.datetime.now()
+    for s in online_subs:
+        diff_sec = (now - s.last_seen).total_seconds() if s.last_seen else 0
+        mins = max(0, int(diff_sec // 60))
+        online_list.append({
+            "id": s.id,
+            "name": s.name,
+            "phone": s.phone,
+            "subscriber_number": s.subscriber_number or "",
+            "category": s.category or "",
+            "last_seen": s.last_seen.strftime("%Y-%m-%d %H:%M:%S") if s.last_seen else "",
+            "minutes_ago": mins,
+            "visit_count": s.visit_count or 0
+        })
+        
+    total_sub_visits = db.query(func.sum(db_mod.Subscriber.visit_count)).scalar() or 0
+    visiting_subs = db.query(func.count(db_mod.Subscriber.id)).filter(
+        or_(db_mod.Subscriber.visit_count > 0, db_mod.Subscriber.last_seen != None)
+    ).scalar() or 0
+    
+    total_site_visits = db.query(func.count(db_mod.VisitLog.id)).scalar() or 0
+    
+    today_start = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
+    today_visits = db.query(func.count(db_mod.VisitLog.id)).filter(
+        db_mod.VisitLog.created_at >= today_start
+    ).scalar() or 0
+    
+    return {
+        "online_count": len(online_subs),
+        "online_subscribers": online_list,
+        "total_subscriber_visits": int(total_sub_visits),
+        "visiting_subscribers_count": int(visiting_subs),
+        "total_site_visits": int(total_site_visits),
+        "today_site_visits": int(today_visits)
+    }
 
 @router.get("/notifications", response_model=NotificationsSummaryOut)
 def get_admin_notifications(

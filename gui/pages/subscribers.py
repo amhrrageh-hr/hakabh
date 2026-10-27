@@ -377,6 +377,31 @@ class SubscribersMixin:
             border-radius: 10px;
         """)
         header_lay.addWidget(cat_pill)
+
+        # Online Status Badge
+        is_sub_online = False
+        last_s = getattr(s, 'last_seen', None)
+        if last_s:
+            try:
+                diff_sec = (datetime.datetime.now() - last_s).total_seconds()
+                if diff_sec <= 300:
+                    is_sub_online = True
+            except Exception:
+                pass
+
+        if is_sub_online:
+            online_badge = QLabel("🟢 متصل")
+            online_badge.setFont(QFont("Tajawal", 8, QFont.Weight.Bold))
+            online_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            online_badge.setStyleSheet("""
+                background: #ecfdf5;
+                color: #059669;
+                padding: 4px 8px;
+                border-radius: 10px;
+                border: 1px solid #a7f3d0;
+            """)
+            online_badge.setToolTip("المشترك متصل بالموقع حالياً")
+            header_lay.addWidget(online_badge)
         
         # Status Pill
         if s.status == "excluded":
@@ -504,6 +529,38 @@ class SubscribersMixin:
             lbl_timer_val.setFont(QFont("Tajawal", 10, QFont.Weight.Bold))
             lbl_timer_val.setStyleSheet(f"color: {timer_color};")
             stats_lay.addWidget(lbl_timer_val, 3, 1)
+        else:
+            lbl_vis_title = QLabel("الزيارات:")
+            lbl_vis_title.setFont(QFont("Tajawal", 9))
+            lbl_vis_title.setStyleSheet("color: #94a3b8;")
+            stats_lay.addWidget(lbl_vis_title, 3, 0)
+
+            v_count = getattr(s, 'visit_count', 0) or 0
+            last_s = getattr(s, 'last_seen', None)
+            if last_s:
+                try:
+                    diff_sec = (datetime.datetime.now() - last_s).total_seconds()
+                    mins = max(0, int(diff_sec // 60))
+                    if mins < 5:
+                        v_str = f"{v_count} (متصل الآن 🟢)"
+                        v_color = "#10b981"
+                    elif mins < 60:
+                        v_str = f"{v_count} (منذ {mins} د)"
+                        v_color = "#0284c7"
+                    else:
+                        v_str = f"{v_count} ({last_s.strftime('%m/%d %H:%M')})"
+                        v_color = "#475569"
+                except Exception:
+                    v_str = f"{v_count}"
+                    v_color = "#475569"
+            else:
+                v_str = f"{v_count} (لم يزر الموقع بعد)"
+                v_color = "#94a3b8"
+
+            lbl_vis_val = QLabel(v_str)
+            lbl_vis_val.setFont(QFont("Tajawal", 9, QFont.Weight.Bold))
+            lbl_vis_val.setStyleSheet(f"color: {v_color};")
+            stats_lay.addWidget(lbl_vis_val, 3, 1)
         
         layout.addLayout(stats_lay)
         

@@ -144,9 +144,17 @@ class DashboardMixin:
                 w.setParent(None)
 
         total_subscribers = data.get("total_subscribers", 0)
+        online_count = data.get("online_count", 0)
+        total_visits = data.get("total_visits", 0)
+        visiting_subs = data.get("visiting_subscribers_count", 0)
         cat_counts = data.get("category_counts", {})
         
-        items = [("إجمالي المشتركين", total_subscribers, "#2e7d32")]
+        items = [
+            ("إجمالي المشتركين", total_subscribers, "#2e7d32", None),
+            ("المتصلون الآن 🟢", online_count, "#10b981", self.show_online_subscribers_dialog),
+            ("إجمالي الزيارات 👁️", total_visits, "#0284c7", None),
+            ("مشتركون زاروا الموقع 👥", visiting_subs, "#8b5cf6", None)
+        ]
         colors = ["#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444"]
         
         cats = [c for c in cat_counts.keys() if c != "غير محدد"]
@@ -158,15 +166,19 @@ class DashboardMixin:
 
         for i, cat_name in enumerate(cats):
             count = cat_counts.get(cat_name, 0)
-            items.append((cat_name, count, colors[i % len(colors)]))
+            items.append((cat_name, count, colors[i % len(colors)], None))
 
-        for title, value, color in items:
+        for title, value, color, click_callback in items:
             card = QFrame(); card.setObjectName("StatCard"); card.setMinimumHeight(120)
             vbox = QVBoxLayout(card); vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
             t_lbl = QLabel(title); t_lbl.setObjectName("StatTitle"); t_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vbox.addWidget(t_lbl)
             v_lbl = QLabel(str(value)); v_lbl.setObjectName("StatValue"); v_lbl.setStyleSheet(f"color: {color};"); v_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vbox.addWidget(v_lbl)
+            if click_callback:
+                card.setCursor(Qt.CursorShape.PointingHandCursor)
+                card.mousePressEvent = lambda e, cb=click_callback: cb()
+                card.setToolTip("انقر هنا لعرض قائمة المتصلين حالياً")
             self.stats_grid.addWidget(card)
 
     def _render_dashboard_stats_db(self):
@@ -179,23 +191,116 @@ class DashboardMixin:
             if w:
                 w.setParent(None)
         
+        five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+        online_count = self.db.query(func.count(db_mod.Subscriber.id)).filter(
+            db_mod.Subscriber.last_seen >= five_min_ago
+        ).scalar() or 0
+
+        sub_visits = self.db.query(func.sum(db_mod.Subscriber.visit_count)).scalar() or 0
+        site_visits = self.db.query(func.count(db_mod.VisitLog.id)).scalar() or 0
+        total_visits = int(sub_visits) + int(site_visits)
+
+        visiting_subs = self.db.query(func.count(db_mod.Subscriber.id)).filter(
+            func.coalesce(db_mod.Subscriber.visit_count, 0) > 0
+        ).scalar() or 0
+
         cat_counts = dict(
             self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id))
             .group_by(db_mod.Subscriber.category)
             .all()
         )
         total_subscribers = self.db.query(db_mod.Subscriber).count()
-        items = [("إجمالي المشتركين", total_subscribers, "#2e7d32")]
+        items = [
+            ("إجمالي المشتركين", total_subscribers, "#2e7d32", None),
+            ("المتصلون الآن 🟢", online_count, "#10b981", self.show_online_subscribers_dialog),
+            ("إجمالي الزيارات 👁️", total_visits, "#0284c7", None),
+            ("مشتركون زاروا الموقع 👥", visiting_subs, "#8b5cf6", None)
+        ]
         colors = ["#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444"]
         for i, cat in enumerate(self.db.query(db_mod.Category).all()):
             count = cat_counts.get(cat.name, 0)
-            items.append((cat.name, count, colors[i % len(colors)]))
+            items.append((cat.name, count, colors[i % len(colors)], None))
 
-        for title, value, color in items:
+        for title, value, color, click_callback in items:
             card = QFrame(); card.setObjectName("StatCard"); card.setMinimumHeight(120)
             vbox = QVBoxLayout(card); vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
             t_lbl = QLabel(title); t_lbl.setObjectName("StatTitle"); t_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vbox.addWidget(t_lbl)
             v_lbl = QLabel(str(value)); v_lbl.setObjectName("StatValue"); v_lbl.setStyleSheet(f"color: {color};"); v_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vbox.addWidget(v_lbl)
+            if click_callback:
+                card.setCursor(Qt.CursorShape.PointingHandCursor)
+                card.mousePressEvent = lambda e, cb=click_callback: cb()
+                card.setToolTip("انقر هنا لعرض قائمة المتصلين حالياً")
             self.stats_grid.addWidget(card)
+
+    def show_online_subscribers_dialog(self):
+        """نافذة منبثقة تفاعلية لعرض المشتركين المتصلين بالموقع في هذه اللحظة"""
+        try:
+            self.db.expire_all()
+        except Exception:
+            pass
+
+        five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+        online_subs = self.db.query(db_mod.Subscriber).filter(
+            db_mod.Subscriber.last_seen >= five_min_ago
+        ).order_by(db_mod.Subscriber.last_seen.desc()).all()
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("المشتركون المتصلون بالموقع حالياً 🟢")
+        dlg.resize(720, 480)
+        dlg.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(25, 25, 25, 25)
+        layout.setSpacing(18)
+
+        title = QLabel(f"المشتركون المتصلون الآن ({len(online_subs)})")
+        title.setFont(QFont("Tajawal", 13, QFont.Weight.Bold))
+        title.setStyleSheet("color: #059669;")
+        layout.addWidget(title)
+
+        if not online_subs:
+            empty_lbl = QLabel("لا يوجد مشتركون متصلون بالموقع في هذه اللحظة.")
+            empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_lbl.setStyleSheet("color: #64748b; font-size: 15px; padding: 40px;")
+            layout.addWidget(empty_lbl)
+        else:
+            table = QTableWidget()
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(["الاسم", "رقم الحساب", "رقم الهاتف", "الفئة", "آخر نشاط"])
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            table.setRowCount(len(online_subs))
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+
+            now = datetime.datetime.now()
+            for row, s in enumerate(online_subs):
+                diff_sec = (now - s.last_seen).total_seconds() if s.last_seen else 0
+                mins = max(0, int(diff_sec // 60))
+                time_str = f"منذ {mins} دقيقة" if mins > 0 else "الآن"
+
+                name_item = QTableWidgetItem(f"🟢 {s.name}")
+                name_item.setFont(QFont("Tajawal", 10, QFont.Weight.Bold))
+                num_item = QTableWidgetItem(str(s.subscriber_number or "-"))
+                phone_item = QTableWidgetItem(str(s.phone or "-"))
+                cat_item = QTableWidgetItem(str(s.category or "-"))
+                time_item = QTableWidgetItem(time_str)
+
+                for item in [name_item, num_item, phone_item, cat_item, time_item]:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                table.setItem(row, 0, name_item)
+                table.setItem(row, 1, num_item)
+                table.setItem(row, 2, phone_item)
+                table.setItem(row, 3, cat_item)
+                table.setItem(row, 4, time_item)
+
+            layout.addWidget(table)
+
+        btn_close = QPushButton("إغلاق")
+        btn_close.setObjectName("PrimaryBtn")
+        btn_close.setFixedHeight(40)
+        btn_close.clicked.connect(dlg.accept)
+        layout.addWidget(btn_close)
+
+        dlg.exec()

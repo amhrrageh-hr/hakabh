@@ -78,6 +78,10 @@ class HakbahAPIClient:
         """جلب إحصائيات الصفحة الرئيسية"""
         return self._request("GET", "stats/dashboard")
 
+    def get_visitors_stats(self) -> Dict[str, Any]:
+        """جلب إحصائيات الزيارات والمشتركين المتصلين حالياً"""
+        return self._request("GET", "stats/visitors")
+
     def get_notifications(self, unread_only: bool = False, limit: int = 50) -> Dict[str, Any]:
         """جلب إشعارات المشرفين"""
         return self._request("GET", "stats/notifications", params={"unread_only": unread_only, "limit": limit})

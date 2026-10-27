@@ -130,6 +130,8 @@ class Subscriber(Base):
     password = Column(String, nullable=True)
     exclusion_reason = Column(String, nullable=True)   # سبب الاستبعاد
     excluded_at = Column(DateTime, nullable=True)       # تاريخ الاستبعاد
+    visit_count = Column(Integer, default=0)           # عدد زيارات المشترك للوحة التحكم
+    last_seen = Column(DateTime, nullable=True)        # وقت آخر ظهور / نشاط للمشترك
     created_at = Column(DateTime, server_default=func.now())
 
     season = relationship("Season", foreign_keys=[season_id], uselist=False)
@@ -311,6 +313,16 @@ class SubscriberMessage(Base):
     target_category = Column(String, default="all")         # الفئة المستهدفة ("all" أو فئة محددة)
     created_at = Column(DateTime, server_default=func.now())
 
+class VisitLog(Base):
+    __tablename__ = "visit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subscriber_id = Column(Integer, ForeignKey("subscribers.id"), nullable=True, index=True)
+    ip_address = Column(String, nullable=True)
+    page = Column(String, default="/")
+    user_agent = Column(String, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+
 @event.listens_for(Session, "before_flush")
 def accept_subscriber_on_payment(session, flush_context, instances):
     for obj in session.new.union(session.dirty):
@@ -325,7 +337,7 @@ def init_db(force_migration=False):
         # إذا تم التحقق من الجداول مسبقاً، تخطي الفحص البطيء لتسريع فتح البرنامج
         if not force_migration:
             try:
-                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v3_seasons").first()
+                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v4_visits").first()
                 if mig_setting and mig_setting.value == "true":
                     return
             except Exception:
@@ -398,6 +410,12 @@ def init_db(force_migration=False):
         if 'season_id' not in sub_columns:
             print("جاري تحديث قاعدة البيانات لإضافة حقل معرف الموسم في جدول المشتركين...")
             db.execute(text("ALTER TABLE subscribers ADD COLUMN season_id INTEGER REFERENCES seasons(id)"))
+        if 'visit_count' not in sub_columns:
+            print("جاري تحديث قاعدة البيانات لإضافة حقل عدد الزيارات للمشتركين...")
+            db.execute(text("ALTER TABLE subscribers ADD COLUMN visit_count INTEGER DEFAULT 0"))
+        if 'last_seen' not in sub_columns:
+            print("جاري تحديث قاعدة البيانات لإضافة حقل آخر ظهور للمشتركين...")
+            db.execute(text(f"ALTER TABLE subscribers ADD COLUMN last_seen {datetime_type}"))
 
         # Ensure `role` exists on staff table regardless of payments changes
         try:
@@ -510,9 +528,9 @@ def init_db(force_migration=False):
             db.add(Setting(key="registration_open", value="true"))
 
         # حفظ علامة اكتمال تهيئة الجداول لتسريع الفتح اللاحق
-        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v3_seasons").first()
+        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v4_visits").first()
         if not mig_setting:
-            db.add(Setting(key="schema_migrated_v3_seasons", value="true"))
+            db.add(Setting(key="schema_migrated_v4_visits", value="true"))
         else:
             mig_setting.value = "true"
 
