@@ -748,7 +748,7 @@
         // ==============================================
         let categoriesCyclesData = [];
         try {
-            categoriesCyclesData = JSON.parse('{{ categories_json | safe }}');
+            categoriesCyclesData = window.CATEGORIES_CYCLES_DATA || [];
         } catch (e) {
             categoriesCyclesData = [];
         }

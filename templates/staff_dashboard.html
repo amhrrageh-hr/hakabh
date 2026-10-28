@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
     <link rel="manifest" href="/static/manifest.json">
     <script src="/static/pwa-register.js" defer></script>
-    <link rel="stylesheet" href="/static/css/staff_dashboard.css">
+    <link rel="stylesheet" href="/static/css/staff_dashboard.css?v=2.2">
 
 </head>
 <body>
@@ -843,10 +843,14 @@
         {% endif %}
     </div>
 
-<script src="/static/js/staff_core.js"></script>
+    <script src="/static/js/staff_core.js?v=2.2"></script>
 
     {% if staff.role == 'مدير' %}
-    <script src="/static/js/staff_draw.js"></script>
+    <script>
+        window.CATEGORIES_CYCLES_DATA = {{ categories_json | safe if categories_json else '[]' }};
+        window.SUBSCRIBERS_DATA = {{ subscribers_json | safe if subscribers_json else '{}' }};
+    </script>
+    <script src="/static/js/staff_draw.js?v=2.2"></script>
     {% endif %}
     <!-- نظام تسجيل الخروج التلقائي عند عدم النشاط -->
     <script src="/static/js/auto-logout.js?v=2.2"></script>
