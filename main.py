@@ -1831,6 +1831,41 @@ async def get_site_visitors_stats(request: Request, db: Session = Depends(get_db
     })
 
 
+@app.post("/api/admin/generate-daily-payments")
+async def trigger_daily_payments(request: Request, db: Session = Depends(get_db)):
+    """
+    نقطة نهاية مخصصة للمدير فقط لتشغيل توليد الأقساط اليومية يدوياً دون انتظار الدورة التلقائية.
+    مفيدة عند إضافة فئات جديدة أو تعديل إعدادات الأقساط.
+    """
+    staff_id = request.session.get("staff_id")
+    if not staff_id:
+        return JSONResponse(status_code=403, content={"error": "غير مصرح"})
+    staff = db.query(db_mod.Staff).filter(db_mod.Staff.id == staff_id).first()
+    if not staff or staff.role != "مدير":
+        return JSONResponse(status_code=403, content={"error": "هذه الوظيفة متاحة للمدير فقط"})
+
+    try:
+        accepted_subs = db.query(db_mod.Subscriber).filter(
+            db_mod.Subscriber.status == "accepted",
+            db_mod.Subscriber.category != None
+        ).all()
+        failed = 0
+        for sub in accepted_subs:
+            try:
+                _ensure_daily_payments(db, sub)
+            except Exception:
+                failed += 1
+        return JSONResponse(content={
+            "success": True,
+            "processed": len(accepted_subs),
+            "failed": failed,
+            "message": f"تم توليد الأقساط لـ {len(accepted_subs) - failed} مشترك بنجاح."
+        })
+    except Exception as e:
+        logger.error(f"[AdminTrigger] خطأ في توليد الأقساط: {e}")
+        return JSONResponse(status_code=500, content={"error": "حدث خطأ أثناء التوليد"})
+
+
 # =========================================================================
 # API: إدارة رسائل وتوعية الموقع (Manager Only)
 # =========================================================================
