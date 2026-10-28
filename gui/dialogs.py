@@ -1323,18 +1323,31 @@ class BatchPaymentDialog(QDialog):
         self.cb_cycle.addItems([str(i) for i in range(1, max_c + 1)])
         
         subs = query.order_by(db_mod.Subscriber.name).all()
-        for s in subs:
-            # حساب القسط الحالي المستحق لكل مشترك
-            next_unpaid = self.db.query(db_mod.Payment).filter(
-                db_mod.Payment.subscriber_id == s.id,
+        sub_ids = [s.id for s in subs]
+        next_unpaid_map = {}
+        if sub_ids:
+            unpaid_payments = self.db.query(
+                db_mod.Payment.subscriber_id,
+                db_mod.Payment.cycle_number,
+                db_mod.Payment.installment_number
+            ).filter(
+                db_mod.Payment.subscriber_id.in_(sub_ids),
                 db_mod.Payment.is_paid == False
-            ).order_by(db_mod.Payment.cycle_number.asc(), db_mod.Payment.installment_number.asc()).first()
-            
-            if next_unpaid:
-                status_hint = f" | القسط التالي: د{next_unpaid.cycle_number}/ق{next_unpaid.installment_number}"
+            ).order_by(
+                db_mod.Payment.subscriber_id,
+                db_mod.Payment.cycle_number.asc(),
+                db_mod.Payment.installment_number.asc()
+            ).all()
+            for sub_id, c_num, i_num in unpaid_payments:
+                if sub_id not in next_unpaid_map:
+                    next_unpaid_map[sub_id] = (c_num, i_num)
+
+        for s in subs:
+            if s.id in next_unpaid_map:
+                c_num, i_num = next_unpaid_map[s.id]
+                status_hint = f" | القسط التالي: د{c_num}/ق{i_num}"
             else:
                 status_hint = " | ✅ مكتمل"
-            
             item = QListWidgetItem(f"{s.name} ({s.subscriber_number or s.phone}){status_hint}")
             item.setData(Qt.ItemDataRole.UserRole, s.id)
             item.setCheckState(Qt.CheckState.Unchecked)

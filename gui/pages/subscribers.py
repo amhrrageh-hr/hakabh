@@ -691,7 +691,11 @@ class SubscribersMixin:
             try:
                 sub = self.db.get(db_mod.Subscriber, sid)
                 if sub:
-                    # 1. حذف جميع الأقساط المرتبطة بالمشترك أولاً
+                    # 0. حذف أو فك ارتباط سجلات الزيارات التابعة للمشترك أولاً
+                    if hasattr(db_mod, 'VisitLog'):
+                        self.db.query(db_mod.VisitLog).filter(db_mod.VisitLog.subscriber_id == sid).delete(synchronize_session=False)
+
+                    # 1. حذف جميع الأقساط المرتبطة بالمشترك
                     self.db.query(db_mod.Payment).filter(db_mod.Payment.subscriber_id == sid).delete(synchronize_session=False)
                     
                     # 2. تحرير الرقم المحجوز (إن وُجد)
