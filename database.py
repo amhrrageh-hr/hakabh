@@ -21,6 +21,10 @@ except ImportError:
 
 from sqlalchemy.engine import Engine
 
+def get_utc_now() -> datetime.datetime:
+    """إرجاع التوقيت العالمي الموحد UTC (بدون منطقة زمنية للتوافق التام مع قواعد البيانات)"""
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
 def get_local_database_url():
     if getattr(sys, 'frozen', False):
         base_dir = os.path.dirname(sys.executable)

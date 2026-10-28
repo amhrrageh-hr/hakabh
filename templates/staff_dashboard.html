@@ -1373,7 +1373,12 @@
                         <h3 style="margin:0;font-size:1.15rem;font-weight:800;color:#059669;">🟢 المشتركون المتصلون الآن</h3>
                         <p style="margin:4px 0 0;font-size:0.83rem;color:#64748b;">يتجدد تلقائياً كل 30 ثانية</p>
                     </div>
-                    <button onclick="document.getElementById('online-subs-modal').style.display='none'" style="background:#f1f5f9;border:none;border-radius:50%;width:36px;height:36px;font-size:1.1rem;cursor:pointer;">✕</button>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <button onclick="loadOnlineSubscribers()" style="background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;border-radius:8px;padding:6px 14px;font-size:0.85rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;">
+                            <span>🔄</span> تحديث
+                        </button>
+                        <button onclick="document.getElementById('online-subs-modal').style.display='none'" style="background:#f1f5f9;border:none;border-radius:50%;width:36px;height:36px;font-size:1.1rem;cursor:pointer;">✕</button>
+                    </div>
                 </div>
                 <div id="online-subs-table-wrap" style="padding:20px;max-height:420px;overflow-y:auto;">
                     <p style="text-align:center;color:#94a3b8;padding:30px 0;">جاري التحميل...</p>
@@ -3637,7 +3642,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             if (document.getElementById('stat-online-count')) {
                 loadVisitorsStats();
-                setInterval(loadVisitorsStats, 30000);
+                setInterval(loadVisitorsStats, 15000);
             }
         });
 
@@ -3666,6 +3671,6 @@
     </script>
     {% endif %}
     <!-- نظام تسجيل الخروج التلقائي عند عدم النشاط -->
-    <script src="/static/js/auto-logout.js"></script>
+    <script src="/static/js/auto-logout.js?v=2.2"></script>
 </body>
 </html>

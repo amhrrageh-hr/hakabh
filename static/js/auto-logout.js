@@ -83,26 +83,30 @@
         }
     });
 
-    // فحص فوري عند عودة المستخدم للصفحة أو استيقاظ الجهاز من السكون
+    // فحص فوري عند عودة المستخدم للصفحة أو استيقاظ الجهاز من السكون مع تجديد نبضة الاتصال
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
             checkInactivity();
+            sendHeartbeat();
         }
     });
 
-    window.addEventListener('focus', checkInactivity);
+    window.addEventListener('focus', () => {
+        checkInactivity();
+        sendHeartbeat();
+    });
 
     // فحص دوري كل ثانيتين للتأكد من عدم تجاوز المهلة
     setInterval(checkInactivity, 2000);
 
-    // إرسال نبضات النشاط كل 60 ثانية للحفاظ على حالة "متصل الآن" وتحديث آخر ظهور
+    // إرسال نبضات النشاط كل 45 ثانية للحفاظ على حالة "متصل الآن" وتحديث آخر ظهور
     function sendHeartbeat() {
         if (isLoggingOut) return;
         try {
-            fetch('/api/heartbeat', { method: 'POST', keepalive: true }).catch(function(){});
+            fetch('/api/heartbeat', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
         } catch (e) {}
     }
-    // إرسال نبضة أولية بعد ثانيتين ثم دورياً كل 60 ثانية
-    setTimeout(sendHeartbeat, 2000);
-    setInterval(sendHeartbeat, 60000);
+    // إرسال نبضة أولية فورية بعد ثانية ثم دورياً كل 45 ثانية
+    setTimeout(sendHeartbeat, 1000);
+    setInterval(sendHeartbeat, 45000);
 })();

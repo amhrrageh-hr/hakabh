@@ -492,7 +492,7 @@ async def login_auth(
 
         # تحديث عدد الزيارات وتاريخ آخر ظهور وتسجيل الزيارة
         sub.visit_count = (sub.visit_count or 0) + 1
-        sub.last_seen = datetime.datetime.now()
+        sub.last_seen = db_mod.get_utc_now()
         db.commit()
         log_site_visit(db, page="/login", sub_id=sub_id_int, request=request)
 
@@ -642,7 +642,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
             return RedirectResponse(url="/login")
 
         # تحديث وقت آخر ظهور وحالة الاتصال وتسجيل الزيارة
-        sub.last_seen = datetime.datetime.now()
+        sub.last_seen = db_mod.get_utc_now()
         _online_subscribers[int(sub.id)] = time.time()
         db.commit()
         log_site_visit(db, page="/million-hakbah", sub_id=int(sub.id), request=request)
@@ -1708,8 +1708,9 @@ async def user_heartbeat(request: Request, db: Session = Depends(get_db)):
         _online_subscribers[sub_id_int] = now_ts
         request.session["last_activity"] = int(now_ts)
         try:
+            now_utc = db_mod.get_utc_now()
             db.query(db_mod.Subscriber).filter(db_mod.Subscriber.id == sub_id_int).update({
-                "last_seen": datetime.datetime.now()
+                "last_seen": now_utc
             }, synchronize_session=False)
             db.commit()
         except Exception:
@@ -1730,17 +1731,28 @@ async def get_site_visitors_stats(request: Request, db: Session = Depends(get_db
     if not staff_id and api_key_header != admin_key:
         return JSONResponse(status_code=403, content={"error": "غير مصرح"})
 
-    five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+    # نافذة التواجد: آخر 10 دقائق بالتوقيت الموحد UTC لضمان الدقة وتفادي أي بطء شبكة
+    ten_min_ago = db_mod.get_utc_now() - datetime.timedelta(minutes=10)
     
     online_subs = db.query(db_mod.Subscriber).filter(
-        db_mod.Subscriber.last_seen >= five_min_ago
+        db_mod.Subscriber.last_seen >= ten_min_ago
     ).order_by(db_mod.Subscriber.last_seen.desc()).all()
+
+    # دمج المشتركين النشطين في كاش الذاكرة اللحظي لضمان الظهور الفوري المباشر
+    found_ids = {s.id for s in online_subs}
+    memory_active_ids = [
+        sid for sid, ts in _online_subscribers.items()
+        if (time.time() - ts) <= 600 and sid not in found_ids
+    ]
+    if memory_active_ids:
+        mem_subs = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.id.in_(memory_active_ids)).all()
+        online_subs.extend(mem_subs)
     
-    now = datetime.datetime.now()
+    now_utc = db_mod.get_utc_now()
     online_list = []
     for s in online_subs:
-        diff_sec = (now - s.last_seen).total_seconds() if s.last_seen else 0
-        mins = max(0, int(diff_sec // 60))
+        diff_sec = max(0, (now_utc - s.last_seen).total_seconds()) if s.last_seen else 0
+        mins = int(diff_sec // 60)
         online_list.append({
             "id": s.id,
             "name": s.name,
@@ -1751,6 +1763,9 @@ async def get_site_visitors_stats(request: Request, db: Session = Depends(get_db
             "minutes_ago": mins,
             "visit_count": s.visit_count or 0
         })
+
+    # ترتيب القائمة بحيث يظهر الأحدث نشاطاً في البداية
+    online_list.sort(key=lambda x: x["minutes_ago"])
 
     total_sub_visits = db.query(func.sum(db_mod.Subscriber.visit_count)).scalar() or 0
     visiting_subs = db.query(func.count(db_mod.Subscriber.id)).filter(
@@ -1764,7 +1779,7 @@ async def get_site_visitors_stats(request: Request, db: Session = Depends(get_db
     ).scalar() or 0
 
     return JSONResponse(content={
-        "online_count": len(online_subs),
+        "online_count": len(online_list),
         "online_subscribers": online_list,
         "total_subscriber_visits": int(total_sub_visits),
         "visiting_subscribers_count": int(visiting_subs),

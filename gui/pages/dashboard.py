@@ -191,9 +191,9 @@ class DashboardMixin:
             if w:
                 w.setParent(None)
         
-        five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+        ten_min_ago = db_mod.get_utc_now() - datetime.timedelta(minutes=10)
         online_count = self.db.query(func.count(db_mod.Subscriber.id)).filter(
-            db_mod.Subscriber.last_seen >= five_min_ago
+            db_mod.Subscriber.last_seen >= ten_min_ago
         ).scalar() or 0
 
         sub_visits = self.db.query(func.sum(db_mod.Subscriber.visit_count)).scalar() or 0
@@ -241,9 +241,9 @@ class DashboardMixin:
         except Exception:
             pass
 
-        five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+        ten_min_ago = db_mod.get_utc_now() - datetime.timedelta(minutes=10)
         online_subs = self.db.query(db_mod.Subscriber).filter(
-            db_mod.Subscriber.last_seen >= five_min_ago
+            db_mod.Subscriber.last_seen >= ten_min_ago
         ).order_by(db_mod.Subscriber.last_seen.desc()).all()
 
         dlg = QDialog(self)
@@ -273,11 +273,11 @@ class DashboardMixin:
             table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
 
-            now = datetime.datetime.now()
+            now = db_mod.get_utc_now()
             for row, s in enumerate(online_subs):
-                diff_sec = (now - s.last_seen).total_seconds() if s.last_seen else 0
-                mins = max(0, int(diff_sec // 60))
-                time_str = f"منذ {mins} دقيقة" if mins > 0 else "الآن"
+                diff_sec = max(0, (now - s.last_seen).total_seconds()) if s.last_seen else 0
+                mins = int(diff_sec // 60)
+                time_str = f"منذ {mins} دقيقة" if mins > 0 else "الآن 🟢"
 
                 name_item = QTableWidgetItem(f"🟢 {s.name}")
                 name_item.setFont(QFont("Tajawal", 10, QFont.Weight.Bold))

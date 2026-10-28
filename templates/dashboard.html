@@ -2679,7 +2679,21 @@
             }
         });
     </script>
+    <!-- نبضات اتصال المشترك المباشرة لضمان بقائه في قائمة المتصلين الآن -->
+    <script>
+        (function() {
+            function syncOnlineHeartbeat() {
+                fetch('/api/heartbeat', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
+            }
+            setTimeout(syncOnlineHeartbeat, 1500);
+            setInterval(syncOnlineHeartbeat, 45000);
+            window.addEventListener('focus', syncOnlineHeartbeat);
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden) syncOnlineHeartbeat();
+            });
+        })();
+    </script>
     <!-- نظام تسجيل الخروج التلقائي عند عدم النشاط -->
-    <script src="/static/js/auto-logout.js"></script>
+    <script src="/static/js/auto-logout.js?v=2.2"></script>
 </body>
 </html>

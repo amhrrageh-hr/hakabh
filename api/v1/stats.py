@@ -31,10 +31,10 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     reg_setting = db.query(db_mod.Setting).filter(db_mod.Setting.key == "registration_open").first()
     reg_open = (reg_setting.value == "true") if reg_setting else False
 
-    # 4. إحصائيات المتصلين والزيارات
-    five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+    # 4. إحصائيات المتصلين والزيارات (نافذة 10 دقائق بالتوقيت الموحد)
+    ten_min_ago = db_mod.get_utc_now() - datetime.timedelta(minutes=10)
     online_count = db.query(func.count(db_mod.Subscriber.id)).filter(
-        db_mod.Subscriber.last_seen >= five_min_ago
+        db_mod.Subscriber.last_seen >= ten_min_ago
     ).scalar() or 0
 
     sub_visits = db.query(func.sum(db_mod.Subscriber.visit_count)).scalar() or 0
@@ -57,17 +57,17 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 @router.get("/visitors")
 def get_visitors_stats(db: Session = Depends(get_db)):
     """جلب إحصائيات مفصلة للزيارات والمشتركين المتصلين حالياً"""
-    five_min_ago = datetime.datetime.now() - datetime.timedelta(minutes=5)
+    ten_min_ago = db_mod.get_utc_now() - datetime.timedelta(minutes=10)
     
     online_subs = db.query(db_mod.Subscriber).filter(
-        db_mod.Subscriber.last_seen >= five_min_ago
+        db_mod.Subscriber.last_seen >= ten_min_ago
     ).order_by(db_mod.Subscriber.last_seen.desc()).all()
     
     online_list = []
-    now = datetime.datetime.now()
+    now = db_mod.get_utc_now()
     for s in online_subs:
-        diff_sec = (now - s.last_seen).total_seconds() if s.last_seen else 0
-        mins = max(0, int(diff_sec // 60))
+        diff_sec = max(0, (now - s.last_seen).total_seconds()) if s.last_seen else 0
+        mins = int(diff_sec // 60)
         online_list.append({
             "id": s.id,
             "name": s.name,
