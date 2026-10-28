@@ -81,14 +81,19 @@ async def lifespan(app: FastAPI):
     # بدء مهمة تنظيف المشتركين المنتهية صلاحيتهم
     cleanup_task = asyncio.create_task(cleanup_expired_pending_subscribers())
     logger.info("✅ تم تشغيل مهمة التنظيف التلقائي للمشتركين المنتهية صلاحيتهم")
+    # بدء مهمة التوليد اليومي للأقساط لجميع المشتركين
+    daily_payments_task = asyncio.create_task(_daily_payments_background_task())
+    logger.info("✅ تم تشغيل مهمة التوليد اليومي للأقساط في الخلفية")
     yield
-    # إيقاف المهمة عند إغلاق التطبيق
+    # إيقاف المهام عند إغلاق التطبيق
     cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
-    logger.info("🛑 تم إيقاف مهمة التنظيف التلقائي")
+    daily_payments_task.cancel()
+    for task in [cleanup_task, daily_payments_task]:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    logger.info("🛑 تم إيقاف جميع المهام الخلفية")
 
 app = FastAPI(title="هكبة المليون - Million Hakbah", lifespan=lifespan)
 
@@ -249,6 +254,42 @@ async def cleanup_expired_pending_subscribers():
                 db.close()
             
         await asyncio.sleep(3600) # فحص كل ساعة
+
+
+async def _daily_payments_background_task():
+    """
+    مهمة خلفية مجدولة تعمل مرة كل 24 ساعة (فجر كل يوم).
+    تولّد أقساط اليوم لجميع المشتركين المقبولين دفعة واحدة بدلاً من
+    الاعتماد على زيارة كل مشترك بشكل فردي لتشغيل هذه العملية.
+    """
+    # الانتظار 30 ثانية بعد بدء التشغيل لضمان اكتمال التهيئة
+    await asyncio.sleep(30)
+    while True:
+        db = None
+        try:
+            db = db_mod.SessionLocal()
+            logger.info("[DailyPayments] بدء توليد الأقساط اليومية لجميع المشتركين...")
+            accepted_subs = db.query(db_mod.Subscriber).filter(
+                db_mod.Subscriber.status == "accepted",
+                db_mod.Subscriber.category != None
+            ).all()
+
+            total_added = 0
+            for sub in accepted_subs:
+                try:
+                    _ensure_daily_payments(db, sub)
+                except Exception as sub_err:
+                    logger.warning(f"[DailyPayments] فشل توليد أقساط المشترك {sub.id}: {sub_err}")
+
+            logger.info(f"[DailyPayments] ✅ اكتمل توليد الأقساط اليومية ({len(accepted_subs)} مشترك).")
+        except Exception as e:
+            logger.error(f"[DailyPayments] ❌ خطأ أثناء التوليد الجماعي: {e}")
+        finally:
+            if db:
+                db.close()
+
+        # الانتظار 24 ساعة حتى الدورة التالية
+        await asyncio.sleep(86400)
 
 # تمت إزالة @app.on_event("startup") المهجور واستبداله بـ lifespan أعلاه
 
