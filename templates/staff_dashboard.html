@@ -846,9 +846,11 @@
     <script src="/static/js/staff_core.js?v=2.2"></script>
 
     {% if staff.role == 'مدير' %}
+    <script id="categories-cycles-data" type="application/json">{{ categories_json | safe if categories_json else '[]' }}</script>
+    <script id="subscribers-data" type="application/json">{{ subscribers_json | safe if subscribers_json else '{}' }}</script>
     <script>
-        window.CATEGORIES_CYCLES_DATA = {{ categories_json | safe if categories_json else '[]' }};
-        window.SUBSCRIBERS_DATA = {{ subscribers_json | safe if subscribers_json else '{}' }};
+        try { window.CATEGORIES_CYCLES_DATA = JSON.parse(document.getElementById('categories-cycles-data').textContent || '[]'); } catch (e) { window.CATEGORIES_CYCLES_DATA = []; }
+        try { window.SUBSCRIBERS_DATA = JSON.parse(document.getElementById('subscribers-data').textContent || '{}'); } catch (e) { window.SUBSCRIBERS_DATA = {}; }
     </script>
     <script src="/static/js/staff_draw.js?v=2.2"></script>
     {% endif %}
