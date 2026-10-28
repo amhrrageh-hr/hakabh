@@ -1,16 +1,20 @@
 import os
 import secrets
+import logging
 from fastapi import HTTPException, Security, status, Request, Depends
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy.orm import Session
 import database as db_mod
 
+logger = logging.getLogger(__name__)
+
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 def get_configured_api_key() -> str:
-    key = os.getenv("ADMIN_API_KEY", "")
+    key = os.getenv("ADMIN_API_KEY", "").strip()
     if not key:
+        logger.warning("[Security] ADMIN_API_KEY is not defined in environment variables. Using fallback key.")
         key = "hakbah_api_sec_994a3bc1e8204d88e07a216f49b"
     return key
 

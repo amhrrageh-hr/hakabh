@@ -517,6 +517,9 @@ def init_db(force_migration=False):
             "CREATE INDEX IF NOT EXISTS idx_winners_sub_num ON winners (subscriber_number)",
             "CREATE INDEX IF NOT EXISTS idx_categories_season ON categories (season_id)",
             "CREATE INDEX IF NOT EXISTS idx_subscribers_season ON subscribers (season_id)",
+            "CREATE INDEX IF NOT EXISTS idx_subscribers_last_seen ON subscribers (last_seen)",
+            "CREATE INDEX IF NOT EXISTS idx_visit_log_sub_id ON visit_logs (subscriber_id)",
+            "CREATE INDEX IF NOT EXISTS idx_visit_log_created_at ON visit_logs (created_at)",
             "CREATE INDEX IF NOT EXISTS idx_winners_season ON winners (season_id)"
         ]
         for iq in index_queries:

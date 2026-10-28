@@ -547,6 +547,13 @@ def _ensure_daily_payments(db: Session, sub) -> None:
     if existing_count >= count_to_gen:
         return  # لا توجد أقساط مفقودة
 
+    # جلب جميع الأزواج الموجودة مسبقاً في استعلام سريع واحد بدلاً من تكرار الاستعلامات
+    existing_pairs = set(
+        db.query(db_mod.Payment.cycle_number, db_mod.Payment.installment_number)
+        .filter(db_mod.Payment.subscriber_id == sub.id)
+        .all()
+    )
+
     # توليد الأقساط المفقودة فقط
     added = 0
     for i in range(count_to_gen):
@@ -556,18 +563,11 @@ def _ensure_daily_payments(db: Session, sub) -> None:
         if c_idx > max_c:
             break
 
-        due_dt = _dt.datetime.combine(
-            start_date + _dt.timedelta(days=i),
-            _dt.time.min
-        )
-
-        already_exists = db.query(db_mod.Payment).filter(
-            db_mod.Payment.subscriber_id == sub.id,
-            db_mod.Payment.cycle_number == c_idx,
-            db_mod.Payment.installment_number == i_idx
-        ).first()
-
-        if not already_exists:
+        if (c_idx, i_idx) not in existing_pairs:
+            due_dt = _dt.datetime.combine(
+                start_date + _dt.timedelta(days=i),
+                _dt.time.min
+            )
             db.add(db_mod.Payment(
                 subscriber_id=sub.id,
                 amount=cat.amount,
@@ -577,6 +577,7 @@ def _ensure_daily_payments(db: Session, sub) -> None:
                 installment_number=i_idx,
                 note=db_mod.build_installment_note(is_paid=False, due_date=due_dt)
             ))
+            existing_pairs.add((c_idx, i_idx))
             added += 1
 
     if added > 0:
@@ -1728,7 +1729,8 @@ async def get_site_visitors_stats(request: Request, db: Session = Depends(get_db
     staff_id = request.session.get("staff_id")
     api_key_header = request.headers.get("x-api-key")
     admin_key = os.getenv("ADMIN_API_KEY", "hakbah_api_sec_994a3bc1e8204d88e07a216f49b")
-    if not staff_id and api_key_header != admin_key:
+    api_key_valid = bool(api_key_header and secrets.compare_digest(api_key_header, admin_key))
+    if not staff_id and not api_key_valid:
         return JSONResponse(status_code=403, content={"error": "غير مصرح"})
 
     # نافذة التواجد: آخر 10 دقائق بالتوقيت الموحد UTC لضمان الدقة وتفادي أي بطء شبكة
