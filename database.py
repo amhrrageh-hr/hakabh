@@ -63,7 +63,7 @@ DATABASE_URL = get_database_url()
 print(f"[Database] Initialized with: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
 
 def create_configured_engine(url):
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    connect_args = {"check_same_thread": False, "timeout": 30.0} if url.startswith("sqlite") else {}
     if url.startswith("sqlite"):
         return create_engine(url, connect_args=connect_args)
     else:
@@ -89,6 +89,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
     except Exception:
         pass
@@ -554,6 +555,70 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def ensure_daily_payments(db: Session, sub) -> int:
+    """
+    توليد الأقساط اليومية المفقودة للمشترك حتى تاريخ اليوم دون أي تكرار نهائياً.
+    تعتمد على الفئة وتاريخ بدايتها، وتتحقق بدقة من عدم وجود (cycle_number, installment_number) مسبقاً.
+    """
+    if not sub or not sub.category or getattr(sub, "status", None) != "accepted":
+        return 0
+
+    cat = db.query(Category).filter(Category.name == sub.category).first()
+    if not cat or not cat.start_date:
+        return 0
+
+    start_date = cat.start_date.date() if hasattr(cat.start_date, 'date') else cat.start_date
+    today = datetime.date.today()
+    days_passed = (today - start_date).days
+    if days_passed < 0:
+        return 0
+
+    max_c = int(cat.max_cycles or 1)
+    max_i = int(cat.max_installments or 1)
+    total_possible = max_c * max_i
+    count_to_gen = min(days_passed + 1, total_possible)
+    if count_to_gen <= 0:
+        return 0
+
+    # جلب جميع أزواج (cycle_number, installment_number) الموجودة مسبقاً لهذا المشترك
+    existing_pairs = set(
+        db.query(Payment.cycle_number, Payment.installment_number)
+        .filter(Payment.subscriber_id == sub.id)
+        .all()
+    )
+
+    added = 0
+    for i in range(count_to_gen):
+        c_idx = (i // max_i) + 1
+        i_idx = (i % max_i) + 1
+        if c_idx > max_c:
+            break
+
+        if (c_idx, i_idx) not in existing_pairs:
+            due_dt = datetime.datetime.combine(
+                start_date + datetime.timedelta(days=i),
+                datetime.time.min
+            )
+            db.add(Payment(
+                subscriber_id=sub.id,
+                amount=cat.amount,
+                due_date=due_dt,
+                is_paid=False,
+                cycle_number=c_idx,
+                installment_number=i_idx,
+                note=build_installment_note(is_paid=False, due_date=due_dt)
+            ))
+            existing_pairs.add((c_idx, i_idx))
+            added += 1
+
+    if added > 0:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+    return added
 
 _thresholds_cache = {"time": 0.0, "value": (1, 3)}
 

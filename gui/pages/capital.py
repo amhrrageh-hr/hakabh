@@ -350,50 +350,16 @@ class CapitalMixin:
         self.refresh_current_capital_tab()
 
     def sync_unpaid_installments(self):
-        """تقوم هذه الدالة بإضافة أقساط غير مسددة تلقائياً للأيام التي مضت في مسار خلفي لتجنب تجميد الواجهة"""
+        """توليد الأقساط اليومية المفقودة للمشتركين بشكل موحد وآمن دون أي تكرار عبر الدالة المركزية"""
         def _background_worker():
             bg_db = db_mod.SessionLocal()
             try:
-                now_date = datetime.datetime.now().date()
-                categories = {c.name: c for c in bg_db.query(db_mod.Category).all()}
                 subscribers = bg_db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
-                
-                added = 0
                 for sub in subscribers:
-                    cat = categories.get(sub.category)
-                    if not cat or not cat.start_date:
-                        continue
-                    
-                    last_p = bg_db.query(db_mod.Payment).filter(
-                        db_mod.Payment.subscriber_id == sub.id
-                    ).order_by(db_mod.Payment.due_date.desc()).first()
-                    
-                    if last_p:
-                        current_check = last_p.due_date.date() + datetime.timedelta(days=1)
-                    else:
-                        current_check = cat.start_date.date() if cat.start_date else now_date
-                    
-                    while current_check <= now_date:
-                        total_days = (current_check - cat.start_date.date()).days
-                        cycle = (total_days // cat.max_installments) + 1
-                        inst = (total_days % cat.max_installments) + 1
-                        
-                        if cycle <= cat.max_cycles:
-                            new_p = db_mod.Payment(
-                                subscriber_id=sub.id,
-                                amount=cat.amount,
-                                due_date=datetime.datetime.combine(current_check, datetime.time.min),
-                                is_paid=False,
-                                cycle_number=cycle,
-                                installment_number=inst,
-                                note="قسط يومي غير مسدد"
-                            )
-                            bg_db.add(new_p)
-                            added += 1
-                        current_check += datetime.timedelta(days=1)
-                
-                if added > 0:
-                    bg_db.commit()
+                    try:
+                        db_mod.ensure_daily_payments(bg_db, sub)
+                    except Exception as sub_err:
+                        print(f"Error syncing installments for sub {sub.id}: {sub_err}")
             except Exception as e:
                 print(f"Error during auto-sync: {e}")
                 bg_db.rollback()

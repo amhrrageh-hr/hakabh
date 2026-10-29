@@ -97,7 +97,55 @@
 
         if (catSel) {
             catSel.addEventListener('change', async () => {
+                const duesBox = document.getElementById('sub-dues-info');
+                if (duesBox) duesBox.style.display = 'none';
                 await loadSubscribers(catSel.value);
+            });
+        }
+
+        if (subSel) {
+            subSel.addEventListener('change', async () => {
+                const duesBox = document.getElementById('sub-dues-info');
+                const subId = subSel.value;
+                if (!subId) {
+                    if (duesBox) duesBox.style.display = 'none';
+                    return;
+                }
+
+                if (!navigator.onLine) {
+                    if (duesBox) duesBox.style.display = 'none';
+                    return;
+                }
+
+                try {
+                    const res = await fetch(`/api/staff/subscriber-info/${subId}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (duesBox) {
+                            document.getElementById('info-cat-amount').textContent = `${(data.category_amount || 0).toLocaleString()} ر.ي`;
+                            if (data.next_installment) {
+                                document.getElementById('info-next-inst').textContent = `دورة ${data.next_installment.cycle} / قسط ${data.next_installment.installment} (${(data.next_installment.amount || 0).toLocaleString()} ر.ي)`;
+                            } else {
+                                document.getElementById('info-next-inst').textContent = '✅ مسدد بالكامل حتى اليوم';
+                            }
+                            document.getElementById('info-overdue').textContent = `${data.overdue_count || 0} قسط`;
+                            document.getElementById('info-total-unpaid').textContent = `${(data.total_unpaid || 0).toLocaleString()} ر.ي`;
+                            duesBox.style.display = 'block';
+                        }
+
+                        // اقتراح مبلغ القسط تلقائياً لتسهيل العمل وتفادي الأخطاء
+                        const amountInput = form ? form.querySelector('input[name="amount"]') : null;
+                        if (amountInput && (!amountInput.value || parseFloat(amountInput.value) <= 0)) {
+                            if (data.next_installment && data.next_installment.amount > 0) {
+                                amountInput.value = data.next_installment.amount;
+                            } else if (data.category_amount > 0) {
+                                amountInput.value = data.category_amount;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    if (duesBox) duesBox.style.display = 'none';
+                }
             });
         }
 
@@ -171,17 +219,26 @@
                 e.preventDefault();
                 alertBox.style.display = 'none';
 
+                const submitBtn = form.querySelector('button[type="submit"]');
+                const origBtnText = submitBtn ? submitBtn.innerHTML : '';
+
                 const formData = new FormData(form);
                 const payload = {
                     subscriber_id: Number(formData.get('subscriber_id')),
                     amount: parseFloat(formData.get('amount')),
                     note: formData.get('note') || '',
-                    client_reference: `offline-${Date.now()}-${Math.random().toString(36).slice(2)}`
+                    client_reference: `staff-${Date.now()}-${Math.random().toString(36).slice(2)}`
                 };
 
-                if (!payload.subscriber_id || !payload.amount) {
-                    showAlert('يرجى اختيار المشترك والمبلغ قبل الإرسال.', 'danger');
+                if (!payload.subscriber_id || !payload.amount || payload.amount <= 0) {
+                    showAlert('يرجى اختيار المشترك وإدخال مبلغ صحيح أكبر من صفر.', 'danger');
                     return;
+                }
+
+                // تعطيل زر الإرسال فوراً لمنع النقرات المزدوجة والتسديد المكرر
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<span>⏳</span> جاري معالجة وتأكيد السداد...';
                 }
 
                 try {
@@ -192,24 +249,35 @@
                         form.reset();
                         subSel.disabled = true;
                         subSel.innerHTML = '<option value="">-- اختر مشترك --</option>';
+                        const duesBox = document.getElementById('sub-dues-info');
+                        if (duesBox) duesBox.style.display = 'none';
                         await syncPendingPayments();
                     } else {
                         if (!navigator.onLine) {
                             queuePayment(payload);
-                            showAlert('تم حفظ السداد مؤقتاً وسيتم إرساله عند العودة للإنترنت', 'success');
+                            showAlert('تم حفظ السداد مؤقتاً وسيتم إرساله تلقائياً عند العودة للإنترنت', 'success');
                             form.reset();
                             subSel.disabled = true;
                             subSel.innerHTML = '<option value="">-- اختر مشترك --</option>';
+                            const duesBox = document.getElementById('sub-dues-info');
+                            if (duesBox) duesBox.style.display = 'none';
                         } else {
                             showAlert(data.message || 'حدث خطأ أثناء تسجيل السداد', 'danger');
                         }
                     }
                 } catch (err) {
                     queuePayment(payload);
-                    showAlert('تم حفظ السداد مؤقتاً وسيتم إرساله عند العودة للإنترنت', 'success');
+                    showAlert('تم حفظ السداد في قائمة الانتظار وسيتم إرساله عند استقرار الاتصال', 'success');
                     form.reset();
                     subSel.disabled = true;
                     subSel.innerHTML = '<option value="">-- اختر مشترك --</option>';
+                    const duesBox = document.getElementById('sub-dues-info');
+                    if (duesBox) duesBox.style.display = 'none';
+                } finally {
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.innerHTML = origBtnText;
+                    }
                 }
             });
         }

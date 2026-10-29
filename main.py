@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 import time
+from typing import Optional
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
@@ -549,80 +550,13 @@ async def login_auth(
 
 def _ensure_daily_payments(db: Session, sub) -> None:
     """
-    يُولّد الأقساط اليومية المفقودة للمشترك حتى تاريخ اليوم،
-    بناءً على تاريخ بداية فئته وحدودها (max_cycles × max_installments).
-    يُستدعى تلقائياً عند كل زيارة للوحة تحكم المشترك.
+    يُولّد الأقساط اليومية المفقودة للمشترك حتى تاريخ اليوم دون تكرار،
+    بالاعتماد على الدالة المركزية الموحدة في database.py.
     """
-    import datetime as _dt
-
-    if not sub.category:
-        return
-
-    cat = db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first()
-    if not cat or not cat.start_date:
-        return
-
-    start_date = cat.start_date.date() if hasattr(cat.start_date, 'date') else cat.start_date
-    today = _dt.date.today()
-    days_passed = (today - start_date).days
-
-    if days_passed < 0:
-        return
-
-    max_c = int(cat.max_cycles or 1)
-    max_i = int(cat.max_installments or 1)
-    total_possible = max_c * max_i
-
-    # عدد الأقساط التي يجب أن تكون موجودة حتى اليوم
-    count_to_gen = min(days_passed + 1, total_possible)
-
-    if count_to_gen <= 0:
-        return
-
-    # تحقق من أعلى قسط موجود حالياً لتجنب استعلامات التحقق الزائدة
-    from sqlalchemy import func as _func
-    existing_count = db.query(_func.count(db_mod.Payment.id)).filter(
-        db_mod.Payment.subscriber_id == sub.id
-    ).scalar() or 0
-
-    if existing_count >= count_to_gen:
-        return  # لا توجد أقساط مفقودة
-
-    # جلب جميع الأزواج الموجودة مسبقاً في استعلام سريع واحد بدلاً من تكرار الاستعلامات
-    existing_pairs = set(
-        db.query(db_mod.Payment.cycle_number, db_mod.Payment.installment_number)
-        .filter(db_mod.Payment.subscriber_id == sub.id)
-        .all()
-    )
-
-    # توليد الأقساط المفقودة فقط
-    added = 0
-    for i in range(count_to_gen):
-        c_idx = (i // max_i) + 1
-        i_idx = (i % max_i) + 1
-
-        if c_idx > max_c:
-            break
-
-        if (c_idx, i_idx) not in existing_pairs:
-            due_dt = _dt.datetime.combine(
-                start_date + _dt.timedelta(days=i),
-                _dt.time.min
-            )
-            db.add(db_mod.Payment(
-                subscriber_id=sub.id,
-                amount=cat.amount,
-                due_date=due_dt,
-                is_paid=False,
-                cycle_number=c_idx,
-                installment_number=i_idx,
-                note=db_mod.build_installment_note(is_paid=False, due_date=due_dt)
-            ))
-            existing_pairs.add((c_idx, i_idx))
-            added += 1
-
-    if added > 0:
-        db.commit()
+    try:
+        db_mod.ensure_daily_payments(db, sub)
+    except Exception as e:
+        logger.warning(f"Error ensuring daily payments for sub {getattr(sub, 'id', '?')}: {e}")
         print(f"[Dashboard] تم توليد {added} قسط مفقود للمشترك {sub.id} ({sub.name})", flush=True)
 
 
@@ -1017,6 +951,56 @@ async def get_subs_by_category(cat_name: str, db: Session = Depends(get_db)):
     ).all()
     return [{"id": s.id, "number": s.subscriber_number, "name": s.name} for s in subs]
 
+@app.get("/api/staff/subscriber-info/{sub_id}")
+async def get_staff_subscriber_info(sub_id: int, request: Request, db: Session = Depends(get_db)):
+    """جلب معلومات مستحقات المشترك والقسط القادم لمساعدة الموظف على السداد الدقيق دون تضارب"""
+    try:
+        _get_staff_id(request)
+    except PermissionError:
+        return JSONResponse(status_code=401, content={"message": "غير مصرح"})
+
+    sub = db.get(db_mod.Subscriber, sub_id)
+    if not sub:
+        return JSONResponse(status_code=404, content={"message": "المشترك غير موجود"})
+
+    db_mod.ensure_daily_payments(db, sub)
+
+    cat = db.query(db_mod.Category).filter(func.lower(db_mod.Category.name) == func.lower(sub.category)).first()
+    cat_amount = cat.amount if cat else 0.0
+
+    unpaid_payments = db.query(db_mod.Payment).filter(
+        db_mod.Payment.subscriber_id == sub_id,
+        db_mod.Payment.is_paid == False
+    ).order_by(db_mod.Payment.cycle_number.asc(), db_mod.Payment.installment_number.asc()).all()
+
+    now = datetime.datetime.now()
+    overdue_count = sum(1 for p in unpaid_payments if p.due_date and p.due_date < now)
+    total_unpaid = sum(p.amount for p in unpaid_payments)
+
+    next_inst = None
+    if unpaid_payments:
+        first_unpaid = unpaid_payments[0]
+        next_inst = {
+            "cycle": first_unpaid.cycle_number,
+            "installment": first_unpaid.installment_number,
+            "amount": first_unpaid.amount,
+            "due_date": first_unpaid.due_date.strftime("%Y-%m-%d") if first_unpaid.due_date else None,
+            "is_overdue": bool(first_unpaid.due_date and first_unpaid.due_date < now)
+        }
+
+    return {
+        "id": sub.id,
+        "name": sub.name,
+        "number": sub.subscriber_number,
+        "category": sub.category,
+        "category_amount": cat_amount,
+        "next_installment": next_inst,
+        "total_unpaid": total_unpaid,
+        "unpaid_count": len(unpaid_payments),
+        "overdue_count": overdue_count
+    }
+
+
 def _get_staff_id(request: Request) -> int:
     raw_staff_id = request.session.get("staff_id")
     if raw_staff_id is None:
@@ -1048,10 +1032,14 @@ def process_staff_payment(
         if existing_payment:
             return sub
 
+    # ضمان توليد الأقساط اليومية المجدولة حتى اليوم قبل تخصيص الدفعة
+    db_mod.ensure_daily_payments(db, sub)
+
     cat = db.query(db_mod.Category).filter(func.lower(db_mod.Category.name) == func.lower(sub.category)).first()
     cat_amount = cat.amount if cat else 0
     max_i = cat.max_installments if cat else 12
     max_c = cat.max_cycles if cat else 10
+    cat_start = (cat.start_date.date() if hasattr(cat.start_date, 'date') else cat.start_date) if (cat and cat.start_date) else None
 
     if cat_amount <= 0:
         raise ValueError("خطأ في بيانات فئة المشترك، يرجى مراجعة الإدارة")
@@ -1059,6 +1047,7 @@ def process_staff_payment(
     remaining = amount
     now = datetime.datetime.now()
 
+    # 1. سداد الأقساط غير المسددة المستحقة أولاً بأول (FIFO)
     targets = db.query(db_mod.Payment).filter(
         db_mod.Payment.subscriber_id == subscriber_id,
         db_mod.Payment.is_paid == False
@@ -1097,6 +1086,7 @@ def process_staff_payment(
             p.note = db_mod.build_installment_note(is_paid=True, due_date=p.due_date, paid_date=now, user_note=note)
             remaining -= p.amount
 
+    # 2. في حالة وجود فائض، يتم تسجيله كأقساط مقدمة مع ضبط التواريخ المجدولة الصحيحة
     if remaining > 0 and cat_amount > 0:
         last_p = db.query(db_mod.Payment).filter(
             db_mod.Payment.subscriber_id == subscriber_id
@@ -1104,8 +1094,8 @@ def process_staff_payment(
 
         curr_c, curr_i = 1, 1
         if last_p:
+            curr_c = last_p.cycle_number or 1
             curr_i = (last_p.installment_number or 0) + 1
-            curr_c = (last_p.cycle_number or 1)
             if curr_i > max_i:
                 curr_i = 1
                 curr_c += 1
@@ -1116,6 +1106,14 @@ def process_staff_payment(
         while remaining > 0 and curr_c <= max_c and safety_counter < max_safety:
             safety_counter += 1
             pay_now = min(remaining, cat_amount)
+            is_partial = (pay_now < cat_amount)
+
+            # حساب تاريخ الاستحقاق المجدول الطبيعي للقسط
+            if cat_start:
+                day_offset = (curr_c - 1) * max_i + (curr_i - 1)
+                sched_due = datetime.datetime.combine(cat_start + datetime.timedelta(days=day_offset), datetime.time.min)
+            else:
+                sched_due = now
 
             exists = db.query(db_mod.Payment).filter(
                 db_mod.Payment.subscriber_id == subscriber_id,
@@ -1124,28 +1122,63 @@ def process_staff_payment(
             ).first()
 
             if exists:
-                if not exists.is_paid:
-                    exists.amount = pay_now
-                    exists.is_paid = True
-                    exists.paid_date = now
-                    exists.staff_id = staff_id
-                    exists.is_staff_settled = False
-                    exists.client_reference = client_reference
-                    exists.note = db_mod.build_installment_note(is_paid=True, due_date=exists.due_date, paid_date=now, user_note=note)
+                if exists.is_paid:
+                    curr_i += 1
+                    if curr_i > max_i:
+                        curr_i = 1
+                        curr_c += 1
+                    continue
+                else:
+                    if pay_now < exists.amount:
+                        balance = exists.amount - pay_now
+                        exists.amount = pay_now
+                        exists.is_paid = True
+                        exists.paid_date = now
+                        exists.staff_id = staff_id
+                        exists.is_staff_settled = False
+                        exists.client_reference = client_reference
+                        exists.note = db_mod.build_installment_note(is_paid=True, due_date=exists.due_date, paid_date=now, user_note=note, is_partial=True)
+                        db.add(db_mod.Payment(
+                            subscriber_id=subscriber_id,
+                            amount=balance,
+                            due_date=exists.due_date,
+                            is_paid=False,
+                            cycle_number=curr_c,
+                            installment_number=curr_i,
+                            note=db_mod.build_installment_note(is_paid=False, due_date=exists.due_date, is_partial=True)
+                        ))
+                    else:
+                        exists.amount = pay_now
+                        exists.is_paid = True
+                        exists.paid_date = now
+                        exists.staff_id = staff_id
+                        exists.is_staff_settled = False
+                        exists.client_reference = client_reference
+                        exists.note = db_mod.build_installment_note(is_paid=True, due_date=exists.due_date, paid_date=now, user_note=note)
             else:
                 db.add(db_mod.Payment(
                     subscriber_id=subscriber_id,
                     amount=pay_now,
-                    due_date=now,
+                    due_date=sched_due,
                     paid_date=now,
                     is_paid=True,
                     cycle_number=curr_c,
                     installment_number=curr_i,
                     staff_id=staff_id,
-                    note=db_mod.build_installment_note(is_paid=True, due_date=now, paid_date=now, user_note=note),
+                    note=db_mod.build_installment_note(is_paid=True, due_date=sched_due, paid_date=now, user_note=note, is_partial=is_partial),
                     is_staff_settled=False,
                     client_reference=client_reference
                 ))
+                if is_partial:
+                    db.add(db_mod.Payment(
+                        subscriber_id=subscriber_id,
+                        amount=cat_amount - pay_now,
+                        due_date=sched_due,
+                        is_paid=False,
+                        cycle_number=curr_c,
+                        installment_number=curr_i,
+                        note=db_mod.build_installment_note(is_paid=False, due_date=sched_due, is_partial=True)
+                    ))
 
             remaining -= pay_now
             curr_i += 1
@@ -1169,11 +1202,12 @@ async def staff_submit_payment(
     subscriber_id: int = Form(...),
     amount: float = Form(...),
     note: str = Form(""),
+    client_reference: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     try:
         staff_id = _get_staff_id(request)
-        sub = process_staff_payment(db, staff_id, subscriber_id, amount, note)
+        sub = process_staff_payment(db, staff_id, subscriber_id, amount, note, client_reference)
         db.commit()
         db.refresh(sub)
 
