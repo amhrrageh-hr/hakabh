@@ -783,12 +783,17 @@ class CapitalMixin:
                 query = query.filter(db_mod.Subscriber.category == sel_cat)
                 
             unpaid_payments = query.order_by(db_mod.Payment.due_date.asc()).all()
+            sub_ids = list({p.subscriber_id for p in unpaid_payments})
+            sub_map = {s.id: s for s in self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.id.in_(sub_ids)).all()} if sub_ids else {}
             
             data = []
             for p in unpaid_payments:
-                sub = self.db.get(db_mod.Subscriber, p.subscriber_id)
+                sub = sub_map.get(p.subscriber_id)
+                sub_name = sub.name if sub else "غير محدد"
+                sub_phone = sub.phone if sub else "-"
+                sub_cat = sub.category if sub else "-"
                 data.append({
-                    "المشترك": sub.name,
+                    "المشترك": sub_name,
                     "الهاتف": sub.phone,
                     "الفئة": sub.category or "-",
                     "الدورة والقسط": f"دورة {p.cycle_number} - قسط {p.installment_number}",
@@ -1107,13 +1112,18 @@ class CapitalMixin:
             sel_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
             search_txt = self.cap_search_winners.text().strip().lower() if hasattr(self, 'cap_search_winners') else ""
             
+            # Caching لتجنب مئات الاستعلامات الفردية N+1
+            all_subs = self.db.query(db_mod.Subscriber).all()
+            sub_by_num = {s.subscriber_number: s for s in all_subs if s.subscriber_number}
+            s_nums = self.db.query(db_mod.SubscriberNumber).all()
+            snum_map = {sn.number: sn.subscriber for sn in s_nums if sn.subscriber}
+            cats_map = {c.name: c for c in self.db.query(db_mod.Category).all()}
+
             data = []
             for w in winners:
-                sub = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.subscriber_number == w.subscriber_number).first()
+                sub = sub_by_num.get(w.subscriber_number)
                 if not sub:
-                    s_num = self.db.query(db_mod.SubscriberNumber).filter(db_mod.SubscriberNumber.number == w.subscriber_number).first()
-                    if s_num and s_num.subscriber:
-                        sub = s_num.subscriber
+                    sub = snum_map.get(w.subscriber_number)
                 
                 sub_name = sub.name if sub else "مشترك غير معروف"
                 sub_phone = sub.phone if sub else "-"
@@ -1129,7 +1139,7 @@ class CapitalMixin:
                         
                 payout_amt = w.payout_amount or 0.0
                 if payout_amt == 0.0 and sub:
-                    cat_obj = self.db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first()
+                    cat_obj = cats_map.get(sub.category)
                     if cat_obj:
                         payout_amt = cat_obj.prize_amount if (cat_obj.prize_amount and cat_obj.prize_amount > 0) else (cat_obj.amount * cat_obj.max_installments)
                         

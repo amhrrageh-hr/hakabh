@@ -1150,6 +1150,7 @@ class DrawMixin:
             search_txt = self.draw_ex_search.text().strip().lower() if hasattr(self, 'draw_ex_search') else ""
 
             all_subs = self.db.query(db_mod.Subscriber).all()
+            fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db)
             items = []
 
             for sub in all_subs:
@@ -1166,7 +1167,7 @@ class DrawMixin:
                     if not match:
                         continue
 
-                fin_status = db_mod.calculate_financial_status(sub, self.db)
+                fin_status = fin_status_map.get(sub.id, "pending")
                 is_excluded = False
                 reason = ""
                 status_badge = ""

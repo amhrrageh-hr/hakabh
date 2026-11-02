@@ -998,10 +998,15 @@ class ReportsMixin:
             
             payments = query.order_by(db_mod.Payment.paid_date.desc()).all()
             
+            all_staff_ids = list({p.staff_id for p in payments if p.staff_id})
+            all_sub_ids = list({p.subscriber_id for p in payments if p.subscriber_id})
+            staff_map = {s.id: s for s in self.db.query(db_mod.Staff).filter(db_mod.Staff.id.in_(all_staff_ids)).all()} if all_staff_ids else {}
+            sub_map = {s.id: s for s in self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.id.in_(all_sub_ids)).all()} if all_sub_ids else {}
+
             data = []
             for p in payments:
-                staff = self.db.get(db_mod.Staff, p.staff_id) if p.staff_id else None
-                sub = self.db.get(db_mod.Subscriber, p.subscriber_id) if p.subscriber_id else None
+                staff = staff_map.get(p.staff_id)
+                sub = sub_map.get(p.subscriber_id)
                 
                 data.append({
                     "الموظف المحصل": staff.name if staff else "غير محدد",
