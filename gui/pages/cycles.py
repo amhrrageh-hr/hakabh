@@ -140,9 +140,9 @@ class CyclesMixin:
         btn_save_settings.clicked.connect(self.save_cycle_settings)
         
         self.btn_gen = QPushButton("توليد جدول الأقساط لجميع المشتركين")
-        btn_gen.setObjectName("PrimaryBtn")
-        btn_gen.setFixedHeight(50)
-        btn_gen.clicked.connect(self.generate_cycle_schedule)
+        self.btn_gen.setObjectName("PrimaryBtn")
+        self.btn_gen.setFixedHeight(50)
+        self.btn_gen.clicked.connect(self.generate_cycle_schedule)
         
         layout.addWidget(f1)
         layout.addWidget(btn_save_settings)
