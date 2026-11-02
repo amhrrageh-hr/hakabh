@@ -181,6 +181,184 @@ class DrawStatsLoader(QThread):
         finally:
             bg_db.close()
 
+
+class DrawQualificationWorker(QThread):
+    finished = pyqtSignal(dict, list, int) # (qualified_by_category, qualified_ids, disqualified_count)
+    error = pyqtSignal(str)
+
+    def __init__(self, draw_name, category_selected_cycles, selected_period=1, periods_count=1, weeks_per_period=12):
+        super().__init__()
+        self.draw_name = draw_name
+        self.category_selected_cycles = dict(category_selected_cycles or {})
+        self.selected_period = selected_period
+        self.periods_count = periods_count
+        self.weeks_per_period = weeks_per_period
+
+    def run(self):
+        bg_db = db_mod.SessionLocal()
+        try:
+            today = datetime.datetime.now()
+            today_date = today.date()
+
+            # 1. Get accepted subscribers
+            all_subs = bg_db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
+            if not all_subs:
+                self.finished.emit({}, [], 0)
+                return
+
+            fin_status_map = db_mod.calculate_financial_status_batch(all_subs, bg_db)
+            cats_map = {c.name: c for c in bg_db.query(db_mod.Category).all()}
+
+            disciplined_subs = []
+            disqualified_count = 0
+            for s in all_subs:
+                fin_status = fin_status_map.get(s.id)
+                if fin_status in ["late", "suspended"]:
+                    disqualified_count += 1
+                else:
+                    disciplined_subs.append(s)
+
+            if not disciplined_subs:
+                self.finished.emit({}, [], disqualified_count)
+                return
+
+            sub_ids = [s.id for s in disciplined_subs]
+
+            # 2. Fast fetch of active cycles
+            active_cycles = dict(
+                bg_db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
+                .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
+                .group_by(db_mod.Payment.subscriber_id)
+                .all()
+            ) if sub_ids else {}
+
+            needed_sub_cycles = {}
+            for sub in disciplined_subs:
+                cat_selected = self.category_selected_cycles.get(sub.category, "auto")
+                if cat_selected != "auto" and isinstance(cat_selected, int):
+                    sub_current_cycle = cat_selected
+                else:
+                    sub_current_cycle = active_cycles.get(sub.id, 1)
+                needed_sub_cycles[sub.id] = sub_current_cycle
+
+            needed_cycles_set = set(needed_sub_cycles.values()) if needed_sub_cycles else {1}
+
+            # 3. Fast column tuple query - bypasses heavy ORM model instantiation
+            raw_payments_data = bg_db.query(
+                db_mod.Payment.subscriber_id,
+                db_mod.Payment.cycle_number,
+                db_mod.Payment.installment_number,
+                db_mod.Payment.amount,
+                db_mod.Payment.due_date,
+                db_mod.Payment.paid_date,
+                db_mod.Payment.is_paid
+            ).filter(
+                db_mod.Payment.subscriber_id.in_(sub_ids),
+                db_mod.Payment.cycle_number.in_(needed_cycles_set)
+            ).order_by(db_mod.Payment.installment_number.asc()).all() if sub_ids else []
+
+            payments_by_sub = {}
+            for p in raw_payments_data:
+                # p[0]=sub_id, p[1]=cycle_number, p[2]=installment_number, p[3]=amount, p[4]=due_date, p[5]=paid_date, p[6]=is_paid
+                if p[1] == needed_sub_cycles.get(p[0]):
+                    payments_by_sub.setdefault(p[0], []).append(p)
+
+            setting_inc = bg_db.query(db_mod.Setting).filter(db_mod.Setting.key == 'incentive_max_late_installments').first()
+            max_late_allowed = int(setting_inc.value) if (setting_inc and setting_inc.value and str(setting_inc.value).isdigit()) else 1
+
+            weekly_winners_sub_numbers = {
+                w[0] for w in bg_db.query(db_mod.Winner.subscriber_number).filter(
+                    (db_mod.Winner.draw_type.contains("الاسبوعية") | db_mod.Winner.draw_type.contains("الأسبوعية"))
+                ).all() if w[0]
+            }
+
+            grand_prize_won_numbers = set()
+            if self.draw_name == "الجائزة الكبرى" and self.periods_count > 1:
+                grand_prize_won_numbers = {
+                    w[0] for w in bg_db.query(db_mod.Winner.subscriber_number).filter(
+                        db_mod.Winner.draw_type.contains("الجائزة الكبرى"),
+                        db_mod.Winner.draw_type.contains(f"الفترة {self.selected_period}")
+                    ).all() if w[0]
+                }
+
+            qualified_by_category = {}
+            qualified_ids = []
+
+            for sub in disciplined_subs:
+                payments = payments_by_sub.get(sub.id, [])
+                if not payments:
+                    continue
+
+                cat = cats_map.get(sub.category)
+                max_inst = cat.max_installments if cat else 0
+                total_expected_for_cycle = (cat.amount * max_inst) if cat else 0
+                total_paid_in_cycle = sum(p[3] for p in payments if p[6])
+
+                is_cycle_finished = (total_paid_in_cycle >= total_expected_for_cycle - 0.01) and all(p[6] for p in payments)
+                last_payment_date = payments[-1][4] if payments else today
+                is_date_reached = today >= last_payment_date if last_payment_date else True
+
+                is_incentive = True
+                has_paid_something = False
+                late_count = 0
+
+                for p in payments:
+                    p_due = p[4]
+                    p_paid = p[5]
+                    p_is_paid = p[6]
+                    if p_due and p_due.date() <= today_date:
+                        if not p_is_paid:
+                            late_count += 1
+                        else:
+                            has_paid_something = True
+                            if p_paid and p_paid.date() > p_due.date():
+                                late_count += 1
+                    else:
+                        if p_is_paid:
+                            has_paid_something = True
+                            if p_paid and p_due and p_paid.date() > p_due.date():
+                                late_count += 1
+
+                if late_count > max_late_allowed:
+                    is_incentive = False
+
+                if "الاسبوعية" in self.draw_name or "الأسبوعية" in self.draw_name:
+                    if sub.subscriber_number in weekly_winners_sub_numbers:
+                        continue
+                    if is_cycle_finished and is_date_reached:
+                        qualified_ids.append(sub.id)
+                        qualified_by_category.setdefault(sub.category, []).append(sub.id)
+                elif self.draw_name == "الجائزة التحفيزية":
+                    if is_incentive and has_paid_something:
+                        qualified_ids.append(sub.id)
+                        qualified_by_category.setdefault(sub.category, []).append(sub.id)
+                else:
+                    # الجائزة الكبرى
+                    if self.periods_count > 1:
+                        if sub.subscriber_number in grand_prize_won_numbers:
+                            continue
+                        req_weeks = self.selected_period * self.weeks_per_period
+                        period_payments = [p for p in payments if (p[2] or 0) <= req_weeks]
+                        if not period_payments:
+                            continue
+                        is_period_paid = all(p[6] for p in period_payments)
+                        last_period_date = period_payments[-1][4] if period_payments else today
+                        is_period_date_reached = today >= last_period_date if last_period_date else True
+                        if is_period_paid and is_period_date_reached:
+                            qualified_ids.append(sub.id)
+                            qualified_by_category.setdefault(sub.category, []).append(sub.id)
+                    else:
+                        if is_cycle_finished and is_date_reached:
+                            qualified_ids.append(sub.id)
+                            qualified_by_category.setdefault(sub.category, []).append(sub.id)
+
+            self.finished.emit(qualified_by_category, qualified_ids, disqualified_count)
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            bg_db.close()
+
+
 class DrawMixin:
     def show_draw_management(self):
         page = self._ensure_page('page_draw', self.init_draw_page)
@@ -1265,150 +1443,48 @@ class DrawMixin:
                     return
                 selected_period = dlg.get_selected_period()
 
-        # 1. Get accepted subscribers
-        all_subs = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
-        qualified_subs = []
+        # إظهار نافذة التحميل فوراً لمنع أي تهنيج أو تأخير في استجابة الواجهة
+        if hasattr(self, 'show_loading'):
+            self.show_loading("جاري تجهيز السحب", "يرجى الانتظار، جاري فحص أهلية المشتركين وتجهيز القرعة...")
+
+        if hasattr(self, '_draw_qual_worker') and self._draw_qual_worker.isRunning():
+            self._draw_qual_worker.quit()
+            self._draw_qual_worker.wait(100)
+
+        self._draw_qual_worker = DrawQualificationWorker(
+            draw_name,
+            self.category_selected_cycles,
+            selected_period=selected_period,
+            periods_count=periods_count,
+            weeks_per_period=weeks_per_period
+        )
+
+        def _on_finished(qualified_by_cat_ids, qualified_ids, disqualified_count):
+            if hasattr(self, 'hide_loading'):
+                self.hide_loading()
+            self._execute_draw_flow(draw_name, qualified_by_cat_ids, qualified_ids, disqualified_count, selected_period, periods_count)
+
+        def _on_error(err_msg):
+            if hasattr(self, 'hide_loading'):
+                self.hide_loading()
+            ModernDialog(self, "خطأ", f"حدث خطأ أثناء فحص المشتركين: {err_msg}").exec()
+
+        self._draw_qual_worker.finished.connect(_on_finished)
+        self._draw_qual_worker.error.connect(_on_error)
+        self._draw_qual_worker.start()
+
+    def _execute_draw_flow(self, draw_name, qualified_by_cat_ids, qualified_ids, disqualified_count, selected_period, periods_count):
+        # جلب كائنات المشتركين المؤهلين فقط
+        subs_list = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.id.in_(qualified_ids)).all() if qualified_ids else []
+        sub_dict = {s.id: s for s in subs_list}
+
+        qualified_subs = [sub_dict[sid] for sid in qualified_ids if sid in sub_dict]
         qualified_by_category = {}
-        disqualified_count = 0
-        
-        today = datetime.datetime.now()
-        
-        # تحسين فائق: حساب الانضباط المالي دفعة واحدة لكافة المشتركين
-        fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db)
-        cats_map = {c.name: c for c in self.db.query(db_mod.Category).all()}
-        
-        disciplined_subs = []
-        for s in all_subs:
-            fin_status = fin_status_map.get(s.id)
-            if fin_status in ["late", "suspended"]:
-                disqualified_count += 1
-            else:
-                disciplined_subs.append(s)
-                
-        sub_ids = [s.id for s in disciplined_subs]
-        
-        # جلب الدورات النشطة دفعة واحدة
-        active_cycles = dict(
-            self.db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
-            .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
-            .group_by(db_mod.Payment.subscriber_id)
-            .all()
-        ) if sub_ids else {}
+        for cat, sids in qualified_by_cat_ids.items():
+            cat_subs = [sub_dict[sid] for sid in sids if sid in sub_dict]
+            if cat_subs:
+                qualified_by_category[cat] = cat_subs
 
-        # تحديد الدورة المطلوبة لكل مشترك
-        needed_sub_cycles = {}
-        for sub in disciplined_subs:
-            cat_selected = self.category_selected_cycles.get(sub.category, "auto")
-            if cat_selected != "auto" and isinstance(cat_selected, int):
-                sub_current_cycle = cat_selected
-            else:
-                sub_current_cycle = active_cycles.get(sub.id, 1)
-            needed_sub_cycles[sub.id] = sub_current_cycle
-
-        # جلب جميع أقساط الدورات المطلوبة بهؤلاء المشتركين فقط دفعة واحدة
-        needed_cycles_set = set(needed_sub_cycles.values()) if needed_sub_cycles else {1}
-        raw_payments = self.db.query(db_mod.Payment).filter(
-            db_mod.Payment.subscriber_id.in_(sub_ids),
-            db_mod.Payment.cycle_number.in_(needed_cycles_set)
-        ).order_by(db_mod.Payment.installment_number.asc()).all() if sub_ids else []
-
-        payments_by_sub = {}
-        for p in raw_payments:
-            if p.cycle_number == needed_sub_cycles.get(p.subscriber_id):
-                payments_by_sub.setdefault(p.subscriber_id, []).append(p)
-
-        max_late_allowed = self._get_incentive_max_late()
-
-        # جلب أرقام المشتركين الذين فازوا مسبقاً في القرعة الأسبوعية لمنع دخولهم مرة أخرى
-        weekly_winners_sub_numbers = {
-            w[0] for w in self.db.query(db_mod.Winner.subscriber_number).filter(
-                (db_mod.Winner.draw_type.contains("الاسبوعية") | db_mod.Winner.draw_type.contains("الأسبوعية"))
-            ).all() if w[0]
-        }
-
-        for sub in disciplined_subs:
-            payments = payments_by_sub.get(sub.id, [])
-            if not payments:
-                continue
-
-            # Find category for max_installments
-            cat = cats_map.get(sub.category)
-            max_inst = cat.max_installments if cat else 0
-
-            # الأهلية: سداد كامل المبلغ المطلوب للدورة (مثلاً: 12 قسط × 1000 ريال)
-            total_expected_for_cycle = (cat.amount * max_inst) if cat else 0
-            total_paid_in_cycle = sum(p.amount for p in payments if p.is_paid)
-            
-            # المشترك مؤهل إذا سدد كامل المبلغ ولم يتبقَ عليه أي سجل غير مدفوع في الدورة
-            is_cycle_finished = (total_paid_in_cycle >= total_expected_for_cycle - 0.01) and all(p.is_paid for p in payments)
-            
-            # التحقق مما إذا كان اليوم الأخير قد وصل
-            last_payment_date = payments[-1].due_date if payments else today
-            is_date_reached = today >= last_payment_date
-
-            is_incentive = True
-            has_paid_something = False
-            max_late_allowed = self._get_incentive_max_late()
-            late_count = 0
-
-            for p in payments:
-                if p.due_date.date() <= today.date():
-                    if not p.is_paid:
-                        late_count += 1
-                    else:
-                        has_paid_something = True
-                        if p.paid_date and p.paid_date.date() > p.due_date.date():
-                            late_count += 1
-                else:
-                    if p.is_paid:
-                        has_paid_something = True
-                        if p.paid_date and p.paid_date.date() > p.due_date.date():
-                            late_count += 1
-
-            if late_count > max_late_allowed:
-                is_incentive = False
-            
-            if "الاسبوعية" in draw_name or "الأسبوعية" in draw_name:
-                # استبعاد المشتركين الذين فازوا سابقاً في أي قرعة أسبوعية من الدخول في السحوبات التالية
-                if sub.subscriber_number in weekly_winners_sub_numbers:
-                    continue
-
-                if is_cycle_finished and is_date_reached:
-                    qualified_subs.append(sub)
-                    if sub.category not in qualified_by_category: qualified_by_category[sub.category] = []
-                    qualified_by_category[sub.category].append(sub)
-            elif draw_name == "الجائزة التحفيزية":
-                if is_incentive and has_paid_something:
-                    qualified_subs.append(sub)
-                    if sub.category not in qualified_by_category: qualified_by_category[sub.category] = []
-                    qualified_by_category[sub.category].append(sub)
-            else:
-                # الجائزة الكبرى: فحص الأهلية بحسب الفترة
-                if periods_count > 1:
-                    already_won = self.db.query(db_mod.Winner).filter(
-                        db_mod.Winner.subscriber_number == sub.subscriber_number,
-                        db_mod.Winner.draw_type.contains("الجائزة الكبرى"),
-                        db_mod.Winner.draw_type.contains(f"الفترة {selected_period}"),
-                        (db_mod.Winner.cycle_number == sub_current_cycle) | (db_mod.Winner.cycle_number == None)
-                    ).first()
-                    if already_won:
-                        continue
-
-                    req_weeks = selected_period * weeks_per_period
-                    period_payments = [p for p in payments if (p.installment_number or 0) <= req_weeks]
-                    if not period_payments:
-                        continue
-
-                    is_period_paid = all(p.is_paid for p in period_payments)
-                    last_period_date = period_payments[-1].due_date if period_payments else today
-                    is_period_date_reached = today >= last_period_date
-
-                    if is_period_paid and is_period_date_reached:
-                        qualified_subs.append(sub)
-                else:
-                    if is_cycle_finished and is_date_reached:
-                        qualified_subs.append(sub)
-        
         draw_title = f"{draw_name} (الفترة {selected_period})" if (draw_name == "الجائزة الكبرى" and periods_count > 1) else draw_name
         if not qualified_subs:
             msg_alert = f"لا يوجد مشتركون مستوفون لشروط {draw_title} حالياً."
@@ -1416,7 +1492,7 @@ class DrawMixin:
                 msg_alert += f"\n\n(تنبيه: تم استبعاد {disqualified_count} مشتركين بسبب عدم الانضباط المالي: متأخر/موقوف)."
             ModernDialog(self, "تنبيه", msg_alert).exec()
             return
-            
+
         if draw_name in ["القرعة الاسبوعية", "الجائزة التحفيزية"]:
             msg = f"هل أنت متأكد من بدء {draw_name}؟ (عدد الفئات المؤهلة: {len(qualified_by_category)})"
             if disqualified_count > 0:
@@ -1427,7 +1503,8 @@ class DrawMixin:
             # Use the animated multi-category draw
             anim_dlg = DrawAnimationDialog(self, qualified_by_category, draw_name, self.db)
             anim_dlg.exec()
-            self.load_recent_winners(); self.refresh_draw_stats()
+            self.load_recent_winners()
+            self.refresh_draw_stats()
             return
 
         msg = f"هل أنت متأكد من بدء {draw_title}؟ (عدد المؤهلين: {len(qualified_subs)})"
@@ -1467,7 +1544,7 @@ class DrawMixin:
                     season_id=w_season_id
                 )
                 self.db.add(new_w)
-                res_msg += f"الاسم: {w.name} - الفئة: {w.category} - رقم الحساب: {w.subscriber_number}\n"
+                res_msg += f"الفئة المالية: {w.category} - رقم المشترك: {w.subscriber_number}\n"
             
             self.db.commit()
             ModernDialog(self, "تم السحب بنجاح", res_msg).exec()
@@ -1503,7 +1580,7 @@ class DrawMixin:
         self.db.commit()
         
         # Show Result
-        res_msg = f"مبروك للفائز في {draw_name}!\n\nالاسم: {winner.name}\nالفئة: {winner.category}\nرقم الحساب: {winner.subscriber_number}\nرقم الهاتف: {winner.phone}"
+        res_msg = f"مبروك للفائز في {draw_name}!\n\nالفئة المالية: {winner.category}\nرقم المشترك: {winner.subscriber_number}"
         ModernDialog(self, "تم السحب بنجاح", res_msg).exec()
         
         self.load_recent_winners()

@@ -414,8 +414,7 @@ class DrawAnimationDialog(QDialog):
         
         self.wheel_container.setStyleSheet("border: 12px solid #facc15; border-radius: 40px; background-color: #1e293b;")
         self.wheel_label.setStyleSheet("font-size: 110px; font-weight: 900; color: #facc15;")
-        winner_name = winner_sub.name or "غير محدد"
-        self.status_label.setText(f"🎉 مبروك للفائز: {winner_name} (رقم: {winner_sub.subscriber_number})")
+        self.status_label.setText(f"🎉 الفائز في فئة {cat_name}: رقم المشترك ({winner_sub.subscriber_number})")
         
         # Calculate active cycle
         active_p = self.db.query(db_mod.Payment).filter(
@@ -442,18 +441,51 @@ class DrawAnimationDialog(QDialog):
         for i in reversed(range(self.layout.count())):
             if self.layout.itemAt(i).widget(): self.layout.itemAt(i).widget().setParent(None)
         
-        title = QLabel("🏆 التقرير النهائي للفائزين بالسحب"); title.setStyleSheet("font-size: 34px; color: #4ade80; font-weight: bold; margin-bottom: 20px;"); title.setAlignment(Qt.AlignmentFlag.AlignCenter); self.layout.addWidget(title)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setStyleSheet("background: transparent; border: none;"); scroll_content = QWidget(); scroll_layout = QVBoxLayout(scroll_content)
+        title = QLabel("🏆 التقرير النهائي للفائزين بالسحب")
+        title.setStyleSheet("font-size: 34px; color: #4ade80; font-weight: bold; margin-bottom: 20px;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(title)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background: transparent; border: none;")
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
         
         for cat, sub in self.winners:
-            card = QFrame(); card.setStyleSheet("background-color: #1e293b; border-radius: 15px; border: 1px solid #334155; margin: 10px; padding: 20px;")
+            card = QFrame()
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: #1e293b;
+                    border-radius: 15px;
+                    border: 2px solid #2e7d32;
+                    margin: 8px 30px;
+                    padding: 15px 25px;
+                }
+            """)
             h_lay = QVBoxLayout(card)
-            info = QLabel(f"الفئة: {cat}\nالاسم: {sub.name or '-'}\nرقم المشترك / الحساب: {sub.subscriber_number}\nالهاتف: {sub.phone or '-'}")
-            info.setStyleSheet("font-size: 19px; color: white; line-height: 1.6;")
-            h_lay.addWidget(info); scroll_layout.addWidget(card)
+            h_lay.setSpacing(6)
+            
+            cat_lbl = QLabel(f"الفئة المالية: {cat}")
+            cat_lbl.setStyleSheet("font-size: 18px; color: #94a3b8; font-weight: bold;")
+            
+            sub_lbl = QLabel(f"رقم المشترك: {sub.subscriber_number}")
+            sub_lbl.setStyleSheet("font-size: 26px; color: #4ade80; font-weight: 900;")
+            
+            h_lay.addWidget(cat_lbl)
+            h_lay.addWidget(sub_lbl)
+            scroll_layout.addWidget(card)
         
-        scroll_layout.addStretch(); scroll.setWidget(scroll_content); self.layout.addWidget(scroll)
-        btn_close = QPushButton("إغلاق والعودة للسجل"); btn_close.setObjectName("PrimaryBtn"); btn_close.setFixedWidth(300); btn_close.setFixedHeight(50); btn_close.clicked.connect(self.accept); self.layout.addWidget(btn_close, 0, Qt.AlignmentFlag.AlignCenter)
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        self.layout.addWidget(scroll)
+        
+        btn_close = QPushButton("إغلاق والعودة للسجل")
+        btn_close.setObjectName("PrimaryBtn")
+        btn_close.setFixedWidth(300)
+        btn_close.setFixedHeight(50)
+        btn_close.clicked.connect(self.accept)
+        self.layout.addWidget(btn_close, 0, Qt.AlignmentFlag.AlignCenter)
 
 class SubscriberEditDialog(QDialog):
     def __init__(self, parent, sub):

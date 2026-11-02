@@ -309,7 +309,7 @@
                     drawState.lastPerformedWinner = firstW;
 
                     rollerNum.textContent = firstW.subscriber_number;
-                    rollerName.textContent = firstW.subscriber_name;
+                    rollerName.textContent = `رقم المشترك: ${firstW.subscriber_number}`;
                     rollerCat.textContent = `الفئة: ${firstW.category}`;
                     statusText.textContent = '🎉 مبروك! تم اختيار الفائز وحفظ النتيجة بقاعدة البيانات.';
                     statusText.style.color = '#4ade80';
@@ -325,8 +325,7 @@
                             </div>
                             ${winners.map(w => `
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 0.84rem; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px; margin-bottom: 6px;">
-                                    <div><span style="color: #94a3b8;">اسم الفائز:</span> <strong>${w.subscriber_name}</strong></div>
-                                    <div><span style="color: #94a3b8;">رقم الحساب:</span> <strong>${w.subscriber_number}</strong></div>
+                                    <div><span style="color: #94a3b8;">رقم المشترك:</span> <strong style="color: #4ade80;">${w.subscriber_number}</strong></div>
                                     <div><span style="color: #94a3b8;">الفئة المالية:</span> <span>${w.category}</span></div>
                                     <div><span style="color: #94a3b8;">نوع السحب:</span> <span style="color: #facc15;">${w.draw_name}</span></div>
                                 </div>
