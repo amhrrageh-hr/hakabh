@@ -19,6 +19,148 @@ import database as db_mod
 from gui.utils import reshape_text, ServerWorker
 from gui.dialogs import *
 
+
+class _ExportSubscribersExcelWorker(QThread):
+    """Worker thread لتصدير كشف المشتركين إلى Excel في الخلفية"""
+    progress = pyqtSignal(int, int, str)
+    finished = pyqtSignal(str)
+    error    = pyqtSignal(str)
+
+    def __init__(self, db_url, filename):
+        super().__init__()
+        self.db_url = db_url
+        self.filename = filename
+
+    def run(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        kw = {"check_same_thread": False} if "sqlite" in self.db_url else {}
+        engine  = create_engine(self.db_url, connect_args=kw)
+        Session = sessionmaker(bind=engine)
+        db      = Session()
+        try:
+            self.progress.emit(0, 0, "جاري استعلام بيانات المشتركين...")
+            subs = db.query(db_mod.Subscriber).all()
+            data = [{"الاسم": s.name, "الهاتف": s.phone, "رقم الحساب": s.subscriber_number, "الفئة": s.category} for s in subs]
+            df = pd.DataFrame(data)
+
+            self.progress.emit(0, 0, "جاري بناء وتنسيق ملف Excel...")
+            with pd.ExcelWriter(self.filename, engine='xlsxwriter') as writer:
+                df.to_excel(writer, sheet_name='Subscribers', index=False, startrow=3)
+                workbook = writer.book
+                worksheet = writer.sheets['Subscribers']
+                header_fmt = workbook.add_format({'bold': True, 'bg_color': '#2e7d32', 'color': 'white', 'border': 1, 'align': 'center'})
+                title_fmt = workbook.add_format({'bold': True, 'font_size': 16, 'color': '#2e7d32'})
+                worksheet.write(0, 0, "تقرير عام لجميع المشتركين", title_fmt)
+                worksheet.write(1, 0, f"تاريخ الاستخراج: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+                for col_num, value in enumerate(df.columns.values):
+                    worksheet.write(3, col_num, value, header_fmt)
+                    column_len = max(df[value].astype(str).str.len().max(), len(value) + 2)
+                    worksheet.set_column(col_num, col_num, column_len)
+
+            self.finished.emit(self.filename)
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            db.close()
+            engine.dispose()
+
+
+class _ExportSubscribersPdfWorker(QThread):
+    """Worker thread لتصدير كشف المشتركين إلى PDF في الخلفية"""
+    progress = pyqtSignal(int, int, str)
+    finished = pyqtSignal(str)
+    error    = pyqtSignal(str)
+
+    def __init__(self, db_url, filename):
+        super().__init__()
+        self.db_url = db_url
+        self.filename = filename
+
+    def run(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        kw = {"check_same_thread": False} if "sqlite" in self.db_url else {}
+        engine  = create_engine(self.db_url, connect_args=kw)
+        Session = sessionmaker(bind=engine)
+        db      = Session()
+        try:
+            self.progress.emit(0, 0, "جاري استعلام بيانات المشتركين...")
+            subs = db.query(db_mod.Subscriber).all()
+
+            self.progress.emit(0, len(subs), "جاري إعداد قالب الـ PDF...")
+            c = canvas.Canvas(self.filename, pagesize=A4)
+            width, height = A4
+            margin = 40
+            GOLD        = colors.HexColor("#c9a84c")
+            DARK_GREEN  = colors.HexColor("#052109")
+            MID_GREEN   = colors.HexColor("#0a3d0e")
+            ROW_ALT     = colors.HexColor("#f1f8f1")
+
+            possible_fonts = [
+                "C:/Windows/Fonts/arial.ttf",
+                "C:/Windows/Fonts/tahoma.ttf",
+                "static/arial.ttf"
+            ]
+            font_path = next((p for p in possible_fonts if os.path.exists(p)), None)
+            font_name = 'ArabicFont'
+            try:
+                if font_path: pdfmetrics.registerFont(TTFont('ArabicFont', font_path))
+                else: font_name = 'Helvetica'
+            except: font_name = 'Helvetica'
+
+            # --- الترويسة الاحترافية ---
+            c.setFillColor(DARK_GREEN)
+            c.rect(0, height - 80, width, 80, fill=1, stroke=0)
+
+            c.setFillColor(GOLD)
+            c.setFont(font_name, 20)
+            c.drawCentredString(width/2, height - 40, reshape_text("هكبة المليون - قائمة المشتركين"))
+
+            c.setFillColor(colors.white)
+            c.setFont(font_name, 10)
+            c.drawCentredString(width/2, height - 60, reshape_text("تقرير إداري عام لجميع الفئات المسجلة"))
+
+            # --- جدول البيانات ---
+            c.setFillColor(colors.black)
+            y = height - 120
+            headers = ["الاسم", "الهاتف", "رقم الحساب", "الفئة"]
+            col_x = [margin+10, margin+160, margin+280, margin+400]
+
+            c.setFillColor(MID_GREEN)
+            c.rect(margin, y - 5, width - 2*margin, 20, fill=1)
+            c.setFillColor(GOLD)
+            c.setFont(font_name, 11)
+            for i, h in enumerate(headers): c.drawString(col_x[i], y, reshape_text(h))
+
+            y -= 30
+            c.setFont(font_name, 10)
+            total = len(subs)
+            for idx, s in enumerate(subs):
+                if idx % 50 == 0:
+                    self.progress.emit(idx + 1, total, f"جاري كتابة السجلات ({idx+1}/{total})")
+                if y < 60:
+                    c.showPage()
+                    y = height - 50
+                    c.setFont(font_name, 10)
+                if idx % 2 == 1:
+                    c.setFillColor(ROW_ALT)
+                    c.rect(margin, y - 5, width - 2*margin, 18, fill=1)
+                c.setFillColor(colors.black)
+                c.drawString(col_x[0], y, reshape_text((s.name or "")[:35]))
+                c.drawString(col_x[1], y, reshape_text(s.phone or ""))
+                c.drawString(col_x[2], y, reshape_text(s.subscriber_number or ""))
+                c.drawString(col_x[3], y, reshape_text(s.category or ""))
+                y -= 20
+
+            c.save()
+            self.finished.emit(self.filename)
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            db.close()
+            engine.dispose()
+
 class SubscribersMixin:
     def init_subscribers_page(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(40, 40, 40, 40); layout.setSpacing(20)
@@ -47,19 +189,19 @@ class SubscribersMixin:
         btn_refresh.setObjectName("PrimaryBtn")
         btn_refresh.clicked.connect(self.load_subscribers)
         
-        btn_excel = QPushButton("تصدير Excel")
-        btn_excel.setFixedWidth(120)
-        btn_excel.setObjectName("PrimaryBtn")
-        btn_excel.clicked.connect(self.export_subscribers_excel)
+        self.btn_sub_excel = QPushButton("تصدير Excel")
+        self.btn_sub_excel.setFixedWidth(120)
+        self.btn_sub_excel.setObjectName("PrimaryBtn")
+        self.btn_sub_excel.clicked.connect(self.export_subscribers_excel)
         
-        btn_pdf = QPushButton("تصدير PDF")
-        btn_pdf.setFixedWidth(120)
-        btn_pdf.setObjectName("DangerBtn")
-        btn_pdf.clicked.connect(self.export_subscribers_pdf)
+        self.btn_sub_pdf = QPushButton("تصدير PDF")
+        self.btn_sub_pdf.setFixedWidth(120)
+        self.btn_sub_pdf.setObjectName("DangerBtn")
+        self.btn_sub_pdf.clicked.connect(self.export_subscribers_pdf)
         
         header.addStretch()
-        header.addWidget(btn_excel)
-        header.addWidget(btn_pdf)
+        header.addWidget(self.btn_sub_excel)
+        header.addWidget(self.btn_sub_pdf)
         header.addWidget(btn_batch)
         header.addWidget(btn_refresh)
         layout.addLayout(header)
@@ -915,112 +1057,76 @@ class SubscribersMixin:
         filename, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المشتركين (Excel)", "subscribers_report.xlsx", "Excel Files (*.xlsx)")
         if not filename: return
 
-        if hasattr(self, 'show_loading'):
-            self.show_loading("جاري تصدير الملف", "يرجى الانتظار، جاري تجميع وتنسيق بيانات المشتركين...")
-
         try:
-            subs = self.db.query(db_mod.Subscriber).all()
-            data = [{"الاسم": s.name, "الهاتف": s.phone, "رقم الحساب": s.subscriber_number, "الفئة": s.category} for s in subs]
-            df = pd.DataFrame(data)
-            
-            with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
-                df.to_excel(writer, sheet_name='Subscribers', index=False, startrow=3)
-                workbook = writer.book
-                worksheet = writer.sheets['Subscribers']
-                header_fmt = workbook.add_format({'bold': True, 'bg_color': '#2e7d32', 'color': 'white', 'border': 1, 'align': 'center'})
-                title_fmt = workbook.add_format({'bold': True, 'font_size': 16, 'color': '#2e7d32'})
-                worksheet.write(0, 0, "تقرير عام لجميع المشتركين", title_fmt)
-                worksheet.write(1, 0, f"تاريخ الاستخراج: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
-                for col_num, value in enumerate(df.columns.values):
-                    worksheet.write(3, col_num, value, header_fmt)
-                    column_len = max(df[value].astype(str).str.len().max(), len(value) + 2)
-                    worksheet.set_column(col_num, col_num, column_len)
+            db_url = str(self.db.get_bind().url)
+        except Exception:
+            db_url = db_mod.get_local_database_url()
 
-            if hasattr(self, 'hide_loading'):
-                self.hide_loading()
-            ModernDialog(self, "نجاح", f"تم تصدير ملف {filename} بنجاح").exec()
-        except Exception as e:
-            if hasattr(self, 'hide_loading'):
-                self.hide_loading()
-            ModernDialog(self, "خطأ", str(e)).exec()
+        if hasattr(self, 'btn_sub_excel'):
+            self.btn_sub_excel.setEnabled(False)
+
+        self._sub_loading = LoadingDialog(
+            self,
+            title="⏳ جاري تصدير المشتركين...",
+            message="يرجى الانتظار، جاري تجميع وتنسيق بيانات المشتركين..."
+        )
+        self._sub_loading.show()
+
+        self._sub_excel_worker = _ExportSubscribersExcelWorker(db_url, filename)
+        self._sub_excel_worker.progress.connect(self._on_sub_export_progress)
+        self._sub_excel_worker.finished.connect(self._on_sub_excel_finished)
+        self._sub_excel_worker.error.connect(self._on_sub_export_error)
+        self._sub_excel_worker.start()
 
     def export_subscribers_pdf(self):
         filename, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المشتركين (PDF)", "subscribers_report.pdf", "PDF Files (*.pdf)")
         if not filename: return
 
-        if hasattr(self, 'show_loading'):
-            self.show_loading("جاري إنشاء التقرير", "يرجى الانتظار، جاري توليد ملف PDF وتنسيق الجداول...")
-
         try:
-            subs = self.db.query(db_mod.Subscriber).all()
-            
-            c = canvas.Canvas(filename, pagesize=A4)
-            width, height = A4
-            margin = 40
-            GOLD        = colors.HexColor("#c9a84c")
-            DARK_GREEN  = colors.HexColor("#052109")
-            MID_GREEN   = colors.HexColor("#0a3d0e")
-            ROW_ALT     = colors.HexColor("#f1f8f1")
-            
-            # Register Arabic Font (Try common Windows path)
-            possible_fonts = [
-                "C:/Windows/Fonts/arial.ttf",
-                "C:/Windows/Fonts/tahoma.ttf",
-                "static/arial.ttf"
-            ]
-            font_path = next((p for p in possible_fonts if os.path.exists(p)), None)
-            font_name = 'ArabicFont'
-            try:
-                if font_path: pdfmetrics.registerFont(TTFont('ArabicFont', font_path))
-                else: font_name = 'Helvetica'
-            except: font_name = 'Helvetica'
+            db_url = str(self.db.get_bind().url)
+        except Exception:
+            db_url = db_mod.get_local_database_url()
 
-            # --- الترويسة الاحترافية ---
-            c.setFillColor(DARK_GREEN)
-            c.rect(0, height - 80, width, 80, fill=1, stroke=0)
-            
-            c.setFillColor(GOLD)
-            c.setFont(font_name, 20)
-            c.drawCentredString(width/2, height - 40, reshape_text("هكبة المليون - قائمة المشتركين"))
-            
-            c.setFillColor(colors.white)
-            c.setFont(font_name, 10)
-            c.drawCentredString(width/2, height - 60, reshape_text("تقرير إداري عام لجميع الفئات المسجلة"))
+        if hasattr(self, 'btn_sub_pdf'):
+            self.btn_sub_pdf.setEnabled(False)
 
-            # --- جدول البيانات ---
-            c.setFillColor(colors.black)
-            y = height - 120
-            headers = ["الاسم", "الهاتف", "رقم الحساب", "الفئة"]
-            col_x = [margin+10, margin+160, margin+280, margin+400]
-            
-            c.setFillColor(MID_GREEN)
-            c.rect(margin, y - 5, width - 2*margin, 20, fill=1)
-            c.setFillColor(GOLD)
-            c.setFont(font_name, 11)
-            for i, h in enumerate(headers): c.drawString(col_x[i], y, reshape_text(h))
-            
-            y -= 30
-            c.setFont(font_name, 10)
-            for idx, s in enumerate(subs):
-                if y < 60:
-                    c.showPage()
-                    y = height - 50
-                    c.setFont(font_name, 10)
-                if idx % 2 == 1:
-                    c.setFillColor(ROW_ALT)
-                    c.rect(margin, y - 5, width - 2*margin, 18, fill=1)
-                c.setFillColor(colors.black)
-                c.drawString(col_x[0], y, reshape_text((s.name or "")[:35]))
-                c.drawString(col_x[1], y, reshape_text(s.phone or ""))
-                c.drawString(col_x[2], y, reshape_text(s.subscriber_number or ""))
-                c.drawString(col_x[3], y, reshape_text(s.category or ""))
-                y -= 20
-                
-            c.save()
-            if hasattr(self, 'hide_loading'):
-                self.hide_loading()
-            ModernDialog(self, "نجاح", f"تم تصدير ملف {filename} بنجاح").exec()
-        except Exception as e:
-            if hasattr(self, 'hide_loading'):
-                self.hide_loading()
-            ModernDialog(self, "خطأ", str(e)).exec()
+        self._sub_loading = LoadingDialog(
+            self,
+            title="⏳ جاري إنشاء التقرير...",
+            message="يرجى الانتظار، جاري توليد ملف PDF وتنسيق الجداول..."
+        )
+        self._sub_loading.show()
+
+        self._sub_pdf_worker = _ExportSubscribersPdfWorker(db_url, filename)
+        self._sub_pdf_worker.progress.connect(self._on_sub_export_progress)
+        self._sub_pdf_worker.finished.connect(self._on_sub_pdf_finished)
+        self._sub_pdf_worker.error.connect(self._on_sub_export_error)
+        self._sub_pdf_worker.start()
+
+    def _on_sub_export_progress(self, current: int, total: int, msg: str):
+        if hasattr(self, '_sub_loading') and self._sub_loading:
+            if total > 0:
+                self._sub_loading.progress_bar.setRange(0, total)
+                self._sub_loading.progress_bar.setValue(current)
+            self._sub_loading.set_message(msg)
+
+    def _on_sub_excel_finished(self, filename: str):
+        self._cleanup_sub_export()
+        ModernDialog(self, "نجاح", f"تم تصدير ملف {filename} بنجاح").exec()
+
+    def _on_sub_pdf_finished(self, filename: str):
+        self._cleanup_sub_export()
+        ModernDialog(self, "نجاح", f"تم تصدير ملف {filename} بنجاح").exec()
+
+    def _on_sub_export_error(self, err_msg: str):
+        self._cleanup_sub_export()
+        ModernDialog(self, "خطأ", f"حدث خطأ أثناء التصدير:\n{err_msg}").exec()
+
+    def _cleanup_sub_export(self):
+        if hasattr(self, '_sub_loading') and self._sub_loading:
+            self._sub_loading.close()
+            self._sub_loading = None
+        if hasattr(self, 'btn_sub_excel'):
+            self.btn_sub_excel.setEnabled(True)
+        if hasattr(self, 'btn_sub_pdf'):
+            self.btn_sub_pdf.setEnabled(True)
