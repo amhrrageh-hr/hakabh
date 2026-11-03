@@ -4,6 +4,8 @@ from sqlalchemy.orm import sessionmaker, relationship, Session
 import sys
 import os
 import datetime
+import threading
+import time as _time
 
 try:
     from dotenv import load_dotenv
@@ -20,6 +22,17 @@ except ImportError:
     pass
 
 from sqlalchemy.engine import Engine
+
+# =====================================================================
+#  نظام قاعدة بيانات هجين (Hybrid) - أونلاين/أوفلاين
+#  - عند توفر الإنترنت: يتصل بـ PostgreSQL على Railway
+#  - عند انقطاع الإنترنت: يعمل بـ SQLite المحلي مؤقتاً
+#  - عند عودة الإنترنت: يُزامن البيانات المحلية مع السيرفر
+# =====================================================================
+
+# الحالة الحالية لوضع قاعدة البيانات
+_db_mode_online = False          # هل نعمل الآن أونلاين؟
+_sync_lock = threading.Lock()    # قفل لمنع التزامن المتزامن
 
 def get_utc_now() -> datetime.datetime:
     """إرجاع التوقيت العالمي الموحد UTC (بدون منطقة زمنية للتوافق التام مع قواعد البيانات)"""
@@ -42,39 +55,104 @@ def get_server_database_url():
         url = url.replace("postgres://", "postgresql://", 1)
     return url
 
+def check_internet_connection(timeout=5) -> bool:
+    """فحص الاتصال بالإنترنت عبر محاولة الوصول إلى Google DNS"""
+    import socket
+    try:
+        socket.setdefaulttimeout(timeout)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+        return True
+    except Exception:
+        return False
+
+def check_server_connection(server_url: str, timeout=8) -> bool:
+    """محاولة الاتصال الفعلي بخادم PostgreSQL"""
+    if not server_url:
+        return False
+    try:
+        import psycopg2
+        # استخراج بيانات الاتصال من الـ URL
+        test_engine = create_engine(
+            server_url,
+            connect_args={"connect_timeout": timeout},
+            pool_pre_ping=True
+        )
+        with test_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        test_engine.dispose()
+        return True
+    except Exception as e:
+        print(f"[DB-Hybrid] Server connection failed: {e}")
+        return False
+
 def get_database_url():
-    # الوضع الافتراضي لتشغيل التطبيق هو قاعدة البيانات المحلية دائماً
-    # يتم التحويل للسيرفر عند تحديد DB_MODE=server أو عند العمل في منصة سحابية (Railway / Render)
-    db_mode = os.getenv("DB_MODE", "").lower().strip()
-    if db_mode == "server" or os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER"):
+    """
+    تحديد URL قاعدة البيانات بشكل ذكي:
+    - إذا كان في بيئة Railway/Render: استخدم PostgreSQL مباشرة
+    - إذا كان على الجهاز المحلي: فحص الاتصال أولاً
+      - متصل بالإنترنت وبالسيرفر → PostgreSQL
+      - غير متصل → SQLite المحلي
+    """
+    global _db_mode_online
+
+    # البيئات السحابية: استخدم PostgreSQL دائماً بدون فحص
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER"):
         url = get_server_database_url()
         if url:
+            _db_mode_online = True
+            print("[DB-Hybrid] Mode: CLOUD (Railway/Render) → PostgreSQL")
             return url
-    
-    env_db = os.getenv("DATABASE_URL", "")
-    if env_db and ("postgres" in env_db or "postgresql" in env_db):
-        url = get_server_database_url()
-        if url:
-            return url
-    
+
+    server_url = get_server_database_url()
+
+    # إذا لا يوجد سيرفر مُعرَّف أصلاً، استخدم المحلي مباشرة
+    if not server_url:
+        _db_mode_online = False
+        print("[DB-Hybrid] Mode: LOCAL (no server URL configured) → SQLite")
+        return get_local_database_url()
+
+    # فحص الاتصال بالإنترنت أولاً (سريع)
+    print("[DB-Hybrid] Checking internet connection...")
+    has_internet = check_internet_connection(timeout=5)
+
+    if has_internet:
+        # فحص الاتصال الفعلي بالسيرفر
+        print("[DB-Hybrid] Internet OK. Checking server connection...")
+        server_ok = check_server_connection(server_url, timeout=8)
+        if server_ok:
+            _db_mode_online = True
+            print("[DB-Hybrid] Mode: ONLINE → PostgreSQL (Railway)")
+            return server_url
+        else:
+            print("[DB-Hybrid] Server unreachable. Falling back to local SQLite.")
+    else:
+        print("[DB-Hybrid] No internet. Using local SQLite.")
+
+    _db_mode_online = False
+    print("[DB-Hybrid] Mode: OFFLINE → SQLite (local)")
     return get_local_database_url()
+
+def is_online_mode() -> bool:
+    """إرجاع الوضع الحالي: True = أونلاين (PostgreSQL), False = أوفلاين (SQLite)"""
+    return _db_mode_online
 
 DATABASE_URL = get_database_url()
 print(f"[Database] Initialized with: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
 
 def create_configured_engine(url):
-    connect_args = {"check_same_thread": False, "timeout": 30.0} if url.startswith("sqlite") else {}
     if url.startswith("sqlite"):
+        connect_args = {"check_same_thread": False, "timeout": 30.0}
         return create_engine(url, connect_args=connect_args)
     else:
         # إعدادات التوصيل للشبكات والـ Remote PostgreSQL
         return create_engine(
             url,
-            connect_args=connect_args,
-            pool_size=10,
-            max_overflow=20,
+            connect_args={"connect_timeout": 10},
+            pool_size=5,
+            max_overflow=10,
             pool_pre_ping=True,
-            pool_recycle=300
+            pool_recycle=300,
+            pool_timeout=15
         )
 
 engine = create_configured_engine(DATABASE_URL)
@@ -98,12 +176,13 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def reconnect_engine(new_url=None):
     """إعادة تهيئة اتصال قاعدة البيانات في حال تغيير الإعدادات"""
-    global DATABASE_URL, engine, SessionLocal
+    global DATABASE_URL, engine, SessionLocal, _db_mode_online
     if new_url:
         DATABASE_URL = new_url
+        _db_mode_online = not new_url.startswith("sqlite")
     else:
         DATABASE_URL = get_database_url()
-    
+
     if engine:
         try:
             engine.dispose()
@@ -112,6 +191,165 @@ def reconnect_engine(new_url=None):
     engine = create_configured_engine(DATABASE_URL)
     SessionLocal.configure(bind=engine)
     return engine
+
+# =====================================================================
+#  مزامنة البيانات: SQLite → PostgreSQL عند عودة الإنترنت
+# =====================================================================
+
+# الجداول التي يتم مزامنتها (مرتبة حسب الاعتمادية)
+SYNC_TABLES_ORDER = [
+    "seasons", "categories", "subscriber_numbers",
+    "subscribers", "staff", "payments", "winners",
+    "expenses", "settings", "admin_notifications",
+    "subscriber_messages", "visit_logs"
+]
+
+def sync_local_to_server():
+    """
+    مزامنة بيانات SQLite المحلي إلى PostgreSQL على Railway.
+    يُستدعى تلقائياً عند الانتقال من أوفلاين إلى أونلاين.
+    يستخدم INSERT ... ON CONFLICT DO UPDATE (upsert) لتجنب التكرار.
+    """
+    with _sync_lock:
+        server_url = get_server_database_url()
+        local_url = get_local_database_url()
+
+        if not server_url:
+            print("[Sync] No server URL. Skipping sync.")
+            return False
+
+        print("[Sync] Starting local → server sync...")
+        try:
+            local_engine = create_configured_engine(local_url)
+            server_engine = create_configured_engine(server_url)
+
+            # فحص أن السيرفر متاح
+            with server_engine.connect() as _conn:
+                _conn.execute(text("SELECT 1"))
+
+            LocalSession = sessionmaker(bind=local_engine)
+            ServerSession = sessionmaker(bind=server_engine)
+
+            local_db = LocalSession()
+            server_db = ServerSession()
+
+            try:
+                synced_tables = 0
+                for table_name in SYNC_TABLES_ORDER:
+                    try:
+                        rows = local_db.execute(text(f"SELECT * FROM {table_name}")).fetchall()
+                        if not rows:
+                            continue
+
+                        keys = local_db.execute(
+                            text(f"PRAGMA table_info({table_name})")
+                        ).fetchall() if local_url.startswith("sqlite") else []
+
+                        col_names = [r[1] for r in keys] if keys else list(rows[0]._mapping.keys())
+
+                        for row in rows:
+                            row_dict = dict(zip(col_names, row))
+                            # upsert: أدخل أو حدّث إذا كان id موجوداً
+                            cols = ", ".join(col_names)
+                            placeholders = ", ".join([f":{c}" for c in col_names])
+                            update_set = ", ".join([
+                                f"{c} = EXCLUDED.{c}"
+                                for c in col_names if c != "id"
+                            ])
+                            upsert_sql = text(f"""
+                                INSERT INTO {table_name} ({cols})
+                                VALUES ({placeholders})
+                                ON CONFLICT (id) DO UPDATE SET {update_set}
+                            """)
+                            server_db.execute(upsert_sql, row_dict)
+
+                        server_db.commit()
+                        synced_tables += 1
+                        print(f"[Sync] ✅ {table_name}: {len(rows)} records synced")
+                    except Exception as e:
+                        server_db.rollback()
+                        print(f"[Sync] ⚠️ Error syncing {table_name}: {e}")
+
+                print(f"[Sync] Sync complete: {synced_tables}/{len(SYNC_TABLES_ORDER)} tables")
+                return synced_tables > 0
+
+            finally:
+                local_db.close()
+                server_db.close()
+                local_engine.dispose()
+                server_engine.dispose()
+
+        except Exception as e:
+            print(f"[Sync] ❌ Sync failed: {e}")
+            return False
+
+
+def try_switch_to_online():
+    """
+    محاولة التبديل إلى الوضع الأونلاين إذا عاد الإنترنت.
+    يُستدعى دورياً من الـ background thread.
+    يُرجع True إذا تم التبديل بنجاح.
+    """
+    global _db_mode_online
+    if _db_mode_online:
+        return False  # نحن أصلاً أونلاين
+
+    server_url = get_server_database_url()
+    if not server_url:
+        return False
+
+    has_internet = check_internet_connection(timeout=5)
+    if not has_internet:
+        return False
+
+    server_ok = check_server_connection(server_url, timeout=8)
+    if not server_ok:
+        return False
+
+    print("[DB-Hybrid] 🌐 Internet restored! Switching to online mode...")
+
+    # مزامنة البيانات المحلية أولاً قبل التبديل
+    sync_local_to_server()
+
+    # التبديل إلى PostgreSQL
+    reconnect_engine(server_url)
+    _db_mode_online = True
+    print("[DB-Hybrid] ✅ Switched to ONLINE mode (PostgreSQL)")
+    return True
+
+
+def start_connectivity_monitor(check_interval=60, on_mode_change=None):
+    """
+    تشغيل خيط خلفي يراقب الاتصال بالإنترنت كل check_interval ثانية.
+    عند استعادة الاتصال يتحول تلقائياً للأونلاين ويُزامن البيانات.
+    on_mode_change: دالة اختيارية تُستدعى عند تغيير الوضع (True=أونلاين, False=أوفلاين)
+    """
+    def _monitor():
+        global _db_mode_online
+        while True:
+            _time.sleep(check_interval)
+            try:
+                if _db_mode_online:
+                    # فحص أن الاتصال لا يزال شغالاً
+                    server_url = get_server_database_url()
+                    if server_url and not check_server_connection(server_url, timeout=5):
+                        print("[DB-Hybrid] ⚠️ Lost server connection. Switching to offline mode...")
+                        reconnect_engine(get_local_database_url())
+                        _db_mode_online = False
+                        if on_mode_change:
+                            on_mode_change(False)
+                else:
+                    # محاولة العودة للأونلاين
+                    switched = try_switch_to_online()
+                    if switched and on_mode_change:
+                        on_mode_change(True)
+            except Exception as e:
+                print(f"[DB-Monitor] Error: {e}")
+
+    t = threading.Thread(target=_monitor, daemon=True, name="DB-ConnectivityMonitor")
+    t.start()
+    print(f"[DB-Monitor] Started (checking every {check_interval}s)")
+    return t
 
 Base = declarative_base()
 
