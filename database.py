@@ -72,7 +72,7 @@ def verify_and_repair_sqlite_db(db_path: str):
         os.remove(db_path)
         print("[DB-Repair] Removed corrupted DB file, will rebuild fresh schema...")
     except Exception as e:
-        print(f"[DB-Repair] ❌ Could not replace corrupted database: {e}")
+        print(f"[DB-Repair] [ERROR] Could not replace corrupted database: {e}")
 
 def get_local_database_url():
     db_path = get_local_db_path()
@@ -89,34 +89,23 @@ def get_server_database_url():
         url = url.replace("postgres://", "postgresql://", 1)
     return url
 
-def check_internet_connection(timeout=5) -> bool:
-    """فحص الاتصال بالإنترنت عبر محاولة الوصول إلى Google DNS"""
-    import socket
-    try:
-        socket.setdefaulttimeout(timeout)
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
-        return True
-    except Exception:
-        return False
-
-def check_server_connection(server_url: str, timeout=8) -> bool:
-    """محاولة الاتصال الفعلي بخادم PostgreSQL"""
+def check_server_connection(server_url: str, timeout=3) -> bool:
+    """فحص سريع للغاية لإمكانية الوصول إلى خادم PostgreSQL عبر socket مباشر"""
     if not server_url:
         return False
     try:
-        import psycopg2
-        # استخراج بيانات الاتصال من الـ URL
-        test_engine = create_engine(
-            server_url,
-            connect_args={"connect_timeout": timeout},
-            pool_pre_ping=True
-        )
-        with test_engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        test_engine.dispose()
+        import urllib.parse
+        parsed = urllib.parse.urlparse(server_url)
+        host = parsed.hostname
+        port = parsed.port or 5432
+        if not host:
+            return False
+        import socket
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
         return True
     except Exception as e:
-        print(f"[DB-Hybrid] Server connection failed: {e}")
+        print(f"[DB-Hybrid] Server reachability check failed: {e}")
         return False
 
 def get_database_url():
@@ -124,8 +113,8 @@ def get_database_url():
     تحديد URL قاعدة البيانات بشكل ذكي:
     - إذا كان في بيئة Railway/Render: استخدم PostgreSQL مباشرة
     - إذا كان على الجهاز المحلي: فحص الاتصال أولاً
-      - متصل بالإنترنت وبالسيرفر → PostgreSQL
-      - غير متصل → SQLite المحلي
+      - متصل بالسيرفر Railway -> PostgreSQL
+      - غير متصل -> SQLite المحلي
     """
     global _db_mode_online
 
@@ -134,7 +123,7 @@ def get_database_url():
         url = get_server_database_url()
         if url:
             _db_mode_online = True
-            print("[DB-Hybrid] Mode: CLOUD (Railway/Render) → PostgreSQL")
+            print("[DB-Hybrid] Mode: CLOUD (Railway/Render) -> PostgreSQL")
             return url
 
     server_url = get_server_database_url()
@@ -142,28 +131,20 @@ def get_database_url():
     # إذا لا يوجد سيرفر مُعرَّف أصلاً، استخدم المحلي مباشرة
     if not server_url:
         _db_mode_online = False
-        print("[DB-Hybrid] Mode: LOCAL (no server URL configured) → SQLite")
+        print("[DB-Hybrid] Mode: LOCAL (no server URL configured) -> SQLite")
         return get_local_database_url()
 
-    # فحص الاتصال بالإنترنت أولاً (سريع)
-    print("[DB-Hybrid] Checking internet connection...")
-    has_internet = check_internet_connection(timeout=5)
-
-    if has_internet:
-        # فحص الاتصال الفعلي بالسيرفر
-        print("[DB-Hybrid] Internet OK. Checking server connection...")
-        server_ok = check_server_connection(server_url, timeout=8)
-        if server_ok:
-            _db_mode_online = True
-            print("[DB-Hybrid] Mode: ONLINE → PostgreSQL (Railway)")
-            return server_url
-        else:
-            print("[DB-Hybrid] Server unreachable. Falling back to local SQLite.")
+    # فحص الاتصال الفعلي بالسيرفر بسرعة فائقة
+    print("[DB-Hybrid] Checking Railway server reachability...")
+    if check_server_connection(server_url, timeout=3):
+        _db_mode_online = True
+        print("[DB-Hybrid] Mode: ONLINE -> PostgreSQL (Railway)")
+        return server_url
     else:
-        print("[DB-Hybrid] No internet. Using local SQLite.")
+        print("[DB-Hybrid] Server unreachable. Falling back to local SQLite.")
 
     _db_mode_online = False
-    print("[DB-Hybrid] Mode: OFFLINE → SQLite (local)")
+    print("[DB-Hybrid] Mode: OFFLINE -> SQLite (local)")
     return get_local_database_url()
 
 def is_online_mode() -> bool:
@@ -299,10 +280,10 @@ def sync_local_to_server():
 
                         server_db.commit()
                         synced_tables += 1
-                        print(f"[Sync] ✅ {table_name}: {len(rows)} records synced")
+                        print(f"[Sync] [OK] {table_name}: {len(rows)} records synced")
                     except Exception as e:
                         server_db.rollback()
-                        print(f"[Sync] ⚠️ Error syncing {table_name}: {e}")
+                        print(f"[Sync] [WARN] Error syncing {table_name}: {e}")
 
                 print(f"[Sync] Sync complete: {synced_tables}/{len(SYNC_TABLES_ORDER)} tables")
                 return synced_tables > 0
@@ -314,13 +295,13 @@ def sync_local_to_server():
                 server_engine.dispose()
 
         except Exception as e:
-            print(f"[Sync] ❌ Sync failed: {e}")
+            print(f"[Sync] [ERROR] Sync failed: {e}")
             return False
 
 
 def try_switch_to_online():
     """
-    محاولة التبديل إلى الوضع الأونلاين إذا عاد الإنترنت.
+    محاولة التبديل إلى الوضع الأونلاين إذا عاد الاتصال بالسيرفر.
     يُستدعى دورياً من الـ background thread.
     يُرجع True إذا تم التبديل بنجاح.
     """
@@ -332,15 +313,10 @@ def try_switch_to_online():
     if not server_url:
         return False
 
-    has_internet = check_internet_connection(timeout=5)
-    if not has_internet:
+    if not check_server_connection(server_url, timeout=3):
         return False
 
-    server_ok = check_server_connection(server_url, timeout=8)
-    if not server_ok:
-        return False
-
-    print("[DB-Hybrid] 🌐 Internet restored! Switching to online mode...")
+    print("[DB-Hybrid] Server reachable! Switching to online mode...")
 
     # مزامنة البيانات المحلية أولاً قبل التبديل
     sync_local_to_server()
@@ -348,7 +324,7 @@ def try_switch_to_online():
     # التبديل إلى PostgreSQL
     reconnect_engine(server_url)
     _db_mode_online = True
-    print("[DB-Hybrid] ✅ Switched to ONLINE mode (PostgreSQL)")
+    print("[DB-Hybrid] [OK] Switched to ONLINE mode (PostgreSQL)")
     return True
 
 
@@ -367,7 +343,7 @@ def start_connectivity_monitor(check_interval=60, on_mode_change=None):
                     # فحص أن الاتصال لا يزال شغالاً
                     server_url = get_server_database_url()
                     if server_url and not check_server_connection(server_url, timeout=5):
-                        print("[DB-Hybrid] ⚠️ Lost server connection. Switching to offline mode...")
+                        print("[DB-Hybrid] [WARN] Lost server connection. Switching to offline mode...")
                         reconnect_engine(get_local_database_url())
                         _db_mode_online = False
                         if on_mode_change:
