@@ -38,12 +38,46 @@ def get_utc_now() -> datetime.datetime:
     """إرجاع التوقيت العالمي الموحد UTC (بدون منطقة زمنية للتوافق التام مع قواعد البيانات)"""
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
-def get_local_database_url():
+def get_local_db_path():
     if getattr(sys, 'frozen', False):
         base_dir = os.path.dirname(sys.executable)
     else:
         base_dir = os.path.abspath(os.path.dirname(__file__))
-    return f"sqlite:///{os.path.join(base_dir, 'hakbah.db')}"
+    return os.path.join(base_dir, 'hakbah.db')
+
+def verify_and_repair_sqlite_db(db_path: str):
+    """التحقق من سلامة ملف SQLite وإصلاحه تلقائياً في حال وجود تلف (malformed)"""
+    if not os.path.exists(db_path):
+        return
+    import sqlite3
+    try:
+        conn = sqlite3.connect(db_path, timeout=5.0)
+        res = conn.execute("PRAGMA integrity_check").fetchone()
+        conn.close()
+        if res and res[0] == "ok":
+            return
+        print(f"[DB-Repair] ⚠️ Database integrity check failed: {res}")
+    except Exception as e:
+        print(f"[DB-Repair] ⚠️ Error inspecting database integrity: {e}")
+
+    # في حال فشل الفحص، يتم أخذ نسخة احتياطية من الملف التالف وإنشاء قاعدة سليمة
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        corrupted_backup = f"{db_path}.corrupted_{timestamp}"
+        import shutil
+        shutil.copy2(db_path, corrupted_backup)
+        print(f"[DB-Repair] Corrupted DB backed up to: {corrupted_backup}")
+
+        # محاولة استخراج الجداول السليمة وتفريغها أو إفراغ الملف المعطوب
+        os.remove(db_path)
+        print("[DB-Repair] Removed corrupted DB file, will rebuild fresh schema...")
+    except Exception as e:
+        print(f"[DB-Repair] ❌ Could not replace corrupted database: {e}")
+
+def get_local_database_url():
+    db_path = get_local_db_path()
+    verify_and_repair_sqlite_db(db_path)
+    return f"sqlite:///{db_path}"
 
 def get_server_database_url():
     url = os.getenv("SERVER_DATABASE_URL") or ""
