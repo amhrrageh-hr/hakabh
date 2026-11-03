@@ -15,6 +15,8 @@ a = Analysis(
         ('gui', 'gui'),
         # برنامج النفق لتشغيل الموقع عبر الإنترنت
         ('cloudflared.exe', '.'),
+        # ملف الإعدادات للاتصال بالسيرفر
+        ('.env', '.'),
         # قاعدة البيانات الافتراضية (إن وجدت)
         # ('hakbah.db', '.'),  # احذف التعليق إذا أردت تضمينها
     ],
@@ -51,8 +53,13 @@ a = Analysis(
         # قاعدة البيانات
         'sqlalchemy',
         'sqlalchemy.dialects.sqlite',
+        'sqlalchemy.dialects.postgresql',
+        'sqlalchemy.dialects.postgresql.psycopg2',
         'sqlalchemy.orm',
         'sqlite3',
+        'psycopg2',
+        'psycopg2.binary',
+        'dotenv',
         # واجهة المستخدم
         'PyQt6',
         'PyQt6.QtWidgets',

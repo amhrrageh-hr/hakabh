@@ -75,6 +75,12 @@ Source: "{#SourceDir}\dist\HakbahMillionAdmin\*"; \
     DestDir: "{app}"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
+; --- ملف الإعدادات والاتصال بالسيرفر (يُنسخ فقط إن لم يكن موجوداً) ---
+Source: "{#SourceDir}\.env"; \
+    DestDir: "{app}"; \
+    DestName: ".env"; \
+    Flags: ignoreversion onlyifdoesntexist
+
 ; --- قاعدة البيانات (تُنسخ فقط إن لم تكن موجودة لحماية البيانات) ---
 Source: "{#SourceDir}\hakbah.db"; \
     DestDir: "{app}"; \
