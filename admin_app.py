@@ -58,8 +58,23 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.api_client = get_api_client()
         self.logged_in_staff = staff
         self.setWindowTitle("لوحة تحكم هكبة المليون - Hakbah million")
-        self.resize(1300, 850)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+        # ضبط أبعاد متجاوبة مع أي شاشة (صغيرة أو كبيرة) لتجنب تجاوز حدود الشاشات المحدودة
+        screen = QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            target_w = min(1300, max(950, int(avail.width() * 0.95)))
+            target_h = min(850, max(600, int(avail.height() * 0.90)))
+            self.resize(target_w, target_h)
+            self.setMinimumSize(950, 580)
+            # توسيط النافذة على الشاشة المتاحة
+            pos_x = avail.x() + (avail.width() - target_w) // 2
+            pos_y = avail.y() + (avail.height() - target_h) // 2
+            self.move(max(avail.x(), pos_x), max(avail.y(), pos_y))
+        else:
+            self.resize(1150, 720)
+            self.setMinimumSize(950, 580)
         
         # تعيين أيقونة البرنامج وتحميلها مرة واحدة بشكل آمن
         if getattr(sys, 'frozen', False):
@@ -1186,6 +1201,10 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
 
 
 if __name__ == "__main__":
+    # تفعيل سياسة التكبير للشاشات عالية الدقة (High DPI) لتجنب تشوه الخطوط والأبعاد في ويندوز
+    if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, 'PassThrough'):
+        QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+
     app = QApplication(sys.argv)
     db_mod.init_db() # ضمان تهيئة قاعدة البيانات قبل أي شيء آخر
     try:
@@ -1194,7 +1213,16 @@ if __name__ == "__main__":
         pass
     window = AdminApp()
     if window.access_granted:
-        window.show()
+        # فحص حجم الشاشة: الشاشات الصغيرة أو المتوسطة (مثل لابتوبات 1366x768 أو 1080p بتكبير 125%) تفتح بملء الشاشة تلقائياً
+        screen = QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            if avail.width() <= 1440 or avail.height() <= 850:
+                window.showMaximized()
+            else:
+                window.show()
+        else:
+            window.showMaximized()
         sys.exit(app.exec())
     else:
         sys.exit(0)
