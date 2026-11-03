@@ -79,12 +79,17 @@ def get_local_database_url():
     verify_and_repair_sqlite_db(db_path)
     return f"sqlite:///{db_path}"
 
+# الرابط الافتراضي للاتصال بقاعدة بيانات السيرفر (Railway PostgreSQL) في حال عدم توفر ملف .env
+DEFAULT_SERVER_DATABASE_URL = "postgresql://postgres:RQUnDoGWAynftxOKdmpJYROHXYafsBnB@thomas.proxy.rlwy.net:11982/railway"
+
 def get_server_database_url():
     url = os.getenv("SERVER_DATABASE_URL") or ""
     if not url:
         env_url = os.getenv("DATABASE_URL", "")
         if "postgres" in env_url:
             url = env_url
+    if not url:
+        url = DEFAULT_SERVER_DATABASE_URL
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     return url
