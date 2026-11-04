@@ -1,0 +1,10 @@
+{
+  "name": "هكبة المليون",
+  "short_name": "هكبة",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#28a745",
+  "description": "تطبيق هكبة المليون مع دعم العمل في وضع عدم الاتصال",
+  "scope": "/"
+}
