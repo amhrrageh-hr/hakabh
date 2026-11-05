@@ -121,7 +121,7 @@ class ReportsMixin:
         self.exp_rep_date_start = QDateEdit(); self.exp_rep_date_start.setCalendarPopup(True); self.exp_rep_date_start.setDate(QDate.currentDate().addMonths(-1))
         self.exp_rep_date_end = QDateEdit(); self.exp_rep_date_end.setCalendarPopup(True); self.exp_rep_date_end.setDate(QDate.currentDate())
         self.exp_rep_exp_cat_filter = QComboBox()
-        self.exp_rep_exp_cat_filter.addItem("الكل")
+        self.exp_rep_exp_cat_filter.addItems(["الكل", "سيرفرات وتقنية", "رسائل SMS", "رواتب وأجور", "تسويق وإعلانات", "أخرى"])
         exp_form.addRow("من تاريخ:", self.exp_rep_date_start)
         exp_form.addRow("إلى تاريخ:", self.exp_rep_date_end)
         exp_form.addRow("التصنيف:", self.exp_rep_exp_cat_filter)
@@ -351,7 +351,10 @@ class ReportsMixin:
 
     def _on_reports_tab_changed(self, idx):
         if idx == 4:
+            self.refresh_uploaded_reports()
+        elif idx == 5:
             self.on_qual_category_changed()
+
     def refresh_reports_sub_list(self):
         """تحميل بيانات التقارير في خيط خلفي لتجنب تجميد الواجهة."""
         # إلغاء أي تحميل سابق لم ينتهِ بعد
@@ -370,16 +373,19 @@ class ReportsMixin:
             self.rep_sub_cb.addItem(f"{name} ({phone})", sid)
         self.rep_sub_cb.blockSignals(False)
 
-        # تعبئة فلاتر الفئات
+        # تعبئة فلاتر الفئات المالية
         self.rep_cat_filter.blockSignals(True)
         self.rep_cat_filter.clear()
         self.rep_cat_filter.addItem("الكل", None)
-        self.exp_rep_exp_cat_filter.clear()
-        self.exp_rep_exp_cat_filter.addItem("الكل")
         for cat_name in categories:
             self.rep_cat_filter.addItem(cat_name, cat_name)
-            self.exp_rep_exp_cat_filter.addItem(cat_name)
         self.rep_cat_filter.blockSignals(False)
+
+        # تعبئة فلتر تصنيفات المصاريف بالتصنيفات التشغيلية الصحيحة
+        self.exp_rep_exp_cat_filter.blockSignals(True)
+        self.exp_rep_exp_cat_filter.clear()
+        self.exp_rep_exp_cat_filter.addItems(["الكل", "سيرفرات وتقنية", "رسائل SMS", "رواتب وأجور", "تسويق وإعلانات", "أخرى"])
+        self.exp_rep_exp_cat_filter.blockSignals(False)
 
         # تعبئة قائمة الموظفين
         if hasattr(self, 'rep_staff_cb'):
@@ -398,7 +404,7 @@ class ReportsMixin:
             for cat_name in categories:
                 self.rep_qual_category.addItem(cat_name, cat_name)
             self.rep_qual_category.blockSignals(False)
-            if hasattr(self, 'reports_tabs') and self.reports_tabs.currentIndex() == 4:
+            if hasattr(self, 'reports_tabs') and self.reports_tabs.currentIndex() == 5:
                 self.on_qual_category_changed()
 
         # تحديث قائمة المستندات المرفوعة
@@ -710,6 +716,7 @@ class ReportsMixin:
             file_path, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير الفائزين", "winners_report.xlsx", "Excel Files (*.xlsx)")
             if not file_path: return
             
+            self.db.expire_all()
             query = self.db.query(db_mod.Winner)
             if hasattr(self, 'rep_win_type'):
                 win_filter = self.rep_win_type.currentText()
@@ -717,12 +724,26 @@ class ReportsMixin:
                     query = query.filter(db_mod.Winner.draw_type.contains(win_filter))
             
             winners = query.order_by(db_mod.Winner.draw_date.desc()).all()
-            data = [{
-                "رقم المشترك الفائز": w.subscriber_number,
-                "تاريخ السحب": (w.draw_date.strftime("%Y-%m-%d %H:%M") if w.draw_date else ""),
-                "نوع الجائزة": w.draw_type or "سحب عام"
-            } for w in winners]
-            df = pd.DataFrame(data)
+            # جلب بيانات المشتركين الفائزين لربط الاسم والهاتف والفئة
+            win_nums = list({w.subscriber_number for w in winners if w.subscriber_number})
+            subs_by_num = {}
+            if win_nums:
+                for s in self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.subscriber_number.in_(win_nums)).all():
+                    subs_by_num[s.subscriber_number] = s
+
+            cols = ["رقم المشترك الفائز", "اسم المشترك", "رقم الهاتف", "الفئة", "نوع الجائزة", "تاريخ السحب"]
+            data = []
+            for w in winners:
+                sub = subs_by_num.get(w.subscriber_number)
+                data.append({
+                    "رقم المشترك الفائز": w.subscriber_number or "-",
+                    "اسم المشترك": (sub.name if sub else "—"),
+                    "رقم الهاتف": (sub.phone if sub else "—"),
+                    "الفئة": (sub.category if sub else "—"),
+                    "نوع الجائزة": w.draw_type or "سحب عام",
+                    "تاريخ السحب": (w.draw_date.strftime("%Y-%m-%d %H:%M") if w.draw_date else "")
+                })
+            df = pd.DataFrame(data, columns=cols)
             
             with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
                 df.to_excel(writer, sheet_name='الفائزون', index=False, startrow=8)
@@ -734,7 +755,7 @@ class ReportsMixin:
 
                 setup_excel_header(
                     workbook=workbook, worksheet=worksheet, df=df,
-                    title="تقرير الفائزين بالسحوبات", subtitle="",
+                    title="تقرير الفائزين بالسحوبات", subtitle=f"إجمالي الفائزين: {len(winners)}",
                     company_name=company_name, company_logo_path=company_logo_path,
                     start_row=8
                 )
@@ -855,7 +876,8 @@ class ReportsMixin:
                     "الملاحظة": p.note or "-"
                 })
 
-            df = pd.DataFrame(data)
+            cols = ["المشترك", "الفئة", "التاريخ", "المبلغ", "القسط", "الحالة", "الملاحظة"]
+            df = pd.DataFrame(data, columns=cols)
             file_path, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير الأقساط", "custom_payments_report.xlsx", "Excel Files (*.xlsx)")
             if not file_path:
                 return
@@ -1125,7 +1147,8 @@ class ReportsMixin:
                     "الملاحظات": e.note or "-"
                 })
             
-            df = pd.DataFrame(data)
+            cols = ["البيان / الوصف", "المبلغ (ر.ي)", "التصنيف", "التاريخ والوقت", "الملاحظات"]
+            df = pd.DataFrame(data, columns=cols)
             file_path, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المصاريف", "detailed_expenses_report.xlsx", "Excel Files (*.xlsx)")
             if not file_path: return
             
@@ -1284,7 +1307,8 @@ class ReportsMixin:
                     "حالة التسوية": "تمت التسوية" if p.is_staff_settled else "غير مسوى"
                 })
             
-            df = pd.DataFrame(data)
+            cols = ["الموظف المحصل", "المشترك", "رقم القسط", "المبلغ (ر.ي)", "تاريخ التحصيل", "حالة التسوية"]
+            df = pd.DataFrame(data, columns=cols)
             file_path, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير الموظفين", "staff_report.xlsx", "Excel Files (*.xlsx)")
             if not file_path: return
             
@@ -1511,9 +1535,12 @@ class ReportsMixin:
             pass
         self.db.expire_all()
         
-        # إلغاء أي عامل سابق قيد التشغيل
+        # إذا كان هناك خيط يعمل حالياً، نجدول إعادة التحميل فور انتهائه لتجنب انهيار QThread
         if hasattr(self, '_qual_draw_loader') and self._qual_draw_loader.isRunning():
-            self._qual_draw_loader.quit()
+            self._qual_reload_pending = True
+            return
+
+        self._qual_reload_pending = False
 
         # إظهار مؤشر تحميل فوري في الجدول لعدم تجميد واجهة البرنامج إطلاقاً
         self.table_rep_draw_qualified.setRowCount(1)
@@ -1526,6 +1553,10 @@ class ReportsMixin:
         self._qual_draw_loader.start()
 
     def _on_qualified_draw_data_ready(self, all_items):
+        if getattr(self, '_qual_reload_pending', False):
+            self._qual_reload_pending = False
+            self.refresh_qualified_draw_table()
+            return
         self._cached_qual_draw_items = all_items
         self._populate_qualified_draw_table(all_items)
 
