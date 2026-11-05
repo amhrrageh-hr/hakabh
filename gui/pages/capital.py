@@ -794,8 +794,8 @@ class CapitalMixin:
                 sub_cat = sub.category if sub else "-"
                 data.append({
                     "المشترك": sub_name,
-                    "الهاتف": sub.phone,
-                    "الفئة": sub.category or "-",
+                    "الهاتف": sub_phone,
+                    "الفئة": sub_cat,
                     "الدورة والقسط": f"دورة {p.cycle_number} - قسط {p.installment_number}",
                     "تاريخ الاستحقاق": (p.due_date.strftime("%Y-%m-%d") if p.due_date else "-"),
                     "المبلغ المستحق": p.amount

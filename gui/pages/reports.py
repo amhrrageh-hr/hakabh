@@ -254,7 +254,7 @@ class ReportsMixin:
         up_layout.addLayout(row_up)
         self.list_uploaded_reports = QListWidget()
         self.list_uploaded_reports.setMinimumHeight(150)
-        self.list_uploaded_reports.itemDoubleClicked.connect(lambda item: self.open_uploaded_file(item.text().split("  |")[0].strip()))
+        self.list_uploaded_reports.itemDoubleClicked.connect(lambda item: self.open_uploaded_file(item.data(Qt.ItemDataRole.UserRole) or item.text().split("  |")[0].strip()))
         self.list_uploaded_reports.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_uploaded_reports.customContextMenuRequested.connect(self.show_upload_context_menu)
         up_layout.addWidget(self.list_uploaded_reports)
@@ -1119,7 +1119,7 @@ class ReportsMixin:
                 shutil.copy2(file_path, dest_path)
                 self.refresh_uploaded_reports()
                 ModernDialog(self, "نجاح", f"تم رفع الملف {filename} بنجاح").exec()
-            except PermissionError: ModernDialog(self, "خطأ", "خطأ في الأذونات. لا يمكن الكتابة في مجلد 'uploaded_reports'.").exec()
+            except PermissionError: ModernDialog(self, "خطأ", "الملف مفتوح حالياً في برنامج آخر (مثل Excel أو Acrobat) أو لا توجد صلاحيات للكتابة. يرجى إغلاق الملف أولاً ثم إعادة المحاولة.").exec()
             except Exception as e: ModernDialog(self, "خطأ", f"فشل الرفع: {e}").exec()
     def refresh_uploaded_reports(self):
         self.list_uploaded_reports.clear()
@@ -1137,8 +1137,13 @@ class ReportsMixin:
                     upload_time = datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
                     size_kb = stat.st_size / 1024
                     display_text = f"{f}  |  (تاريخ الرفع: {upload_time}, الحجم: {size_kb:.1f} KB)"
-                    self.list_uploaded_reports.addItem(QListWidgetItem(QIcon.fromTheme("document-new"), display_text))
-                except Exception: self.list_uploaded_reports.addItem(QListWidgetItem(QIcon.fromTheme("document-new"), f)) # Fallback
+                    it = QListWidgetItem(QIcon.fromTheme("document-new"), display_text)
+                    it.setData(Qt.ItemDataRole.UserRole, f)
+                    self.list_uploaded_reports.addItem(it)
+                except Exception:
+                    it = QListWidgetItem(QIcon.fromTheme("document-new"), f)
+                    it.setData(Qt.ItemDataRole.UserRole, f)
+                    self.list_uploaded_reports.addItem(it)
     def open_uploaded_file(self, filename):
         # If a full display text was passed (e.g. "name  |  (meta)"), extract the real filename
         if isinstance(filename, str) and "  |" in filename:
@@ -1161,7 +1166,7 @@ class ReportsMixin:
         item = self.list_uploaded_reports.itemAt(pos)
         if not item: return
         
-        filename = item.text().split("  |")[0].strip() # استخلاص اسم الملف فقط
+        filename = item.data(Qt.ItemDataRole.UserRole) or item.text().split("  |")[0].strip()
         menu = QMenu(self)
         
         act_open = QAction("فتح الملف", self)
