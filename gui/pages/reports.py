@@ -520,7 +520,19 @@ class ReportsMixin:
 
     def generate_subscriber_report(self, fmt):
         sid = self.rep_sub_cb.currentData()
-        if not sid: return
+        if not sid:
+            # محاولة إيجاد المشترك من النص المكتوب في حال البحث اليدوي
+            txt = self.rep_sub_cb.currentText().strip()
+            if txt:
+                sub_match = self.db.query(db_mod.Subscriber).filter(
+                    (db_mod.Subscriber.name.ilike(f"%{txt}%")) |
+                    (db_mod.Subscriber.phone.ilike(f"%{txt}%"))
+                ).first()
+                if sub_match:
+                    sid = sub_match.id
+            if not sid:
+                ModernDialog(self, "تنبيه", "يرجى اختيار مشترك من القائمة أولاً.").exec()
+                return
         
         try:
             sub = self.db.get(db_mod.Subscriber, sid)
@@ -732,14 +744,19 @@ class ReportsMixin:
     def generate_categories_report(self):
         """Generates a PDF summary report of categories."""
         try:
-            file_path, _ = QFileDialog.getSaveFileName(self, reshape_text("حفظ ملخص الفئات"), "categories_summary.pdf", reshape_text("PDF Files (*.pdf)"))
+            file_path, _ = QFileDialog.getSaveFileName(self, "حفظ ملخص الفئات (PDF)", "categories_summary.pdf", "PDF Files (*.pdf)")
             if not file_path: return
 
             c = canvas.Canvas(file_path, pagesize=A4); width, height = A4
+            M = 36
             font_name = register_arabic_font()
-            try: c.setFont(font_name, 12)
-            except: c.setFont('Helvetica', 12)
             
+            GOLD       = colors.HexColor("#c9a84c")
+            DARK_GREEN = colors.HexColor("#052109")
+            BORDER_CLR = colors.HexColor("#c8e6c9")
+            ROW_EVEN   = colors.white
+            ROW_ALT    = colors.HexColor("#f1f8f1")
+
             company_name = self._get_setting("company_name", "هكبة المليون")
             company_legal_name = self._get_setting("company_legal_name", "الاسبوعية")
             company_record = self._get_setting("company_commercial_record", "")
@@ -747,37 +764,54 @@ class ReportsMixin:
 
             draw_pdf_header(
                 c=c, title="ملخص الفئات والمبالغ", subtitle="", page_num=1,
-                W=width, H=height, M=36, font_name=font_name,
+                W=width, H=height, M=M, font_name=font_name,
                 company_name=company_name, company_legal_name=company_legal_name,
                 company_record=company_record, company_logo_path=company_logo_path
             )
             
-            y = height - 160
+            y = height - 155
 
             cats = self.db.query(db_mod.Category).all()
             if not cats:
+                c.setFillColor(colors.black)
                 c.setFont(font_name, 12)
                 c.drawCentredString(width / 2, y, reshape_text("لا توجد فئات مسجلة في النظام."))
                 c.save()
-                ModernDialog(self, reshape_text("تنبيه"), reshape_text("لا توجد فئات مسجلة، لم يتم إنشاء التقرير.")).exec()
+                ModernDialog(self, "تنبيه", "لا توجد فئات مسجلة، لم يتم إنشاء التقرير.").exec()
                 return
 
-            headers = [reshape_text("اسم الفئة"), reshape_text("المبلغ اليومي"), reshape_text("عدد المشتركين"), reshape_text("إجمالي المبالغ")]
-            col_x = [50, 180, 310, 440]
-            for i, h in enumerate(headers): c.drawString(col_x[i], y, h)
-            y -= 30
+            ROW_H = 22
+            col_x = [M + 10, M + 180, M + 310, M + 420]
+            headers = ["اسم الفئة", "مبلغ القسط", "عدد المشتركين", "إجمالي المبالغ"]
 
-            for cat in cats:
+            c.setFillColor(DARK_GREEN)
+            c.rect(M, y - ROW_H, width - 2*M, ROW_H, fill=1, stroke=0)
+            c.setFillColor(GOLD)
+            c.setFont(font_name, 10)
+            for i, h in enumerate(headers):
+                c.drawString(col_x[i], y - 15, reshape_text(h))
+            y -= ROW_H
+
+            for idx, cat in enumerate(cats):
                 count = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.category == cat.name).count()
-                total = count * cat.amount
-                c.drawString(col_x[0], y, reshape_text(cat.name))
-                c.drawString(col_x[1], y, f"{cat.amount:,.2f}")
-                c.drawString(col_x[2], y, str(count))
-                c.drawString(col_x[3], y, f"{total:,.2f}")
-                y -= 25
+                total = count * (cat.amount or 0)
+                row_color = ROW_EVEN if idx % 2 == 0 else ROW_ALT
+                c.setFillColor(row_color)
+                c.setStrokeColor(BORDER_CLR)
+                c.setLineWidth(0.4)
+                c.rect(M, y - ROW_H, width - 2*M, ROW_H, fill=1, stroke=1)
+
+                c.setFillColor(colors.black)
+                c.setFont(font_name, 10)
+                c.drawString(col_x[0], y - 15, reshape_text(cat.name or "-"))
+                c.drawString(col_x[1], y - 15, f"{(cat.amount or 0):,.2f}")
+                c.drawString(col_x[2], y - 15, str(count))
+                c.drawString(col_x[3], y - 15, f"{total:,.2f}")
+                y -= ROW_H
+
             c.save()
-            ModernDialog(self, reshape_text("نجاح"), reshape_text(f"تم تصدير التقرير بنجاح إلى:\n{file_path}")).exec()
-        except Exception as e: ModernDialog(self, reshape_text("خطأ"), str(e)).exec()
+            ModernDialog(self, "نجاح", f"تم تصدير التقرير بنجاح إلى:\n{file_path}").exec()
+        except Exception as e: ModernDialog(self, "خطأ", str(e)).exec()
     def generate_custom_report(self):
         try:
             start_date = datetime.datetime.combine(self.rep_date_start.date().toPyDate(), datetime.time.min)
@@ -992,62 +1026,81 @@ class ReportsMixin:
                     )
                 ModernDialog(self, "نجاح", f"تم تصدير التقرير بنجاح إلى:\n{file_path}").exec()
             else: # PDF
-                file_path, _ = QFileDialog.getSaveFileName(self, reshape_text("حفظ قائمة المشتركين (PDF)"), "subscriber_contact_list.pdf", reshape_text("PDF Files (*.pdf)"))
+                file_path, _ = QFileDialog.getSaveFileName(self, "حفظ قائمة المشتركين (PDF)", "subscriber_contact_list.pdf", "PDF Files (*.pdf)")
                 if not file_path:
                     return
                 c = canvas.Canvas(file_path, pagesize=A4)
                 width, height = A4
+                M = 36
                 font_name = register_arabic_font()
-                c.setFont(font_name, 10)
+
+                GOLD       = colors.HexColor("#c9a84c")
+                DARK_GREEN = colors.HexColor("#052109")
+                BORDER_CLR = colors.HexColor("#c8e6c9")
+                ROW_EVEN   = colors.white
+                ROW_ALT    = colors.HexColor("#f1f8f1")
 
                 company_name = self._get_setting("company_name", "هكبة المليون")
                 company_legal_name = self._get_setting("company_legal_name", "الاسبوعية")
                 company_record = self._get_setting("company_commercial_record", "")
                 company_logo_path = self._get_setting("company_logo_path", "")
 
+                ROW_H = 19
+                headers = ["م", "الاسم", "الهاتف", "رقم الحساب", "الفئة / المجموعة"]
+                col_x = [M + 6, M + 40, M + 210, M + 310, M + 395]
+
+                def draw_contact_tbl_header(cv, y_pos):
+                    cv.setFillColor(DARK_GREEN)
+                    cv.rect(M, y_pos - ROW_H, width - 2*M, ROW_H, fill=1, stroke=0)
+                    cv.setFillColor(GOLD)
+                    cv.setFont(font_name, 9)
+                    for i, h in enumerate(headers):
+                        cv.drawString(col_x[i], y_pos - 13, reshape_text(h))
+                    return y_pos - ROW_H
+
                 page_num = 1
                 draw_pdf_header(
                     c=c, title="قائمة المشتركين", subtitle=subtitle_str, page_num=page_num,
-                    W=width, H=height, M=36, font_name=font_name,
+                    W=width, H=height, M=M, font_name=font_name,
                     company_name=company_name, company_legal_name=company_legal_name,
                     company_record=company_record, company_logo_path=company_logo_path
                 )
                 
-                y = height - 160
-                headers = [reshape_text("م"), reshape_text("الاسم"), reshape_text("الهاتف"), reshape_text("رقم الحساب"), reshape_text("الفئة / المجموعة")]
-                col_x = [35, 75, 220, 340, 440]
-                for i, h in enumerate(headers):
-                    c.drawString(col_x[i], y, h)
-                c.line(35, y-5, width-35, y-5)
-                y -= 25
+                y = height - 152
+                y = draw_contact_tbl_header(c, y)
 
-                for item in data:
-                    if y < 50:
+                for idx, item in enumerate(data):
+                    if y < M + 45:
                         c.showPage()
                         page_num += 1
                         draw_pdf_header(
                             c=c, title="قائمة المشتركين", subtitle=subtitle_str, page_num=page_num,
-                            W=width, H=height, M=36, font_name=font_name,
+                            W=width, H=height, M=M, font_name=font_name,
                             company_name=company_name, company_legal_name=company_legal_name,
                             company_record=company_record, company_logo_path=company_logo_path
                         )
-                        y = height - 160
-                        c.setFont(font_name, 10)
-                        for i, h in enumerate(headers):
-                            c.drawString(col_x[i], y, h)
-                        c.line(35, y-5, width-35, y-5)
-                        y -= 25
-                    c.drawString(col_x[0], y, str(item["م"]))
-                    c.drawString(col_x[1], y, reshape_text(item["الاسم"]))
-                    c.drawString(col_x[2], y, reshape_text(item["رقم الهاتف"]))
-                    c.drawString(col_x[3], y, reshape_text(item["رقم الحساب"]))
-                    c.drawString(col_x[4], y, reshape_text(item["الفئة / المجموعة"]))
-                    y -= 20
+                        y = height - 152
+                        y = draw_contact_tbl_header(c, y)
+
+                    row_color = ROW_EVEN if idx % 2 == 0 else ROW_ALT
+                    c.setFillColor(row_color)
+                    c.setStrokeColor(BORDER_CLR)
+                    c.setLineWidth(0.3)
+                    c.rect(M, y - ROW_H, width - 2*M, ROW_H, fill=1, stroke=1)
+
+                    c.setFillColor(colors.black)
+                    c.setFont(font_name, 8.5)
+                    c.drawString(col_x[0], y - 13, str(item["م"]))
+                    c.drawString(col_x[1], y - 13, reshape_text(str(item["الاسم"])[:32]))
+                    c.drawString(col_x[2], y - 13, reshape_text(str(item["رقم الهاتف"])))
+                    c.drawString(col_x[3], y - 13, reshape_text(str(item["رقم الحساب"])))
+                    c.drawString(col_x[4], y - 13, reshape_text(str(item["الفئة / المجموعة"])[:22]))
+                    y -= ROW_H
                 c.save()
 
-                ModernDialog(self, reshape_text("نجاح"), reshape_text(f"تم تصدير التقرير بنجاح إلى:\n{file_path}")).exec()
+                ModernDialog(self, "نجاح", f"تم تصدير التقرير بنجاح إلى:\n{file_path}").exec()
         except Exception as e:
-            ModernDialog(self, reshape_text("خطأ"), str(e)).exec()
+            ModernDialog(self, "خطأ", str(e)).exec()
     def generate_expense_summary_report(self):
         """Generates an Excel report of expenses, with date and category filters."""
         try:
