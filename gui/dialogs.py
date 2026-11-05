@@ -2548,6 +2548,9 @@ class AccountDetailsDialog(QDialog):
         
         act_del = QAction("حذف", self)
         act_del.triggered.connect(lambda: self.delete_payment(pid))
+
+        act_pay_multi = QAction("تسديد العمليات المختارة", self)
+        act_pay_multi.triggered.connect(self.pay_selected_payments)
         
         act_del_multi = QAction("حذف العمليات المختارة", self)
         act_del_multi.triggered.connect(self.delete_selected_payments)
@@ -2555,8 +2558,86 @@ class AccountDetailsDialog(QDialog):
         menu.addAction(act_edit)
         menu.addAction(act_del)
         menu.addSeparator()
+        menu.addAction(act_pay_multi)
         menu.addAction(act_del_multi)
         menu.exec(QCursor.pos())
+
+    def pay_selected_payments(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            ModernDialog(self, "تنبيه", "يرجى اختيار قسط واحد على الأقل لتسديده").exec()
+            return
+
+        payment_ids = []
+        for index in selected_rows:
+            item = self.table.item(index.row(), 0)
+            if item:
+                pid = item.data(Qt.ItemDataRole.UserRole)
+                if pid is not None:
+                    payment_ids.append(pid)
+
+        if not payment_ids:
+            ModernDialog(self, "تنبيه", "لم يتم العثور على أقساط صالحة للتسديد").exec()
+            return
+
+        count = len(payment_ids)
+        if not ModernDialog(self, "تأكيد التسديد", f"هل تريد تسديد {count} قسط محدد الآن؟", is_confirm=True).exec():
+            return
+
+        staff = getattr(self.parent(), 'logged_in_staff', None)
+        staff_id = staff.id if staff else None
+        db_url = get_safe_db_url(self.db)
+
+        self._pay_sel_loading = LoadingDialog(
+            self,
+            title="⏳ جاري تسديد الأقساط المختارة...",
+            message=f"جاري تسديد 0 من {count} قسط — يرجى الانتظار"
+        )
+        self._pay_sel_loading.progress_bar.setRange(0, max(count, 1))
+        self._pay_sel_loading.progress_bar.setValue(0)
+        self._pay_sel_loading.show()
+
+        self._pay_sel_worker = _PaySelectedPaymentsWorker(
+            db_url=db_url, payment_ids=payment_ids, staff_id=staff_id
+        )
+        self._pay_sel_worker.progress.connect(self._on_pay_selected_progress)
+        self._pay_sel_worker.finished.connect(self._on_pay_selected_finished)
+        self._pay_sel_worker.error.connect(self._on_pay_selected_error)
+        self._pay_sel_worker.start()
+
+    def _on_pay_selected_progress(self, current: int, total: int):
+        if getattr(self, '_pay_sel_loading', None):
+            self._pay_sel_loading.progress_bar.setValue(current)
+            self._pay_sel_loading.set_message(
+                f"تم تسديد {current} من {total} قسط...",
+                title="⏳ جاري تسديد الأقساط المختارة..."
+            )
+
+    def _on_pay_selected_finished(self, paid_count: int):
+        if getattr(self, '_pay_sel_loading', None):
+            self._pay_sel_loading.close()
+            self._pay_sel_loading = None
+        try:
+            self.db.expire_all()
+        except Exception:
+            pass
+        self.load_payments()
+        if hasattr(self.parent(), 'load_subscribers'):
+            try:
+                self.parent().load_subscribers()
+            except Exception:
+                pass
+        ModernDialog(self, "نجاح", f"تم تسديد {paid_count} قسط بنجاح").exec()
+
+    def _on_pay_selected_error(self, err_msg: str):
+        if getattr(self, '_pay_sel_loading', None):
+            self._pay_sel_loading.close()
+            self._pay_sel_loading = None
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
+        ModernDialog(self, "خطأ", f"حدث خطأ أثناء تسديد الأقساط: {err_msg}").exec()
 
     def delete_payment(self, pid):
         if ModernDialog(self, "تأكيد", "هل تريد حذف هذه العملية؟", is_confirm=True).exec():
