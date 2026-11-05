@@ -1143,11 +1143,12 @@ class AddSubscriberDialog(QDialog):
         self.cb_cat = QComboBox()
         self.cb_cat.currentIndexChanged.connect(self.load_numbers)
         form.addRow("الفئة:", self.cb_cat)
-        self.load_categories()
         
         self.cb_num = QComboBox()
         self.cb_num.addItem("اختر الرقم...", None)
         form.addRow("رقم المشترك:", self.cb_num)
+
+        self.load_categories()
         
         self.ent_pwd = QLineEdit()
         self.ent_pwd.setEchoMode(QLineEdit.EchoMode.Password)
@@ -1172,9 +1173,12 @@ class AddSubscriberDialog(QDialog):
         for cat in q.all():
             self.cb_cat.addItem(cat.name, cat.id)
         self.cb_cat.blockSignals(False)
-        self.load_numbers()
+        if hasattr(self, 'cb_num'):
+            self.load_numbers()
 
     def load_numbers(self):
+        if not hasattr(self, 'cb_num'):
+            return
         self.cb_num.clear()
         self.cb_num.addItem("اختر الرقم...", None)
         cat_id = self.cb_cat.currentData()

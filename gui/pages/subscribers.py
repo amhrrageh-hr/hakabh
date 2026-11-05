@@ -983,44 +983,37 @@ class SubscribersMixin:
                 sub_num_obj.subscriber_id = new_sub.id
                 new_sub.selected_number_id = sub_num_id
 
-                try:
-                    # 3. توليد الأقساط الفائتة والقسط الحالي فقط بناءً على تاريخ بداية الفئة
-                    cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == cat_name).first()
-                    if cat and cat.start_date:
-                        start_date = cat.start_date.date()
-                        today = datetime.date.today()
+                # 3. توليد الأقساط الفائتة والقسط الحالي فقط بناءً على تاريخ بداية الفئة
+                cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == cat_name).first()
+                if cat and cat.start_date:
+                    start_date = cat.start_date.date()
+                    today = datetime.date.today()
+                    
+                    # حساب عدد الأيام التي مضت منذ بداية الهكبة (بافتراض قسط واحد يومياً)
+                    days_passed = (today - start_date).days
+                    
+                    if days_passed >= 0:
+                        max_c = int(cat.max_cycles or 1)
+                        max_i = int(cat.max_installments or 1)
+                        total_possible = max_c * max_i
                         
-                        # حساب عدد الأيام التي مضت منذ بداية الهكبة (بافتراض قسط واحد يومياً)
-                        days_passed = (today - start_date).days
+                        count_to_gen = min(days_passed + 1, total_possible)
                         
-                        if days_passed >= 0:
-                            max_c = int(cat.max_cycles or 1)
-                            max_i = int(cat.max_installments or 1)
-                            total_possible = max_c * max_i
+                        for i in range(count_to_gen):
+                            c_num = (i // max_i) + 1
+                            i_num = (i % max_i) + 1
+                            due_dt = datetime.datetime.combine(start_date + datetime.timedelta(days=i), datetime.time.min)
                             
-                            # نولد فقط الأقساط التي حان موعدها أو فات موعدها (بحد أقصى إجمالي أقساط الهكبة)
-                            count_to_gen = min(days_passed + 1, total_possible)
-                            
-                            for i in range(count_to_gen):
-                                c_num = (i // max_i) + 1
-                                i_num = (i % max_i) + 1
-                                due_dt = datetime.datetime.combine(start_date + datetime.timedelta(days=i), datetime.time.min)
-                                
-                                # التأكد من عدم وجود القسط مسبقاً
-                                self.db.add(db_mod.Payment(
-                                    subscriber_id=new_sub.id,
-                                    amount=cat.amount,
-                                    due_date=due_dt,
-                                    is_paid=False,
-                                    cycle_number=c_num,
-                                    installment_number=i_num,
-                                    note=db_mod.build_installment_note(is_paid=False, due_date=due_dt)
-                                ))
-                    self.db.commit()
-                except Exception as e:
-                    self.db.rollback()
-                    print(f"Error generating initial payments: {e}")
-                
+                            self.db.add(db_mod.Payment(
+                                subscriber_id=new_sub.id,
+                                amount=cat.amount,
+                                due_date=due_dt,
+                                is_paid=False,
+                                cycle_number=c_num,
+                                installment_number=i_num,
+                                note=db_mod.build_installment_note(is_paid=False, due_date=due_dt)
+                            ))
+                self.db.commit()
                 self.load_subscribers()
                 ModernDialog(self, "نجاح", f"تم إضافة المشترك {name} بنجاح").exec()
             except Exception as e:

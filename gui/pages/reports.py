@@ -153,10 +153,27 @@ class ReportsMixin:
         grid_sub.addWidget(sub_card, 0, 0)
 
         # Subscriber Contact List Card
-        contact_card = QFrame(); contact_card.setObjectName("StatCard"); contact_layout = QVBoxLayout(contact_card); contact_layout.setSpacing(15)
+        contact_card = QFrame(); contact_card.setObjectName("StatCard"); contact_layout = QVBoxLayout(contact_card); contact_layout.setSpacing(12)
         contact_title = QLabel("قائمة المشتركين"); contact_title.setObjectName("SectionTitle"); contact_layout.addWidget(contact_title)
-        contact_desc = QLabel("تصدير قائمة المشتركين مع بيانات الاتصال والفئات."); contact_desc.setWordWrap(True); contact_desc.setStyleSheet("color: #94a3b8;")
+        contact_desc = QLabel("تصدير قائمة المشتركين مفلترة حسب الموسم والفئة والمجموعة."); contact_desc.setWordWrap(True); contact_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
         contact_layout.addWidget(contact_desc)
+
+        contact_form = QFormLayout()
+        contact_form.setSpacing(10)
+
+        self.rep_contact_season = QComboBox()
+        self.rep_contact_season.currentIndexChanged.connect(self.on_contact_season_changed)
+        contact_form.addRow("الموسم:", self.rep_contact_season)
+
+        self.rep_contact_category = QComboBox()
+        self.rep_contact_category.currentIndexChanged.connect(self.on_contact_category_changed)
+        contact_form.addRow("الفئة:", self.rep_contact_category)
+
+        self.rep_contact_group = QComboBox()
+        contact_form.addRow("المجموعة:", self.rep_contact_group)
+
+        contact_layout.addLayout(contact_form)
+
         contact_buttons = QHBoxLayout()
         btn_contact_excel = QPushButton("Excel"); btn_contact_excel.setObjectName("PrimaryBtn"); btn_contact_excel.clicked.connect(lambda: self.generate_subscriber_contact_list_report("excel"))
         btn_contact_pdf = QPushButton("PDF"); btn_contact_pdf.setObjectName("PrimaryBtn"); btn_contact_pdf.clicked.connect(lambda: self.generate_subscriber_contact_list_report("pdf"))
@@ -329,6 +346,7 @@ class ReportsMixin:
         tabs.currentChanged.connect(self._on_reports_tab_changed)
 
         layout.addWidget(tabs)
+        self.populate_contact_filters()
         return page
 
     def _on_reports_tab_changed(self, idx):
@@ -386,6 +404,119 @@ class ReportsMixin:
         # تحديث قائمة المستندات المرفوعة
         if hasattr(self, 'list_uploaded_reports'):
             self.refresh_uploaded_reports()
+
+        # تحديث فلاتر قائمة المشتركين
+        self.populate_contact_filters()
+
+    def populate_contact_filters(self):
+        """تعبئة فلاتر تقرير قائمة المشتركين (الموسم، الفئة، المجموعة)"""
+        if not hasattr(self, 'rep_contact_season'):
+            return
+        
+        curr_season_id = self.rep_contact_season.currentData()
+        self.rep_contact_season.blockSignals(True)
+        self.rep_contact_season.clear()
+        self.rep_contact_season.addItem("الكل (جميع المواسم)", None)
+        
+        try:
+            seasons = db_mod.get_all_seasons(self.db)
+            curr_s = db_mod.get_current_season(self.db)
+        except Exception:
+            seasons = []
+            curr_s = None
+
+        default_idx = 0
+        for idx, s in enumerate(seasons, start=1):
+            label = f"{s.name} (النشط ⭐)" if s.is_current else s.name
+            self.rep_contact_season.addItem(label, s.id)
+            if curr_season_id is not None and s.id == curr_season_id:
+                default_idx = idx
+            elif curr_season_id is None and curr_s and s.id == curr_s.id:
+                default_idx = idx
+
+        self.rep_contact_season.setCurrentIndex(default_idx)
+        self.rep_contact_season.blockSignals(False)
+        self.on_contact_season_changed()
+
+    def on_contact_season_changed(self):
+        """تحديث قائمة الفئات عند تغيير الموسم المختار"""
+        if not hasattr(self, 'rep_contact_category'):
+            return
+            
+        season_id = self.rep_contact_season.currentData()
+        curr_cat_val = self.rep_contact_category.currentData()
+
+        self.rep_contact_category.blockSignals(True)
+        self.rep_contact_category.clear()
+        self.rep_contact_category.addItem("الكل (جميع الفئات)", None)
+
+        try:
+            q = self.db.query(db_mod.Category)
+            if season_id:
+                q = q.filter(db_mod.Category.season_id == season_id)
+            cats = q.all()
+        except Exception:
+            cats = []
+
+        unique_base_cats = set()
+        for c in cats:
+            name = c.name or ""
+            base = name.split(" - ")[0].strip() if " - " in name else name.strip()
+            if base:
+                unique_base_cats.add(base)
+
+        default_idx = 0
+        for idx, base in enumerate(sorted(unique_base_cats), start=1):
+            self.rep_contact_category.addItem(base, base)
+            if curr_cat_val == base:
+                default_idx = idx
+
+        self.rep_contact_category.setCurrentIndex(default_idx)
+        self.rep_contact_category.blockSignals(False)
+        self.on_contact_category_changed()
+
+    def on_contact_category_changed(self):
+        """تحديث قائمة المجموعات عند تغيير الفئة أو الموسم"""
+        if not hasattr(self, 'rep_contact_group'):
+            return
+
+        season_id = self.rep_contact_season.currentData()
+        base_cat = self.rep_contact_category.currentData()
+        curr_grp = self.rep_contact_group.currentData()
+
+        self.rep_contact_group.blockSignals(True)
+        self.rep_contact_group.clear()
+        self.rep_contact_group.addItem("الكل (جميع المجموعات)", None)
+
+        try:
+            q = self.db.query(db_mod.Category)
+            if season_id:
+                q = q.filter(db_mod.Category.season_id == season_id)
+            cats = q.all()
+        except Exception:
+            cats = []
+
+        groups = set()
+        for c in cats:
+            c_name = (c.name or "").strip()
+            if base_cat:
+                if not (c_name == base_cat or c_name.startswith(base_cat + " - ") or base_cat in c_name):
+                    continue
+            if " - " in c_name:
+                grp_part = c_name.split(" - ", 1)[1].strip()
+                if grp_part:
+                    groups.add(grp_part)
+            else:
+                groups.add("المجموعة 1 (الأساسية)")
+
+        default_idx = 0
+        for idx, grp in enumerate(sorted(groups), start=1):
+            self.rep_contact_group.addItem(grp, grp)
+            if curr_grp == grp:
+                default_idx = idx
+
+        self.rep_contact_group.setCurrentIndex(default_idx)
+        self.rep_contact_group.blockSignals(False)
 
     def generate_subscriber_report(self, fmt):
         sid = self.rep_sub_cb.currentData()
@@ -757,16 +888,85 @@ class ReportsMixin:
         except Exception as e:
             ModernDialog(self, "خطأ", str(e)).exec()
     def generate_subscriber_contact_list_report(self, fmt):
-        """Generates a list of subscribers with contact info in Excel or PDF."""
+        """توليد تقرير قائمة المشتركين مفلتراً بحسب الموسم والفئة والمجموعة المختارة بصيغة Excel أو PDF."""
         try:
-            subs = self.db.query(db_mod.Subscriber).all()
-            data = [{
-                "الاسم": s.name,
-                "الهاتف": s.phone,
-                "رقم الحساب": s.subscriber_number,
-                "الفئة": s.category
-            } for s in subs]
+            query = self.db.query(db_mod.Subscriber)
+
+            # 1. فلتر الموسم
+            season_id = self.rep_contact_season.currentData() if hasattr(self, 'rep_contact_season') else None
+            season_text = self.rep_contact_season.currentText() if hasattr(self, 'rep_contact_season') else "الكل"
+            if season_id:
+                query = query.filter(db_mod.Subscriber.season_id == season_id)
+
+            # 2. فلتر الفئة
+            cat_val = self.rep_contact_category.currentData() if hasattr(self, 'rep_contact_category') else None
+            cat_text = self.rep_contact_category.currentText() if hasattr(self, 'rep_contact_category') else "الكل"
+            if cat_val:
+                query = query.filter(db_mod.Subscriber.category.ilike(f"%{cat_val}%"))
+
+            # 3. فلتر المجموعة
+            grp_val = self.rep_contact_group.currentData() if hasattr(self, 'rep_contact_group') else None
+            grp_text = self.rep_contact_group.currentText() if hasattr(self, 'rep_contact_group') else "الكل"
+            if grp_val:
+                if grp_val == "المجموعة 1 (الأساسية)":
+                    query = query.filter(
+                        (~db_mod.Subscriber.category.ilike("%المجموعة %")) |
+                        (db_mod.Subscriber.category.ilike("%المجموعة 1%"))
+                    )
+                else:
+                    query = query.filter(db_mod.Subscriber.category.ilike(f"%{grp_val}%"))
+
+            subs = query.order_by(
+                db_mod.Subscriber.category,
+                db_mod.Subscriber.subscriber_number,
+                db_mod.Subscriber.name
+            ).all()
+
+            if not subs:
+                ModernDialog(self, "تنبيه", "لا يوجد مشتركون مطابقون لخيارات التصفية المحددة.").exec()
+                return
+
+            seasons_map = {s.id: s.name for s in self.db.query(db_mod.Season).all()}
+            status_trans = {
+                "accepted": "مقبول",
+                "pending": "قيد المراجعة",
+                "rejected": "مرفوض",
+                "excluded": "مستبعد",
+                "late": "متأخر",
+                "suspended": "موقوف"
+            }
+
+            data = []
+            for i, s in enumerate(subs, 1):
+                s_name = s.name or ""
+                s_phone = s.phone or ""
+                s_num = s.subscriber_number or ""
+                s_cat = s.category or ""
+                s_season = s.season.name if s.season else (seasons_map.get(s.season_id, "") or "")
+                s_status = status_trans.get(s.status, s.status or "مقبول")
+
+                data.append({
+                    "م": i,
+                    "الاسم": s_name,
+                    "رقم الهاتف": s_phone,
+                    "رقم الحساب": s_num,
+                    "الفئة / المجموعة": s_cat,
+                    "الموسم": s_season,
+                    "الحالة": s_status
+                })
+
             df = pd.DataFrame(data)
+
+            # تجهيز نص العنوان الفرعي الموضح للفلاتر
+            sub_parts = []
+            if season_text and "الكل" not in season_text:
+                sub_parts.append(f"الموسم: {season_text}")
+            if cat_text and "الكل" not in cat_text:
+                sub_parts.append(f"الفئة: {cat_text}")
+            if grp_text and "الكل" not in grp_text:
+                sub_parts.append(f"المجموعة: {grp_text}")
+            sub_parts.append(f"إجمالي المشتركين: {len(subs)}")
+            subtitle_str = " | ".join(sub_parts)
 
             if fmt == "excel":
                 file_path, _ = QFileDialog.getSaveFileName(self, "حفظ قائمة المشتركين (Excel)", "subscriber_contact_list.xlsx", "Excel Files (*.xlsx)")
@@ -782,7 +982,7 @@ class ReportsMixin:
 
                     setup_excel_header(
                         workbook=workbook, worksheet=worksheet, df=df,
-                        title="قائمة المشتركين", subtitle="",
+                        title="قائمة المشتركين", subtitle=subtitle_str,
                         company_name=company_name, company_logo_path=company_logo_path,
                         start_row=8
                     )
@@ -803,40 +1003,45 @@ class ReportsMixin:
 
                 page_num = 1
                 draw_pdf_header(
-                    c=c, title="قائمة المشتركين", subtitle="", page_num=page_num,
+                    c=c, title="قائمة المشتركين", subtitle=subtitle_str, page_num=page_num,
                     W=width, H=height, M=36, font_name=font_name,
                     company_name=company_name, company_legal_name=company_legal_name,
                     company_record=company_record, company_logo_path=company_logo_path
                 )
                 
                 y = height - 160
-                headers = [reshape_text("الاسم"), reshape_text("الهاتف"), reshape_text("رقم الحساب"), reshape_text("الفئة")]
-                col_x = [50, 180, 310, 440]
+                headers = [reshape_text("م"), reshape_text("الاسم"), reshape_text("الهاتف"), reshape_text("رقم الحساب"), reshape_text("الفئة / المجموعة")]
+                col_x = [35, 75, 220, 340, 440]
                 for i, h in enumerate(headers):
                     c.drawString(col_x[i], y, h)
-                c.line(50, y-5, width-50, y-5)
+                c.line(35, y-5, width-35, y-5)
                 y -= 25
 
-                for s in subs:
+                for item in data:
                     if y < 50:
                         c.showPage()
                         page_num += 1
                         draw_pdf_header(
-                            c=c, title="قائمة المشتركين", subtitle="", page_num=page_num,
+                            c=c, title="قائمة المشتركين", subtitle=subtitle_str, page_num=page_num,
                             W=width, H=height, M=36, font_name=font_name,
                             company_name=company_name, company_legal_name=company_legal_name,
                             company_record=company_record, company_logo_path=company_logo_path
                         )
                         y = height - 160
                         c.setFont(font_name, 10)
-                    c.drawString(col_x[0], y, reshape_text(s.name or ""))
-                    c.drawString(col_x[1], y, reshape_text(s.phone or ""))
-                    c.drawString(col_x[2], y, reshape_text(s.subscriber_number or ""))
-                    c.drawString(col_x[3], y, reshape_text(s.category or ""))
+                        for i, h in enumerate(headers):
+                            c.drawString(col_x[i], y, h)
+                        c.line(35, y-5, width-35, y-5)
+                        y -= 25
+                    c.drawString(col_x[0], y, str(item["م"]))
+                    c.drawString(col_x[1], y, reshape_text(item["الاسم"]))
+                    c.drawString(col_x[2], y, reshape_text(item["رقم الهاتف"]))
+                    c.drawString(col_x[3], y, reshape_text(item["رقم الحساب"]))
+                    c.drawString(col_x[4], y, reshape_text(item["الفئة / المجموعة"]))
                     y -= 20
                 c.save()
 
-            ModernDialog(self, reshape_text("نجاح"), reshape_text(f"تم تصدير التقرير بنجاح إلى:\n{file_path}")).exec()
+                ModernDialog(self, reshape_text("نجاح"), reshape_text(f"تم تصدير التقرير بنجاح إلى:\n{file_path}")).exec()
         except Exception as e:
             ModernDialog(self, reshape_text("خطأ"), str(e)).exec()
     def generate_expense_summary_report(self):
