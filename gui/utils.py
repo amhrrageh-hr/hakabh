@@ -52,6 +52,15 @@ def draw_pdf_header(c, title, subtitle, page_num, W, H, M, font_name, company_na
     c.setLineWidth(1.5)
     c.line(M, H - 137, W - M, H - 137)
 
+def get_safe_db_url(db_session):
+    """إرجاع رابط قاعدة البيانات الفعلي دون إخفاء كلمة المرور للـ Threads المنفصلة"""
+    try:
+        bind = db_session.get_bind()
+        return bind.url.render_as_string(hide_password=False)
+    except Exception:
+        import database as db_mod
+        return db_mod.get_database_url()
+
 def setup_excel_header(workbook, worksheet, df, title, subtitle, company_name, company_logo_path, start_row=8):
     import os
     worksheet.right_to_left()
@@ -63,7 +72,7 @@ def setup_excel_header(workbook, worksheet, df, title, subtitle, company_name, c
     title_format = workbook.add_format({'bold': True, 'font_size': 20, 'color': title_color, 'bg_color': header_bg, 'align': 'center', 'valign': 'vcenter'})
     subtitle_format = workbook.add_format({'font_size': 11, 'color': header_font_color, 'bg_color': header_bg, 'align': 'center', 'valign': 'vcenter'})
     
-    num_cols = max(len(df.columns), 6)
+    num_cols = max(len(df.columns) if hasattr(df, 'columns') else 0, 6)
     def get_col_letter(n):
         result = ""
         while n > 0:
@@ -86,16 +95,23 @@ def setup_excel_header(workbook, worksheet, df, title, subtitle, company_name, c
     if subtitle:
         worksheet.merge_range(f'A4:{last_col_letter}4', subtitle, subtitle_format)
     
-    worksheet.set_row(start_row - 4, 30)
+    if start_row >= 4:
+        worksheet.set_row(start_row - 4, 30)
     for col_num, value in enumerate(df.columns.values): 
         worksheet.write(start_row, col_num, value, header_format)
         
     worksheet.freeze_panes(start_row + 1, 0)
     worksheet.hide_gridlines(2)
     
-    for i, col in enumerate(df.columns):
-        max_len = max(df[col].astype(str).map(len).max(), len(str(col))) + 2
-        worksheet.set_column(i, i, max_len)
+    if not df.empty:
+        for i, col in enumerate(df.columns):
+            try:
+                lens = df[col].dropna().astype(str).map(len)
+                max_val_len = lens.max() if not lens.empty else 0
+                max_len = max(max_val_len, len(str(col))) + 3
+            except Exception:
+                max_len = len(str(col)) + 4
+            worksheet.set_column(i, i, max(max_len, 12))
 
 def register_arabic_font():
     """

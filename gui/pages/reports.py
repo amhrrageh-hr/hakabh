@@ -785,23 +785,27 @@ class ReportsMixin:
             status = self.rep_status.currentText()
             cat_name = self.rep_cat_filter.currentData()
 
-            query = self.db.query(db_mod.Payment).filter(db_mod.Payment.due_date.between(start_date, end_date))
+            from sqlalchemy.orm import aliased
+            sub_alias = aliased(db_mod.Subscriber)
+
+            # استعلام واحد مع outerjoin باستخدام alias لتجنب تكرار الجدول
+            query = (
+                self.db.query(db_mod.Payment, sub_alias.name.label('sub_name'), sub_alias.category.label('sub_cat'))
+                .outerjoin(sub_alias, db_mod.Payment.subscriber_id == sub_alias.id)
+                .filter(db_mod.Payment.due_date.between(start_date, end_date))
+            )
             if status == "مدفوع":
                 query = query.filter(db_mod.Payment.is_paid == True)
             elif status == "غير مدفوع":
                 query = query.filter(db_mod.Payment.is_paid == False)
-
             if cat_name:
-                query = query.join(db_mod.Subscriber, db_mod.Payment.subscriber_id == db_mod.Subscriber.id).filter(db_mod.Subscriber.category == cat_name)
+                query = query.filter(sub_alias.category == cat_name)
 
-            # جلب المدفوعات مع المشتركين في استعلام واحد لتجنب مشكلة N+1
-            payments = (
-                query
-                .join(db_mod.Subscriber, db_mod.Payment.subscriber_id == db_mod.Subscriber.id, isouter=True)
-                .add_columns(db_mod.Subscriber.name.label('sub_name'), db_mod.Subscriber.category.label('sub_cat'))
-                .order_by(db_mod.Payment.cycle_number.desc(), db_mod.Payment.installment_number.desc(), db_mod.Payment.due_date.desc())
-                .all()
-            )
+            payments = query.order_by(
+                db_mod.Payment.cycle_number.desc(),
+                db_mod.Payment.installment_number.desc(),
+                db_mod.Payment.due_date.desc()
+            ).all()
             data = []
             for row in payments:
                 p = row[0]

@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 import database as db_mod
-from gui.utils import reshape_text, ServerWorker
+from gui.utils import reshape_text, get_safe_db_url, ServerWorker
 from gui.dialogs import *
 
 
@@ -242,10 +242,7 @@ class CyclesMixin:
             if not ModernDialog(self, "تأكيد", msg, is_confirm=True).exec():
                 return
 
-            try:
-                db_url = str(self.db.get_bind().url)
-            except Exception:
-                db_url = db_mod.get_local_database_url()
+            db_url = get_safe_db_url(self.db)
 
             if hasattr(self, 'btn_gen'):
                 self.btn_gen.setEnabled(False)

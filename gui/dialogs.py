@@ -21,7 +21,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 import database as db_mod
 import security
-from gui.utils import reshape_text, register_arabic_font
+from gui.utils import reshape_text, get_safe_db_url, register_arabic_font
 
 class ModernDialog(QDialog):
     def __init__(self, parent, title, message, is_confirm=False, is_input=False, initial_value=""):
@@ -1837,11 +1837,8 @@ class BatchPaymentDialog(QDialog):
         staff    = getattr(self.parent(), 'logged_in_staff', None)
         staff_id = staff.id if staff else None
 
-        # استخراج رابط DB
-        try:
-            db_url = str(self.db.get_bind().url)
-        except Exception:
-            db_url = db_mod.get_local_database_url()
+        # استخراج رابط DB غير المقنع
+        db_url = get_safe_db_url(self.db)
 
         # تعطيل الأزرار
         self._set_buttons_enabled(False)

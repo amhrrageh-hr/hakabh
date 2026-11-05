@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 import database as db_mod
-from gui.utils import reshape_text, ServerWorker
+from gui.utils import reshape_text, ServerWorker, get_safe_db_url
 from gui.dialogs import *
 
 
@@ -1050,10 +1050,7 @@ class SubscribersMixin:
         filename, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المشتركين (Excel)", "subscribers_report.xlsx", "Excel Files (*.xlsx)")
         if not filename: return
 
-        try:
-            db_url = str(self.db.get_bind().url)
-        except Exception:
-            db_url = db_mod.get_local_database_url()
+        db_url = get_safe_db_url(self.db)
 
         if hasattr(self, 'btn_sub_excel'):
             self.btn_sub_excel.setEnabled(False)
@@ -1075,10 +1072,7 @@ class SubscribersMixin:
         filename, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير المشتركين (PDF)", "subscribers_report.pdf", "PDF Files (*.pdf)")
         if not filename: return
 
-        try:
-            db_url = str(self.db.get_bind().url)
-        except Exception:
-            db_url = db_mod.get_local_database_url()
+        db_url = get_safe_db_url(self.db)
 
         if hasattr(self, 'btn_sub_pdf'):
             self.btn_sub_pdf.setEnabled(False)
