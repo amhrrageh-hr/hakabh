@@ -2719,6 +2719,277 @@ class AccountDetailsDialog(QDialog):
         ModernDialog(self, "خطأ", f"حدث خطأ أثناء الحذف: {err_msg}").exec()
 
 
+class _SmartPaymentWorker(QThread):
+    """Worker thread لتوزيع وتسديد مبلغ كبير على الأقساط في الخلفية بسرعة فائقة مع شريط تقدم"""
+    progress = pyqtSignal(int, int, str)  # (processed_so_far, est_total, msg)
+    finished = pyqtSignal(int)            # total_processed
+    error    = pyqtSignal(str)
+
+    def __init__(self, db_url, sub_id, total_amount, cycle, inst, date, note, cat_amount, max_c, max_i, staff_id=None):
+        super().__init__()
+        self.db_url       = db_url
+        self.sub_id       = sub_id
+        self.total_amount = total_amount
+        self.cycle        = cycle
+        self.inst         = inst
+        self.date         = date
+        self.note         = note
+        self.cat_amount   = cat_amount
+        self.max_c        = max_c
+        self.max_i        = max_i
+        self.staff_id     = staff_id
+
+    def run(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        kw = {"check_same_thread": False} if "sqlite" in self.db_url else {}
+        engine  = create_engine(self.db_url, connect_args=kw)
+        Session = sessionmaker(bind=engine)
+        db      = Session()
+        try:
+            sub = db.get(db_mod.Subscriber, self.sub_id)
+            staff_obj = db.get(db_mod.Staff, self.staff_id) if self.staff_id else None
+            s_name = staff_obj.name if staff_obj else None
+
+            cat = db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first() if sub else None
+            cat_start = (cat.start_date.date() if hasattr(cat.start_date, 'date') else cat.start_date) if (cat and cat.start_date) else None
+
+            est_total = max(1, int(self.total_amount // self.cat_amount) + (1 if self.total_amount % self.cat_amount > 0 else 0)) if self.cat_amount > 0 else 1
+            remaining = self.total_amount
+            processed = 0
+
+            # جلب جميع أقساط المشترك في استعلام واحد فقط إلى الذاكرة لتجنب الاستعلامات المتكررة داخل الحلقات
+            all_sub_payments = db.query(db_mod.Payment).filter(
+                db_mod.Payment.subscriber_id == self.sub_id
+            ).order_by(
+                db_mod.Payment.cycle_number.asc(),
+                db_mod.Payment.installment_number.asc()
+            ).all()
+
+            targets = [p for p in all_sub_payments if not p.is_paid]
+            last_processed_c = 0
+            last_processed_i = 0
+
+            # 1. توزيع المبلغ على الأقساط غير المسددة الموجودة أولاً (FIFO)
+            for p in targets:
+                if remaining <= 0:
+                    break
+
+                if remaining < p.amount:
+                    balance = p.amount - remaining
+                    p.amount = remaining
+                    p.is_paid = True
+                    p.paid_date = self.date
+                    p.staff_id = self.staff_id
+                    p.is_staff_settled = False
+                    p.note = db_mod.build_installment_note(
+                        is_paid=True, due_date=p.due_date, paid_date=self.date,
+                        user_note=self.note, staff_name=s_name, is_partial=True
+                    )
+                    new_unpaid = db_mod.Payment(
+                        subscriber_id=self.sub_id,
+                        amount=balance,
+                        due_date=p.due_date,
+                        is_paid=False,
+                        cycle_number=p.cycle_number,
+                        installment_number=p.installment_number,
+                        note=db_mod.build_installment_note(is_paid=False, due_date=p.due_date, is_partial=True)
+                    )
+                    db.add(new_unpaid)
+                    all_sub_payments.append(new_unpaid)
+                    remaining = 0
+                else:
+                    pay_now = p.amount
+                    p.is_paid = True
+                    p.paid_date = self.date
+                    p.staff_id = self.staff_id
+                    p.is_staff_settled = False
+                    p.note = db_mod.build_installment_note(
+                        is_paid=True, due_date=p.due_date, paid_date=self.date,
+                        user_note=self.note, staff_name=s_name
+                    )
+                    remaining -= pay_now
+
+                last_processed_c = p.cycle_number
+                last_processed_i = p.installment_number
+                processed += 1
+                self.progress.emit(processed, est_total, f"جاري تسديد الدورة {p.cycle_number} — القسط {p.installment_number} ({processed}/{est_total})")
+
+            # 2. إذا بقي رصيد، نكمل للأمام باستخدام القاموس في الذاكرة دون استعلام شبكي لكل قسط
+            if remaining > 0:
+                lookup = {(p.cycle_number, p.installment_number): p for p in all_sub_payments}
+                if last_processed_c > 0:
+                    curr_c, curr_i = last_processed_c, last_processed_i + 1
+                    if curr_i > self.max_i:
+                        curr_i = 1
+                        curr_c += 1
+                else:
+                    curr_c, curr_i = self.cycle, self.inst
+
+                safety_counter = 0
+                max_safety = self.max_c * self.max_i
+
+                while remaining > 0 and curr_c <= self.max_c and safety_counter < max_safety:
+                    safety_counter += 1
+                    p = lookup.get((curr_c, curr_i))
+
+                    if p and p.is_paid:
+                        curr_i += 1
+                        if curr_i > self.max_i:
+                            curr_i = 1
+                            curr_c += 1
+                        continue
+
+                    pay_now = min(remaining, self.cat_amount)
+                    is_partial = (pay_now < self.cat_amount)
+
+                    if cat_start:
+                        day_offset = (curr_c - 1) * self.max_i + (curr_i - 1)
+                        sched_due = datetime.datetime.combine(cat_start + datetime.timedelta(days=day_offset), datetime.time.min)
+                    else:
+                        sched_due = self.date
+
+                    p_due = p.due_date if (p and p.due_date) else sched_due
+                    new_note = db_mod.build_installment_note(
+                        is_paid=True, due_date=p_due, paid_date=self.date,
+                        user_note=self.note, staff_name=s_name, is_partial=is_partial
+                    )
+
+                    if p:
+                        if pay_now < p.amount:
+                            balance = p.amount - pay_now
+                            p.amount = pay_now
+                            p.is_paid = True
+                            p.paid_date = self.date
+                            p.staff_id = self.staff_id
+                            p.is_staff_settled = False
+                            p.note = new_note
+                            new_unpaid = db_mod.Payment(
+                                subscriber_id=self.sub_id,
+                                amount=balance,
+                                due_date=p.due_date,
+                                is_paid=False,
+                                cycle_number=curr_c,
+                                installment_number=curr_i,
+                                note=db_mod.build_installment_note(is_paid=False, due_date=p.due_date, is_partial=True)
+                            )
+                            db.add(new_unpaid)
+                            remaining = 0
+                        else:
+                            p.amount = pay_now
+                            p.is_paid = True
+                            p.paid_date = self.date
+                            p.staff_id = self.staff_id
+                            p.is_staff_settled = False
+                            p.note = new_note
+                            remaining -= pay_now
+                    else:
+                        new_paid = db_mod.Payment(
+                            subscriber_id=self.sub_id,
+                            amount=pay_now,
+                            due_date=sched_due,
+                            paid_date=self.date,
+                            is_paid=True,
+                            cycle_number=curr_c,
+                            installment_number=curr_i,
+                            note=new_note,
+                            staff_id=self.staff_id,
+                            is_staff_settled=False
+                        )
+                        db.add(new_paid)
+                        lookup[(curr_c, curr_i)] = new_paid
+
+                        if pay_now < self.cat_amount:
+                            new_unpaid = db_mod.Payment(
+                                subscriber_id=self.sub_id,
+                                amount=self.cat_amount - pay_now,
+                                due_date=sched_due,
+                                is_paid=False,
+                                cycle_number=curr_c,
+                                installment_number=curr_i,
+                                note=db_mod.build_installment_note(is_paid=False, due_date=sched_due, is_partial=True)
+                            )
+                            db.add(new_unpaid)
+                            remaining = 0
+                        else:
+                            remaining -= pay_now
+
+                    processed += 1
+                    self.progress.emit(processed, max(est_total, processed), f"جاري تسديد الدورة {curr_c} — القسط {curr_i} ({processed}/{max(est_total, processed)})")
+
+                    curr_i += 1
+                    if curr_i > self.max_i:
+                        curr_i = 1
+                        curr_c += 1
+
+            db.commit()
+            self.finished.emit(processed)
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            self.error.emit(str(e))
+        finally:
+            db.close()
+            engine.dispose()
+
+
+class _PaySelectedPaymentsWorker(QThread):
+    """Worker thread لتسديد الأقساط المحددة على دفعات في الخلفية مع شريط تقدم"""
+    progress = pyqtSignal(int, int)  # (paid_so_far, total)
+    finished = pyqtSignal(int)       # total_paid
+    error    = pyqtSignal(str)
+
+    def __init__(self, db_url, payment_ids, staff_id=None):
+        super().__init__()
+        self.db_url      = db_url
+        self.payment_ids = list(payment_ids)
+        self.staff_id    = staff_id
+
+    def run(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        kw = {"check_same_thread": False} if "sqlite" in self.db_url else {}
+        engine  = create_engine(self.db_url, connect_args=kw)
+        Session = sessionmaker(bind=engine)
+        db      = Session()
+        try:
+            total = len(self.payment_ids)
+            staff_obj = db.get(db_mod.Staff, self.staff_id) if self.staff_id else None
+            s_name = staff_obj.name if staff_obj else None
+            now_dt = datetime.datetime.now()
+
+            payments = db.query(db_mod.Payment).filter(
+                db_mod.Payment.id.in_(self.payment_ids)
+            ).all()
+
+            paid_so_far = 0
+            for idx, p in enumerate(payments, 1):
+                p.is_paid = True
+                p.paid_date = now_dt
+                p.staff_id = self.staff_id
+                p.is_staff_settled = False
+                p.note = db_mod.build_installment_note(
+                    is_paid=True, due_date=p.due_date, paid_date=now_dt, staff_name=s_name
+                )
+                paid_so_far += 1
+                if idx % 10 == 0 or idx == len(payments):
+                    db.commit()
+                    self.progress.emit(paid_so_far, total)
+
+            self.finished.emit(paid_so_far)
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            self.error.emit(str(e))
+        finally:
+            db.close()
+            engine.dispose()
+
+
 class _DeletePaymentsWorker(QThread):
     """Worker thread لحذف الأقساط المحددة على دفعات في الخلفية مع شريط تقدم دون تجميد الواجهة"""
     progress = pyqtSignal(int, int)  # (deleted_so_far, total)
