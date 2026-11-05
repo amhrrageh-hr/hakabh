@@ -2683,11 +2683,7 @@ class AccountDetailsDialog(QDialog):
 
     def delete_payment(self, pid):
         if ModernDialog(self, "تأكيد", "هل تريد حذف هذه العملية؟", is_confirm=True).exec():
-            p = self.db.get(db_mod.Payment, pid)
-            if p:
-                self.db.delete(p)
-                self.db.commit()
-                self.load_payments()
+            self._start_delete_payments_worker([pid])
 
     def delete_selected_payments(self):
         selected_rows = self.table.selectionModel().selectedRows()
@@ -2695,20 +2691,119 @@ class AccountDetailsDialog(QDialog):
             ModernDialog(self, "تنبيه", "يرجى اختيار عملية واحدة على الأقل").exec()
             return
             
-        count = len(selected_rows)
+        payment_ids = []
+        for index in selected_rows:
+            item = self.table.item(index.row(), 0)
+            if item:
+                pid = item.data(Qt.ItemDataRole.UserRole)
+                if pid is not None:
+                    payment_ids.append(pid)
+
+        if not payment_ids:
+            ModernDialog(self, "تنبيه", "لم يتم العثور على عمليات صالحة للحذف").exec()
+            return
+
+        count = len(payment_ids)
         if ModernDialog(self, "تأكيد", f"هل تريد حذف {count} عملية مختارة؟", is_confirm=True).exec():
+            self._start_delete_payments_worker(payment_ids)
+
+    def _start_delete_payments_worker(self, payment_ids):
+        total = len(payment_ids)
+        db_url = get_safe_db_url(self.db)
+
+        self._del_loading = LoadingDialog(
+            self,
+            title="⏳ جاري حذف الأقساط...",
+            message=f"جاري حذف 0 من {total} عملية — يرجى الانتظار"
+        )
+        self._del_loading.progress_bar.setRange(0, max(total, 1))
+        self._del_loading.progress_bar.setValue(0)
+        self._del_loading.show()
+
+        self._del_worker = _DeletePaymentsWorker(db_url=db_url, payment_ids=payment_ids)
+        self._del_worker.progress.connect(self._on_delete_payments_progress)
+        self._del_worker.finished.connect(self._on_delete_payments_finished)
+        self._del_worker.error.connect(self._on_delete_payments_error)
+        self._del_worker.start()
+
+    def _on_delete_payments_progress(self, current: int, total: int):
+        if getattr(self, '_del_loading', None):
+            self._del_loading.progress_bar.setValue(current)
+            self._del_loading.set_message(
+                f"تم حذف {current} من {total} عملية...",
+                title="⏳ جاري حذف الأقساط..."
+            )
+
+    def _on_delete_payments_finished(self, deleted_count: int):
+        if getattr(self, '_del_loading', None):
+            self._del_loading.close()
+            self._del_loading = None
+        try:
+            self.db.expire_all()
+        except Exception:
+            pass
+        self.load_payments()
+        if hasattr(self.parent(), 'load_subscribers'):
             try:
-                for index in selected_rows:
-                    pid = self.table.item(index.row(), 0).data(Qt.ItemDataRole.UserRole)
-                    p = self.db.get(db_mod.Payment, pid)
-                    if p:
-                        self.db.delete(p)
-                self.db.commit()
-                self.load_payments()
-                ModernDialog(self, "نجاح", f"تم حذف {count} عملية بنجاح").exec()
-            except Exception as e:
-                self.db.rollback()
-                ModernDialog(self, "خطأ", f"حدث خطأ أثناء الحذف: {e}").exec()
+                self.parent().load_subscribers()
+            except Exception:
+                pass
+        ModernDialog(self, "نجاح", f"تم حذف {deleted_count} عملية بنجاح").exec()
+
+    def _on_delete_payments_error(self, err_msg: str):
+        if getattr(self, '_del_loading', None):
+            self._del_loading.close()
+            self._del_loading = None
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
+        ModernDialog(self, "خطأ", f"حدث خطأ أثناء الحذف: {err_msg}").exec()
+
+
+class _DeletePaymentsWorker(QThread):
+    """Worker thread لحذف الأقساط المحددة على دفعات في الخلفية مع شريط تقدم دون تجميد الواجهة"""
+    progress = pyqtSignal(int, int)  # (deleted_so_far, total)
+    finished = pyqtSignal(int)       # total_deleted
+    error    = pyqtSignal(str)
+
+    def __init__(self, db_url, payment_ids):
+        super().__init__()
+        self.db_url = db_url
+        self.payment_ids = list(payment_ids)
+
+    def run(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        kw = {"check_same_thread": False} if "sqlite" in self.db_url else {}
+        engine  = create_engine(self.db_url, connect_args=kw)
+        Session = sessionmaker(bind=engine)
+        db      = Session()
+        try:
+            total = len(self.payment_ids)
+            # تقسيم الحذف إلى دفعات صغيرة لتحديث شريط التقدم بسلاسة وسرعة عالية
+            chunk_size = max(1, min(20, (total // 5) or 1))
+            deleted_so_far = 0
+
+            for i in range(0, total, chunk_size):
+                chunk = self.payment_ids[i:i + chunk_size]
+                db.query(db_mod.Payment).filter(
+                    db_mod.Payment.id.in_(chunk)
+                ).delete(synchronize_session=False)
+                db.commit()
+                deleted_so_far += len(chunk)
+                self.progress.emit(deleted_so_far, total)
+
+            self.finished.emit(deleted_so_far)
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            self.error.emit(str(e))
+        finally:
+            db.close()
+            engine.dispose()
 
 class StaffActivityDialog(QDialog):
     def __init__(self, parent, staff_id, db):
