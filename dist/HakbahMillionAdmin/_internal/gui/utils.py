@@ -51,6 +51,10 @@ def draw_pdf_header(c, title, subtitle, page_num, W, H, M, font_name, company_na
     c.setStrokeColor(GOLD)
     c.setLineWidth(1.5)
     c.line(M, H - 137, W - M, H - 137)
+    # إعادة تعيين اللون الافتراضي للأسود حتى لا تُرسم النصوص اللاحقة باللون الأبيض على خلفية بيضاء
+    c.setFillColor(colors.black)
+    c.setStrokeColor(colors.black)
+    c.setFont(font_name, 10)
 
 def get_safe_db_url(db_session):
     """إرجاع رابط قاعدة البيانات الفعلي دون إخفاء كلمة المرور للـ Threads المنفصلة"""
