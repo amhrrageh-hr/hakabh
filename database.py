@@ -94,8 +94,8 @@ def get_server_database_url():
         url = url.replace("postgres://", "postgresql://", 1)
     return url
 
-def check_server_connection(server_url: str, timeout=3) -> bool:
-    """فحص سريع للغاية لإمكانية الوصول إلى خادم PostgreSQL عبر socket مباشر"""
+def check_server_connection(server_url: str, timeout=2) -> bool:
+    """فحص سريع لإمكانية الوصول لخادم PostgreSQL"""
     if not server_url:
         return False
     try:
@@ -106,24 +106,23 @@ def check_server_connection(server_url: str, timeout=3) -> bool:
         if not host:
             return False
         import socket
-        sock = socket.create_connection((host, port), timeout=timeout)
+        sock = socket.create_connection((host, port), timeout=min(timeout, 2))
         sock.close()
         return True
-    except Exception as e:
-        print(f"[DB-Hybrid] Server reachability check failed: {e}")
+    except Exception:
         return False
 
 def get_database_url():
     """
-    تحديد URL قاعدة البيانات بشكل ذكي:
-    - إذا كان في بيئة Railway/Render: استخدم PostgreSQL مباشرة
-    - إذا كان على الجهاز المحلي: فحص الاتصال أولاً
-      - متصل بالسيرفر Railway -> PostgreSQL
-      - غير متصل -> SQLite المحلي
+    تحديد URL قاعدة البيانات:
+    - في بيئة السيرفر السحابي (Railway/Render): يستخدم PostgreSQL مباشرة.
+    - في تطبيق سطح المكتب: يستخدم دائماً قاعدة البيانات المحلية السريعة (Local-First SQLite)
+      لضمان سرعة استجابة فورية (0ms) بدون أي تعليق، بينما يتولى محرك المزامنة الخلفي
+      مزامنة كافة التعديلات مع سيرفر PostgreSQL على Railway لحظياً في الخلفية.
     """
     global _db_mode_online
 
-    # البيئات السحابية: استخدم PostgreSQL دائماً بدون فحص
+    # البيئات السحابية (الويب على Railway/Render): استخدم PostgreSQL مباشرة
     if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER"):
         url = get_server_database_url()
         if url:
@@ -132,24 +131,13 @@ def get_database_url():
             return url
 
     server_url = get_server_database_url()
-
-    # إذا لا يوجد سيرفر مُعرَّف أصلاً، استخدم المحلي مباشرة
-    if not server_url:
-        _db_mode_online = False
-        print("[DB-Hybrid] Mode: LOCAL (no server URL configured) -> SQLite")
-        return get_local_database_url()
-
-    # فحص الاتصال الفعلي بالسيرفر بسرعة فائقة
-    print("[DB-Hybrid] Checking Railway server reachability...")
-    if check_server_connection(server_url, timeout=3):
+    if server_url and check_server_connection(server_url, timeout=2):
         _db_mode_online = True
-        print("[DB-Hybrid] Mode: ONLINE -> PostgreSQL (Railway)")
-        return server_url
+        print("[DB-Hybrid] Mode: LOCAL-FIRST + ONLINE CLOUD SYNC (Railway reachable)")
     else:
-        print("[DB-Hybrid] Server unreachable. Falling back to local SQLite.")
+        _db_mode_online = False
+        print("[DB-Hybrid] Mode: LOCAL-FIRST OFFLINE (Server unreachable)")
 
-    _db_mode_online = False
-    print("[DB-Hybrid] Mode: OFFLINE -> SQLite (local)")
     return get_local_database_url()
 
 def is_online_mode() -> bool:
@@ -164,14 +152,20 @@ def create_configured_engine(url):
         connect_args = {"check_same_thread": False, "timeout": 30.0}
         return create_engine(url, connect_args=connect_args)
     else:
-        # إعدادات التوصيل للشبكات والـ Remote PostgreSQL
+        # إعدادات التوصيل للشبكات والـ Remote PostgreSQL مع تفعيل TCP Keepalives لمنع انقطاع البروكسي
         return create_engine(
             url,
-            connect_args={"connect_timeout": 10},
+            connect_args={
+                "connect_timeout": 10,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5,
+            },
             pool_size=5,
             max_overflow=10,
             pool_pre_ping=True,
-            pool_recycle=300,
+            pool_recycle=180,
             pool_timeout=15
         )
 
@@ -213,10 +207,10 @@ def reconnect_engine(new_url=None):
     return engine
 
 # =====================================================================
-#  مزامنة البيانات: SQLite → PostgreSQL عند عودة الإنترنت
+#  مزامنة البيانات ثنائية الاتجاه: SQLite (محلي) ↔ PostgreSQL (السيرفر)
 # =====================================================================
 
-# الجداول التي يتم مزامنتها (مرتبة حسب الاعتمادية)
+# الجداول التي يتم مزامنتها (مرتبة حسب الاعتمادية للإدراج والتحديث)
 SYNC_TABLES_ORDER = [
     "seasons", "categories", "subscriber_numbers",
     "subscribers", "staff", "payments", "winners",
@@ -224,11 +218,148 @@ SYNC_TABLES_ORDER = [
     "subscriber_messages", "visit_logs"
 ]
 
-def sync_local_to_server():
+# الأعمدة المنطقية (Boolean) في كل جدول لتحويلها من 0/1 في SQLite إلى True/False في PostgreSQL
+BOOLEAN_COLUMNS_MAP = {
+    "seasons": {"is_current"},
+    "categories": {"is_active"},
+    "subscriber_numbers": {"is_reserved"},
+    "payments": {"is_paid", "is_staff_settled"},
+    "winners": {"is_received", "is_notif_seen"},
+    "admin_notifications": {"is_read"},
+    "subscriber_messages": {"is_active"},
+}
+
+
+def _get_pk_col(table_name: str) -> str:
+    return "key" if table_name == "settings" else "id"
+
+
+def ensure_local_sync_tracking(local_engine=None):
     """
-    مزامنة بيانات SQLite المحلي إلى PostgreSQL على Railway.
-    يُستدعى تلقائياً عند الانتقال من أوفلاين إلى أونلاين.
-    يستخدم INSERT ... ON CONFLICT DO UPDATE (upsert) لتجنب التكرار.
+    إنشاء جداول و Triggers التتبع التلقائي في SQLite المحلي (hakbah.db).
+    يسجل تلقائياً أي إضافة أو تعديل أو حذف يحدث أثناء العمل أوفلاين.
+    """
+    dispose_after = False
+    if local_engine is None:
+        local_engine = create_configured_engine(get_local_database_url())
+        dispose_after = True
+
+    try:
+        # التأكد من أن جميع جداول النظام منشأة في القاعدة المحلية أولاً
+        if "Base" in globals():
+            try:
+                Base.metadata.create_all(bind=local_engine)
+            except Exception:
+                pass
+
+        with local_engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS _sync_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """))
+            conn.execute(text("""
+                INSERT OR IGNORE INTO _sync_meta (key, value) VALUES ('syncing_from_server', '0')
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS _sync_changes (
+                    table_name TEXT NOT NULL,
+                    pk_val TEXT NOT NULL,
+                    op TEXT NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (table_name, pk_val)
+                )
+            """))
+
+            # إنشاء Triggers لكل جدول لمراقبة الإضافة والتعديل والحذف في الوضع المحلي
+            existing_tables = {
+                r[0] for r in conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table'")
+                ).fetchall()
+            }
+
+            for tbl in SYNC_TABLES_ORDER:
+                if tbl not in existing_tables:
+                    continue
+                pk = _get_pk_col(tbl)
+
+                conn.execute(text(f"""
+                    CREATE TRIGGER IF NOT EXISTS trg_sync_ins_{tbl}
+                    AFTER INSERT ON {tbl}
+                    WHEN COALESCE((SELECT value FROM _sync_meta WHERE key = 'syncing_from_server'), '0') = '0'
+                    BEGIN
+                        INSERT OR REPLACE INTO _sync_changes (table_name, pk_val, op, updated_at)
+                        VALUES ('{tbl}', CAST(NEW.{pk} AS TEXT), 'UPSERT', CURRENT_TIMESTAMP);
+                    END;
+                """))
+
+                conn.execute(text(f"""
+                    CREATE TRIGGER IF NOT EXISTS trg_sync_upd_{tbl}
+                    AFTER UPDATE ON {tbl}
+                    WHEN COALESCE((SELECT value FROM _sync_meta WHERE key = 'syncing_from_server'), '0') = '0'
+                    BEGIN
+                        INSERT OR REPLACE INTO _sync_changes (table_name, pk_val, op, updated_at)
+                        VALUES ('{tbl}', CAST(NEW.{pk} AS TEXT), 'UPSERT', CURRENT_TIMESTAMP);
+                    END;
+                """))
+
+                conn.execute(text(f"""
+                    CREATE TRIGGER IF NOT EXISTS trg_sync_del_{tbl}
+                    AFTER DELETE ON {tbl}
+                    WHEN COALESCE((SELECT value FROM _sync_meta WHERE key = 'syncing_from_server'), '0') = '0'
+                    BEGIN
+                        INSERT OR REPLACE INTO _sync_changes (table_name, pk_val, op, updated_at)
+                        VALUES ('{tbl}', CAST(OLD.{pk} AS TEXT), 'DELETE', CURRENT_TIMESTAMP);
+                    END;
+                """))
+    except Exception as e:
+        print(f"[Sync-Track] Warning setting up local triggers: {e}")
+    finally:
+        if dispose_after:
+            local_engine.dispose()
+
+
+def has_pending_local_changes() -> int:
+    """إرجاع عدد التعديلات المحلية المعلقة التي لم تُرحّل بعد إلى السيرفر"""
+    db_path = get_local_db_path()
+    if not os.path.exists(db_path):
+        return 0
+    import sqlite3
+    try:
+        conn = sqlite3.connect(db_path, timeout=5.0)
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='_sync_changes'")
+        if not cur.fetchone():
+            conn.close()
+            return 0
+        cur.execute("SELECT COUNT(*) FROM _sync_changes")
+        cnt = cur.fetchone()[0] or 0
+        conn.close()
+        return cnt
+    except Exception:
+        return 0
+
+
+def _normalize_row_for_postgres(table_name: str, row_dict: dict) -> dict:
+    """تحويل قيم SQLite (مثل 0/1 للأعمدة المنطقية) لتتوافق تماماً مع PostgreSQL"""
+    bool_cols = BOOLEAN_COLUMNS_MAP.get(table_name, set())
+    cleaned = {}
+    for k, v in row_dict.items():
+        if k in bool_cols and v is not None:
+            cleaned[k] = bool(int(v)) if isinstance(v, (int, float, str)) and str(v).isdigit() else bool(v)
+        elif isinstance(v, str) and v.strip() == "" and ("date" in k or k.endswith("_at") or k == "last_seen"):
+            cleaned[k] = None
+        else:
+            cleaned[k] = v
+    return cleaned
+
+
+def sync_local_to_server() -> int:
+    """
+    ترحيل التعديلات التي تمت في SQLite المحلي أثناء انقطاع الإنترنت إلى PostgreSQL على السيرفر.
+    يرحل الإضافات والتعديلات والحذف بدقة، ويحدث عدادات الترقيم (Sequences) في السيرفر.
+    يُرجع إجمالي عدد السجلات التي تمت مزامنتها.
     """
     with _sync_lock:
         server_url = get_server_database_url()
@@ -236,16 +367,25 @@ def sync_local_to_server():
 
         if not server_url:
             print("[Sync] No server URL. Skipping sync.")
-            return False
+            return 0
 
-        print("[Sync] Starting local → server sync...")
+        pending_count = has_pending_local_changes()
+        if pending_count == 0:
+            print("[Sync] No pending local changes to push.")
+            return 0
+
+        print(f"[Sync] Starting local → server sync ({pending_count} pending changes)...")
         try:
             local_engine = create_configured_engine(local_url)
             server_engine = create_configured_engine(server_url)
 
-            # فحص أن السيرفر متاح
+            # التأكد من أن السيرفر متاح
             with server_engine.connect() as _conn:
                 _conn.execute(text("SELECT 1"))
+            global _db_mode_online
+            _db_mode_online = True
+
+            ensure_local_sync_tracking(local_engine)
 
             LocalSession = sessionmaker(bind=local_engine)
             ServerSession = sessionmaker(bind=server_engine)
@@ -253,45 +393,174 @@ def sync_local_to_server():
             local_db = LocalSession()
             server_db = ServerSession()
 
+            total_synced = 0
             try:
-                synced_tables = 0
-                for table_name in SYNC_TABLES_ORDER:
+                changes = local_db.execute(
+                    text("SELECT table_name, pk_val, op FROM _sync_changes")
+                ).fetchall()
+
+                if not changes:
+                    return 0
+
+                upserts_by_table = {}
+                deletes_by_table = {}
+                for tbl, pk_val, op in changes:
+                    if op == "DELETE":
+                        deletes_by_table.setdefault(tbl, []).append(pk_val)
+                    else:
+                        upserts_by_table.setdefault(tbl, []).append(pk_val)
+
+                # 1. تطبيق عمليات الحذف أولاً بالترتيب العكسي للاعتمادية (الأبناء قبل الآباء)
+                for table_name in reversed(SYNC_TABLES_ORDER):
+                    del_pks = deletes_by_table.get(table_name, [])
+                    if not del_pks:
+                        continue
+                    pk_col = _get_pk_col(table_name)
                     try:
-                        rows = local_db.execute(text(f"SELECT * FROM {table_name}")).fetchall()
-                        if not rows:
-                            continue
+                        for pk_v in del_pks:
+                            cast_val = pk_v if pk_col == "key" else int(pk_v)
+                            if table_name == "subscribers":
+                                # فك الارتباط قبل حذف المشترك على السيرفر
+                                server_db.execute(
+                                    text("DELETE FROM visit_logs WHERE subscriber_id = :sid"),
+                                    {"sid": cast_val}
+                                )
+                                server_db.execute(
+                                    text("DELETE FROM payments WHERE subscriber_id = :sid"),
+                                    {"sid": cast_val}
+                                )
+                                server_db.execute(
+                                    text("UPDATE subscriber_numbers SET is_reserved = FALSE, subscriber_id = NULL WHERE subscriber_id = :sid"),
+                                    {"sid": cast_val}
+                                )
+                            server_db.execute(
+                                text(f"DELETE FROM {table_name} WHERE {pk_col} = :pk"),
+                                {"pk": cast_val}
+                            )
+                            local_db.execute(
+                                text("DELETE FROM _sync_changes WHERE table_name = :t AND pk_val = :p"),
+                                {"t": table_name, "p": str(pk_v)}
+                            )
+                            total_synced += 1
+                        server_db.commit()
+                        local_db.commit()
+                        print(f"[Sync] [DELETE] {table_name}: {len(del_pks)} records deleted on server")
+                    except Exception as e:
+                        server_db.rollback()
+                        print(f"[Sync] [WARN] Error deleting from {table_name}: {e}")
 
-                        keys = local_db.execute(
-                            text(f"PRAGMA table_info({table_name})")
-                        ).fetchall() if local_url.startswith("sqlite") else []
+                # 2. تطبيق عمليات الإضافة والتعديل (UPSERT) بالترتيب الاعتمادي الصحيح
+                deferred_sub_number_links = []  # (number_id, subscriber_id) لفك الاعتمادية الدائرية
 
-                        col_names = [r[1] for r in keys] if keys else list(rows[0]._mapping.keys())
+                for table_name in SYNC_TABLES_ORDER:
+                    ups_pks = upserts_by_table.get(table_name, [])
+                    if not ups_pks:
+                        continue
 
-                        for row in rows:
-                            row_dict = dict(zip(col_names, row))
-                            # upsert: أدخل أو حدّث إذا كان id موجوداً
-                            cols = ", ".join(col_names)
-                            placeholders = ", ".join([f":{c}" for c in col_names])
+                    pk_col = _get_pk_col(table_name)
+                    try:
+                        keys = local_db.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+                        col_names = [r[1] for r in keys]
+
+                        # جلب أعمدة الجدول في السيرفر للتأكد من التطابق
+                        srv_cols_res = server_db.execute(text(
+                            "SELECT column_name FROM information_schema.columns WHERE table_name = :t"
+                        ), {"t": table_name}).fetchall()
+                        srv_col_set = {r[0] for r in srv_cols_res} if srv_cols_res else set(col_names)
+                        valid_cols = [c for c in col_names if c in srv_col_set]
+
+                        synced_in_table = 0
+                        for pk_v in ups_pks:
+                            cast_val = pk_v if pk_col == "key" else int(pk_v)
+                            row = local_db.execute(
+                                text(f"SELECT * FROM {table_name} WHERE {pk_col} = :pk"),
+                                {"pk": cast_val}
+                            ).fetchone()
+
+                            if not row:
+                                # الصف لم يعد موجوداً محلياً، نزيله من قائمة الانتظار
+                                local_db.execute(
+                                    text("DELETE FROM _sync_changes WHERE table_name = :t AND pk_val = :p"),
+                                    {"t": table_name, "p": str(pk_v)}
+                                )
+                                continue
+
+                            raw_dict = dict(zip(col_names, row))
+                            row_dict = _normalize_row_for_postgres(
+                                table_name,
+                                {k: raw_dict[k] for k in valid_cols}
+                            )
+
+                            # فك الاعتمادية الدائرية بين subscriber_numbers و subscribers
+                            if table_name == "subscriber_numbers" and row_dict.get("subscriber_id"):
+                                sub_id_val = row_dict["subscriber_id"]
+                                sub_exists = server_db.execute(
+                                    text("SELECT 1 FROM subscribers WHERE id = :sid"),
+                                    {"sid": sub_id_val}
+                                ).fetchone()
+                                if not sub_exists:
+                                    deferred_sub_number_links.append((row_dict["id"], sub_id_val))
+                                    row_dict["subscriber_id"] = None
+
+                            cols_sql = ", ".join(valid_cols)
+                            placeholders = ", ".join([f":{c}" for c in valid_cols])
                             update_set = ", ".join([
                                 f"{c} = EXCLUDED.{c}"
-                                for c in col_names if c != "id"
+                                for c in valid_cols if c != pk_col
                             ])
+
                             upsert_sql = text(f"""
-                                INSERT INTO {table_name} ({cols})
+                                INSERT INTO {table_name} ({cols_sql})
                                 VALUES ({placeholders})
-                                ON CONFLICT (id) DO UPDATE SET {update_set}
+                                ON CONFLICT ({pk_col}) DO UPDATE SET {update_set}
                             """)
                             server_db.execute(upsert_sql, row_dict)
 
+                            local_db.execute(
+                                text("DELETE FROM _sync_changes WHERE table_name = :t AND pk_val = :p"),
+                                {"t": table_name, "p": str(pk_v)}
+                            )
+                            synced_in_table += 1
+                            total_synced += 1
+
                         server_db.commit()
-                        synced_tables += 1
-                        print(f"[Sync] [OK] {table_name}: {len(rows)} records synced")
+                        local_db.commit()
+
+                        # تحديث عداد الترقيم التلقائي Sequence في PostgreSQL لمنع تعارض الـ ID مستقبلاً
+                        if pk_col == "id":
+                            try:
+                                server_db.execute(text(f"""
+                                    SELECT setval(
+                                        pg_get_serial_sequence('{table_name}', 'id'),
+                                        COALESCE((SELECT MAX(id) FROM {table_name}), 1),
+                                        true
+                                    )
+                                """))
+                                server_db.commit()
+                            except Exception:
+                                server_db.rollback()
+
+                        if synced_in_table > 0:
+                            print(f"[Sync] [UPSERT] {table_name}: {synced_in_table} records synced to server")
                     except Exception as e:
                         server_db.rollback()
                         print(f"[Sync] [WARN] Error syncing {table_name}: {e}")
 
-                print(f"[Sync] Sync complete: {synced_tables}/{len(SYNC_TABLES_ORDER)} tables")
-                return synced_tables > 0
+                # 3. استكمال ربط أرقام المشتركين المؤجلة بعد إدراج المشتركين
+                if deferred_sub_number_links:
+                    try:
+                        for num_id, sub_id_val in deferred_sub_number_links:
+                            server_db.execute(
+                                text("UPDATE subscriber_numbers SET subscriber_id = :sid, is_reserved = TRUE WHERE id = :nid"),
+                                {"sid": sub_id_val, "nid": num_id}
+                            )
+                        server_db.commit()
+                    except Exception as e:
+                        server_db.rollback()
+                        print(f"[Sync] [WARN] Error linking deferred subscriber_numbers: {e}")
+
+                print(f"[Sync] Local → Server sync complete ({total_synced} operations applied).")
+                return total_synced
 
             finally:
                 local_db.close()
@@ -300,20 +569,134 @@ def sync_local_to_server():
                 server_engine.dispose()
 
         except Exception as e:
+            _db_mode_online = False
             print(f"[Sync] [ERROR] Sync failed: {e}")
+            return 0
+
+
+def sync_server_to_local() -> bool:
+    """
+    مزامنة تزايدية آمنة (Non-Destructive Incremental Upsert) من السيرفر (PostgreSQL) إلى قاعدة البيانات المحلية (SQLite).
+    لا تمسح الجداول أثناء عمل البرنامج، ولا تمس أي سجل محلي قيد التعديل في _sync_changes.
+    """
+    global _db_mode_online
+    if has_pending_local_changes() > 0:
+        # إذا وجدت تغييرات محلية لم ترحل بعد، نرحلها أولاً إلى السيرفر قبل سحب أي تحديثات
+        sync_local_to_server()
+        if has_pending_local_changes() > 0:
+            return False
+
+    with _sync_lock:
+        server_url = get_server_database_url()
+        local_url = get_local_database_url()
+        if not server_url:
+            return False
+
+        try:
+            local_engine = create_configured_engine(local_url)
+            server_engine = create_configured_engine(server_url)
+
+            ensure_local_sync_tracking(local_engine)
+
+            # 1. قراءة جميع الجداول من السيرفر أولاً في الذاكرة وإغلاق اتصال السيرفر فوراً
+            server_data = {}
+            with server_engine.connect() as s_conn:
+                s_conn.execute(text("SELECT 1"))
+                _db_mode_online = True
+                for table_name in SYNC_TABLES_ORDER:
+                    try:
+                        rows = s_conn.execute(text(f"SELECT * FROM {table_name}")).fetchall()
+                        if rows:
+                            srv_cols = list(rows[0]._mapping.keys())
+                            server_data[table_name] = (srv_cols, [dict(r._mapping) for r in rows])
+                        else:
+                            server_data[table_name] = ([], [])
+                    except Exception as tbl_err:
+                        print(f"[Sync-Pull] [WARN] Could not fetch table {table_name}: {tbl_err}")
+
+            server_engine.dispose()
+
+            # 2. تحديث البيانات في SQLite المحلي بدون مسح الجداول (Non-destructive Upsert)
+            with local_engine.begin() as l_conn:
+                # قراءة أي مفاتيح تم تعديلها محلياً أثناء الاتصال بالسيرفر لحمايتها من الكتابة فوقها
+                dirty_rows = l_conn.execute(text("SELECT table_name, pk_val FROM _sync_changes")).fetchall()
+                dirty_map = {}
+                for t_name, p_val in dirty_rows:
+                    dirty_map.setdefault(t_name, set()).add(str(p_val))
+
+                l_conn.execute(text("UPDATE _sync_meta SET value = '1' WHERE key = 'syncing_from_server'"))
+                l_conn.execute(text("PRAGMA foreign_keys = OFF"))
+                try:
+                    for table_name in SYNC_TABLES_ORDER:
+                        if table_name not in server_data:
+                            continue
+                        try:
+                            pk_col = _get_pk_col(table_name)
+                            dirty_pks = dirty_map.get(table_name, set())
+                            srv_col_names, row_dicts = server_data[table_name]
+                            local_cols_info = l_conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+                            if not local_cols_info:
+                                continue
+                            local_col_names = [r[1] for r in local_cols_info]
+
+                            # معرفة المفاتيح الموجودة حالياً على السيرفر
+                            srv_pks_str = {str(rd[pk_col]) for rd in row_dicts if pk_col in rd}
+
+                            # حذف السجلات التي حُذفت من السيرفر (بشرط ألا تكون معدلة محلياً)
+                            existing_local_pks = l_conn.execute(text(f"SELECT {pk_col} FROM {table_name}")).fetchall()
+                            for (l_pk,) in existing_local_pks:
+                                if str(l_pk) not in srv_pks_str and str(l_pk) not in dirty_pks:
+                                    l_conn.execute(
+                                        text(f"DELETE FROM {table_name} WHERE {pk_col} = :pk"),
+                                        {"pk": l_pk}
+                                    )
+
+                            if not row_dicts:
+                                continue
+
+                            common_cols = [c for c in local_col_names if c in srv_col_names]
+                            cols_sql = ", ".join(common_cols)
+                            placeholders = ", ".join([f":{c}" for c in common_cols])
+                            non_pk_cols = [c for c in common_cols if c != pk_col]
+                            if non_pk_cols:
+                                update_set = ", ".join([f"{c} = excluded.{c}" for c in non_pk_cols])
+                                upsert_sql = text(
+                                    f"INSERT INTO {table_name} ({cols_sql}) VALUES ({placeholders}) "
+                                    f"ON CONFLICT ({pk_col}) DO UPDATE SET {update_set}"
+                                )
+                            else:
+                                upsert_sql = text(
+                                    f"INSERT OR IGNORE INTO {table_name} ({cols_sql}) VALUES ({placeholders})"
+                                )
+
+                            batch = [
+                                {c: rd[c] for c in common_cols}
+                                for rd in row_dicts
+                                if str(rd.get(pk_col)) not in dirty_pks
+                            ]
+                            if batch:
+                                l_conn.execute(upsert_sql, batch)
+                        except Exception as tbl_err:
+                            print(f"[Sync-Pull] [WARN] Could not mirror table {table_name}: {tbl_err}")
+                finally:
+                    l_conn.execute(text("PRAGMA foreign_keys = ON"))
+                    l_conn.execute(text("UPDATE _sync_meta SET value = '0' WHERE key = 'syncing_from_server'"))
+
+            local_engine.dispose()
+            print("[Sync-Pull] [OK] Local SQLite cache updated non-destructively from Railway server.")
+            return True
+        except Exception as e:
+            _db_mode_online = False
+            print(f"[Sync-Pull] [WARN] Server → Local mirror skipped: {e}")
             return False
 
 
 def try_switch_to_online():
     """
-    محاولة التبديل إلى الوضع الأونلاين إذا عاد الاتصال بالسيرفر.
-    يُستدعى دورياً من الـ background thread.
-    يُرجع True إذا تم التبديل بنجاح.
+    فحص عودة الاتصال بالسيرفر ومزامنة التعديلات المحلية فوراً في الخلفية
+    مع إبقاء الواجهة متصلة بقاعدة البيانات المحلية السريعة (Local-First).
     """
     global _db_mode_online
-    if _db_mode_online:
-        return False  # نحن أصلاً أونلاين
-
     server_url = get_server_database_url()
     if not server_url:
         return False
@@ -321,49 +704,85 @@ def try_switch_to_online():
     if not check_server_connection(server_url, timeout=3):
         return False
 
-    print("[DB-Hybrid] Server reachable! Switching to online mode...")
+    # 1. ترحيل جميع التعديلات المحلية المعلقة إلى السيرفر أولاً
+    synced_count = 0
+    if has_pending_local_changes() > 0:
+        synced_count = sync_local_to_server()
 
-    # مزامنة البيانات المحلية أولاً قبل التبديل
-    sync_local_to_server()
+    # 2. تحديث النسخة المحلية من السيرفر بشكل غير مدمّر
+    pulled = sync_server_to_local()
+    if pulled or synced_count > 0:
+        _db_mode_online = True
+        print(f"[DB-Hybrid] [OK] Cloud sync active (pushed {synced_count} local changes).")
+        return True
+    return False
 
-    # التبديل إلى PostgreSQL
-    reconnect_engine(server_url)
-    _db_mode_online = True
-    print("[DB-Hybrid] [OK] Switched to ONLINE mode (PostgreSQL)")
-    return True
 
-
-def start_connectivity_monitor(check_interval=60, on_mode_change=None):
+def start_connectivity_monitor(check_interval=4, on_mode_change=None):
     """
-    تشغيل خيط خلفي يراقب الاتصال بالإنترنت كل check_interval ثانية.
-    عند استعادة الاتصال يتحول تلقائياً للأونلاين ويُزامن البيانات.
-    on_mode_change: دالة اختيارية تُستدعى عند تغيير الوضع (True=أونلاين, False=أوفلاين)
+    تشغيل خيط خلفي لمعمارية (Local-First + Instant Cloud Sync):
+    - جميع عمليات القراءة والكتابة في الواجهة تتم محلياً بسرعة فائقة (0ms).
+    - كل بضع ثوانٍ، إذا وُجد أي تعديل محلي في _sync_changes يتم ترحيله فوراً للسيرفر في الخلفية.
+    - كل 60 ثانية يتم سحب أي تحديثات جديدة من السيرفر (مثل طلبات الموقع الإلكتروني) بدون تعطيل الواجهة.
     """
+    def _initial_sync():
+        try:
+            ensure_local_sync_tracking()
+            server_url = get_server_database_url()
+            if server_url and check_server_connection(server_url, timeout=3):
+                pushed = 0
+                if has_pending_local_changes() > 0:
+                    pushed = sync_local_to_server()
+                pulled = sync_server_to_local()
+                if (pushed > 0 or pulled) and on_mode_change:
+                    on_mode_change(True)
+        except Exception as e:
+            print(f"[DB-Monitor] Initial sync error: {e}")
+
+    threading.Thread(target=_initial_sync, daemon=True, name="DB-InitialSync").start()
+
     def _monitor():
         global _db_mode_online
+        last_pull_time = _time.time()
         while True:
             _time.sleep(check_interval)
             try:
-                if _db_mode_online:
-                    # فحص أن الاتصال لا يزال شغالاً
-                    server_url = get_server_database_url()
-                    if server_url and not check_server_connection(server_url, timeout=5):
-                        print("[DB-Hybrid] [WARN] Lost server connection. Switching to offline mode...")
-                        reconnect_engine(get_local_database_url())
+                was_online = _db_mode_online
+                server_url = get_server_database_url()
+                if not server_url:
+                    continue
+
+                pending = has_pending_local_changes()
+                # 1. إذا كانت هناك تعديلات محلية معلقة، نحاول ترحيلها فوراً!
+                if pending > 0:
+                    if check_server_connection(server_url, timeout=3):
+                        synced = sync_local_to_server()
+                        if synced > 0 and on_mode_change:
+                            on_mode_change(True)
+                    else:
                         _db_mode_online = False
-                        if on_mode_change:
+                        if was_online and on_mode_change:
                             on_mode_change(False)
-                else:
-                    # محاولة العودة للأونلاين
-                    switched = try_switch_to_online()
-                    if switched and on_mode_change:
-                        on_mode_change(True)
+                    continue
+
+                # 2. فحص دوري للاتصال وسحب أي جديد من السيرفر كل 60 ثانية
+                now = _time.time()
+                if not _db_mode_online or (now - last_pull_time >= 60):
+                    if check_server_connection(server_url, timeout=3):
+                        pulled = sync_server_to_local()
+                        last_pull_time = now
+                        if pulled and not was_online and on_mode_change:
+                            on_mode_change(True)
+                    else:
+                        _db_mode_online = False
+                        if was_online and on_mode_change:
+                            on_mode_change(False)
             except Exception as e:
                 print(f"[DB-Monitor] Error: {e}")
 
     t = threading.Thread(target=_monitor, daemon=True, name="DB-ConnectivityMonitor")
     t.start()
-    print(f"[DB-Monitor] Started (checking every {check_interval}s)")
+    print(f"[DB-Monitor] Local-First Cloud Sync started (checking every {check_interval}s)")
     return t
 
 Base = declarative_base()
@@ -590,6 +1009,15 @@ def accept_subscriber_on_payment(session, flush_context, instances):
                 sub.status = "accepted"
 
 def init_db(force_migration=False):
+    # ضمان تفعيل تتبع التعديلات المحلية (Triggers) على القاعدة المحلية دائماً
+    if not os.getenv("RAILWAY_ENVIRONMENT") and not os.getenv("RENDER"):
+        try:
+            ensure_local_sync_tracking()
+            if _db_mode_online and has_pending_local_changes() > 0:
+                sync_local_to_server()
+        except Exception as _sync_init_err:
+            print(f"[Sync-Init] Warning: {_sync_init_err}")
+
     db = SessionLocal()
     try:
         # إذا تم التحقق من الجداول مسبقاً، تخطي الفحص البطيء لتسريع فتح البرنامج

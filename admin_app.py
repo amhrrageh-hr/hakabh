@@ -123,16 +123,17 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.sync_timer.start(3600000)
         QTimer.singleShot(2000, self.sync_unpaid_installments)
 
-        # تشغيل مراقب الاتصال بقاعدة البيانات (يفحص كل 60 ثانية)
+        # تشغيل مراقب المزامنة الفورية في الخلفية (Local-First + Instant Cloud Sync كل 4 ثوانٍ)
+        self._last_known_online_state = db_mod.is_online_mode()
         db_mod.start_connectivity_monitor(
-            check_interval=60,
+            check_interval=4,
             on_mode_change=self._on_db_mode_changed
         )
 
-        # مؤقت لتحديث مؤشر الاتصال في شريط العنوان كل دقيقة
+        # مؤقت لتحديث مؤشر الاتصال والمزامنة في شريط العنوان كل 4 ثوانٍ
         self._db_status_timer = QTimer(self)
         self._db_status_timer.timeout.connect(self._update_db_status_indicator)
-        self._db_status_timer.start(60000)
+        self._db_status_timer.start(4000)
 
         try:
             self.tray_icon = QSystemTrayIcon(self)
@@ -142,44 +143,76 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
             self.tray_icon = None
 
     def _on_db_mode_changed(self, is_online: bool):
-        """يُستدعى من الخيط الخلفي عند تغيير وضع قاعدة البيانات"""
+        """يُستدعى من الخيط الخلفي عند تغيير وضع الاتصال أو اكتمال المزامنة"""
         QTimer.singleShot(0, lambda: self._handle_db_mode_change(is_online))
 
     def _handle_db_mode_change(self, is_online: bool):
-        """معالجة تغيير وضع الاتصال وتحديث الواجهة"""
+        """تحديث الواجهة ومؤشر المزامنة تلقائياً بسلاسة بدون نوافذ تعطل العمل"""
         try:
-            self.db.close()
+            self.db.expire_all()
         except Exception:
-            pass
-        self.db = db_mod.SessionLocal()
+            try:
+                self.db.close()
+            except Exception:
+                pass
+            self.db = db_mod.SessionLocal()
+
         self._update_db_status_indicator()
 
-        if is_online:
-            QMessageBox.information(
-                self, "تم الاتصال بالسيرفر",
-                "تم استعادة الاتصال بقاعدة البيانات على Railway.\n"
-                "تم مزامنة البيانات المحلية مع السيرفر تلقائياً."
-            )
-        else:
-            QMessageBox.warning(
-                self, "انقطع الاتصال",
-                "انقطع الاتصال بالسيرفر.\n"
-                "البرنامج يعمل الآن بقاعدة البيانات المحلية مؤقتاً.\n"
-                "ستتم المزامنة تلقائياً عند عودة الاتصال."
-            )
+        # تحديث عناصر وصفحات الواجهة بعد إتمام المزامنة
+        try:
+            self.update_header_season_selector()
+            if hasattr(self, 'load_subscribers'):
+                self.load_subscribers()
+            if hasattr(self, 'load_dashboard_data'):
+                self.load_dashboard_data()
+        except Exception:
+            pass
+
+        # إشعار غير معطل في شريط النظام عند تغير حالة الاتصال الفعلية
+        if getattr(self, '_last_known_online_state', None) != is_online:
+            self._last_known_online_state = is_online
+            if getattr(self, 'tray_icon', None):
+                try:
+                    if is_online:
+                        self.tray_icon.showMessage(
+                            "تم الاتصال بالسيرفر ومزامنة البيانات",
+                            "تم ترحيل التعديلات المحلية إلى السيرفر السحابي بنجاح.",
+                            QSystemTrayIcon.MessageIcon.Information,
+                            3000
+                        )
+                    else:
+                        self.tray_icon.showMessage(
+                            "العمل في الوضع المحلي (بدون إنترنت)",
+                            "يتم حفظ كافة تعديلاتك محلياً بسرعة فائقة وسيتم ترحيلها تلقائياً فور عودة الإنترنت.",
+                            QSystemTrayIcon.MessageIcon.Warning,
+                            3000
+                        )
+                except Exception:
+                    pass
 
     def _update_db_status_indicator(self):
-        """تحديث مؤشر حالة الاتصال في شريط العنوان"""
+        """تحديث مؤشر حالة الاتصال والمزامنة الفورية في شريط العنوان"""
         try:
+            pending = db_mod.has_pending_local_changes()
             if db_mod.is_online_mode():
-                status = "متصل بالسيرفر (Railway)"
+                if pending > 0:
+                    status = f"🔄 متصل بالسيرفر (جاري ترحيل {pending} تعديل...)"
+                else:
+                    status = "🟢 متصل بالسيرفر (سرعة محلية فورية + مزامنة سحابية)"
             else:
-                status = "وضع أوفلاين - محلي"
+                pending_txt = f" — ({pending} تعديل محفوظ بانتظار الإنترنت)" if pending > 0 else ""
+                status = f"🟠 وضع أوفلاين (محلي){pending_txt}"
             self.setWindowTitle(f"لوحة تحكم هكبة المليون  |  {status}")
         except Exception:
             pass
 
     def closeEvent(self, event):
+        try:
+            if db_mod.has_pending_local_changes() > 0 and db_mod.is_online_mode():
+                db_mod.sync_local_to_server()
+        except Exception:
+            pass
         self.db.close()
         super().closeEvent(event)
 
