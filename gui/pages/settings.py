@@ -223,6 +223,11 @@ class SettingsMixin:
         btn_logo.setObjectName("PrimaryBtn")
         btn_logo.clicked.connect(self.select_company_logo)
         logo_button_layout.addWidget(btn_logo)
+
+        btn_wheel_logo = QPushButton("🎡 وضع شعار الشركة في منتصف عجلة القرعة")
+        btn_wheel_logo.setStyleSheet("background-color: #ca8a04; color: #052e16; font-weight: bold; padding: 8px 14px; border-radius: 6px;")
+        btn_wheel_logo.clicked.connect(self.apply_company_logo_to_wheel)
+        logo_button_layout.addWidget(btn_wheel_logo)
         logo_button_layout.addStretch()
         logo_layout.addLayout(logo_button_layout)
         lay_info.addLayout(logo_layout)
@@ -653,6 +658,20 @@ class SettingsMixin:
             ModernDialog(self, "نجاح", "تم حفظ شعار الشركة بنجاح.").exec()
         except Exception as e:
             ModernDialog(self, "خطأ", f"حدث خطأ أثناء حفظ الشعار: {e}").exec()
+
+    def apply_company_logo_to_wheel(self):
+        comp_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "company_logo_path").first()
+        logo_p = (comp_setting.value or "").strip() if comp_setting else getattr(self, "company_logo_path", "")
+        if not logo_p or not os.path.exists(logo_p):
+            ModernDialog(self, "تنبيه", "يرجى إضافة شعار الشركة أولاً ثم الضغط على هذا الزر.").exec()
+            return
+        self.set_setting("wheel_hub_logo_path", "__company_logo__")
+        self.set_setting("wheel_hub_mode", "logo_with_text")
+        ModernDialog(
+            self, "تم التفعيل بنجاح ✅",
+            "تم وضع شعار الشركة في القرص الذهبي بمنتصف عجلة القرعة!\n"
+            "ويمكنك تخصيص طريقة عرضه ونصوص القرص من تبويب (إدارة السحوبات > إعداد القرعات)."
+        ).exec()
 
     def update_company_logo_preview(self, logo_path):
         if logo_path and os.path.exists(logo_path):

@@ -343,10 +343,11 @@ class LuxuryPrizeWheelWidget(QWidget):
     - قرص مركزي ذهبي مصقول يحمل شعار "M" وكلمة "MILLION" وتحتها نص "هكبة المليون الأسبوعية" بالذهب.
     - خلفية استوديو ناعمة بتدرج أخضر داكن وذهبي مع جزيئات إضاءة Bokeh خافتة.
     """
-    def __init__(self, parent=None, size=540):
+    def __init__(self, parent=None, size=540, db=None, hub_config=None):
         super().__init__(parent)
         self.wheel_size = size
         self.setFixedSize(size, size)
+        self.db = db
 
         # 50 قطاعاً: الرقم 49 يظهر مرتين في القمة، تليه الأرقام من 1 إلى 48
         self.segments = ["49", "49"] + [str(i) for i in range(1, 49)]
@@ -358,6 +359,9 @@ class LuxuryPrizeWheelWidget(QWidget):
         self.winning_seg_index = -1     # القطاع الفائز لتوهيجه بالذهب عند التوقف
         self.current_sub_number = "---"
         self.is_winner_state = False
+
+        # إعدادات القرص المركزي الذهبي (تُقرأ من الإعدادات أو القيم الممررة)
+        self.hub_config = self._load_hub_config(hub_config)
 
         # جزيئات الإضاءة الخلفية (Bokeh Studio Particles)
         rng = random.Random(49)
@@ -380,6 +384,58 @@ class LuxuryPrizeWheelWidget(QWidget):
         self._wheel_disc_pixmap = None
         self._center_hub_pixmap = None
         self._build_cached_layers()
+
+    def _load_hub_config(self, override_cfg=None) -> dict:
+        cfg = {
+            "mode": "text",  # "text" | "logo_with_text" | "logo_full"
+            "logo_path": "",
+            "symbol": "M",
+            "title": "MILLION",
+            "subtitle": "هكبة المليون الأسبوعية",
+        }
+        try:
+            own_session = False
+            sess = self.db
+            if sess is None:
+                sess = db_mod.SessionLocal()
+                own_session = True
+            try:
+                keys = [
+                    "wheel_hub_mode",
+                    "wheel_hub_logo_path",
+                    "wheel_hub_symbol",
+                    "wheel_hub_title",
+                    "wheel_hub_subtitle",
+                    "company_logo_path",
+                ]
+                rows = sess.query(db_mod.Setting).filter(db_mod.Setting.key.in_(keys)).all()
+                s_map = {r.key: (r.value or "") for r in rows}
+                if s_map.get("wheel_hub_mode") in ("text", "logo_with_text", "logo_full"):
+                    cfg["mode"] = s_map["wheel_hub_mode"]
+                logo_p = s_map.get("wheel_hub_logo_path", "").strip()
+                if logo_p == "__company_logo__":
+                    logo_p = s_map.get("company_logo_path", "").strip()
+                cfg["logo_path"] = logo_p
+                if "wheel_hub_symbol" in s_map and s_map["wheel_hub_symbol"].strip():
+                    cfg["symbol"] = s_map["wheel_hub_symbol"].strip()
+                if "wheel_hub_title" in s_map:
+                    cfg["title"] = s_map["wheel_hub_title"].strip()
+                if "wheel_hub_subtitle" in s_map:
+                    cfg["subtitle"] = s_map["wheel_hub_subtitle"].strip()
+            finally:
+                if own_session:
+                    sess.close()
+        except Exception:
+            pass
+
+        if override_cfg and isinstance(override_cfg, dict):
+            cfg.update({k: v for k, v in override_cfg.items() if v is not None})
+        return cfg
+
+    def update_hub_config(self, new_cfg: dict):
+        self.hub_config = self._load_hub_config(new_cfg)
+        self._rebuild_center_hub_pixmap()
+        self.update()
 
     def _make_gold_conical(self, cx, cy, angle_offset=0.0):
         grad = QConicalGradient(QPointF(cx, cy), angle_offset)
@@ -773,41 +829,118 @@ class LuxuryPrizeWheelWidget(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QPointF(cx, cy), r_disc - 4.5, r_disc - 4.5)
 
-        # 1. شعار حرف "M" الملكي في أعلى القرص المركزي
-        m_font = QFont("Georgia", 25, QFont.Weight.Black)
-        p.setFont(m_font)
-        m_rect = QRectF(cx - 45, cy - 58, 90, 36)
-        p.setPen(QColor(69, 26, 3, 190))
-        p.drawText(m_rect.translated(0, 1.5), Qt.AlignmentFlag.AlignCenter, "M")
-        p.setPen(QColor("#451a03"))
-        p.drawText(m_rect, Qt.AlignmentFlag.AlignCenter, "M")
+        cfg = getattr(self, "hub_config", None) or {}
+        mode = cfg.get("mode", "text")
+        logo_path = (cfg.get("logo_path") or "").strip()
+        symbol_txt = cfg.get("symbol") or "M"
+        title_txt = cfg.get("title") if "title" in cfg else "MILLION"
+        subtitle_txt = cfg.get("subtitle") if "subtitle" in cfg else "هكبة المليون الأسبوعية"
 
-        # لمعة ذهبية فاتحة فوق حرف M
-        p.setPen(QColor("#fef9c3"))
-        p.drawText(m_rect.translated(-0.6, -0.6), Qt.AlignmentFlag.AlignCenter, "M")
+        logo_pm = None
+        if mode in ("logo_with_text", "logo_full") and logo_path and os.path.exists(logo_path):
+            tmp_pm = QPixmap(logo_path)
+            if not tmp_pm.isNull():
+                logo_pm = tmp_pm
 
-        # 2. كلمة "MILLION" بالذهب تحت حرف M
-        mil_font = QFont("Arial", 9, QFont.Weight.Black)
-        mil_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.8)
-        p.setFont(mil_font)
-        mil_rect = QRectF(cx - 64, cy - 22, 128, 18)
-        p.setPen(QColor("#451a03"))
-        p.drawText(mil_rect.translated(0, 1.0), Qt.AlignmentFlag.AlignCenter, "MILLION")
-        p.setPen(QColor("#fffbeb"))
-        p.drawText(mil_rect, Qt.AlignmentFlag.AlignCenter, "MILLION")
+        if mode == "logo_full" and logo_pm is not None:
+            # عرض شعار الشركة ملء القرص الذهبي المركزي داخل إطار دائري مصقول
+            r_logo = r_disc - 6.5
+            p.save()
+            clip_path = QPainterPath()
+            clip_path.addEllipse(QPointF(cx, cy), r_logo, r_logo)
+            p.setClipPath(clip_path)
+            scaled_logo = logo_pm.scaled(
+                int(r_logo * 2 * dpr),
+                int(r_logo * 2 * dpr),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            scaled_logo.setDevicePixelRatio(dpr)
+            lw = scaled_logo.width() / dpr
+            lh = scaled_logo.height() / dpr
+            p.drawPixmap(QPointF(cx - lw / 2.0, cy - lh / 2.0), scaled_logo)
+            p.restore()
 
-        # خط فاصل ذهبي دقيق
-        p.setPen(QPen(QColor("#78350f"), 1.0))
-        p.drawLine(QPointF(cx - 48, cy - 2), QPointF(cx + 48, cy - 2))
+            p.setPen(QPen(QColor("#fef08a"), 1.8))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), r_logo, r_logo)
 
-        # 3. النص العربي "هكبة المليون الأسبوعية" واضح ومقروء بالكامل بالذهب أسفله
-        ar_font = QFont("Tahoma", 8, QFont.Weight.Bold)
-        p.setFont(ar_font)
-        ar_rect = QRectF(cx - 68, cy + 1, 136, 20)
-        p.setPen(QColor("#451a03"))
-        p.drawText(ar_rect.translated(0, 1.0), Qt.AlignmentFlag.AlignCenter, "هكبة المليون الأسبوعية")
-        p.setPen(QColor("#fef9c3"))
-        p.drawText(ar_rect, Qt.AlignmentFlag.AlignCenter, "هكبة المليون الأسبوعية")
+        elif mode == "logo_with_text" and logo_pm is not None:
+            # عرض شعار الشركة داخل ميدالية دائرية مذهبة في النصف العلوي من القرص الذهبي مع النص الفرعي أسفله
+            r_small_logo = 26.0
+            logo_cy = cy - 31.0
+            p.save()
+            clip_path = QPainterPath()
+            clip_path.addEllipse(QPointF(cx, logo_cy), r_small_logo, r_small_logo)
+            p.setClipPath(clip_path)
+            scaled_logo = logo_pm.scaled(
+                int(r_small_logo * 2 * dpr),
+                int(r_small_logo * 2 * dpr),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            scaled_logo.setDevicePixelRatio(dpr)
+            lw = scaled_logo.width() / dpr
+            lh = scaled_logo.height() / dpr
+            p.drawPixmap(QPointF(cx - lw / 2.0, logo_cy - lh / 2.0), scaled_logo)
+            p.restore()
+
+            p.setPen(QPen(QColor("#fef08a"), 1.4))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(cx, logo_cy), r_small_logo, r_small_logo)
+
+            # خط فاصل ذهبي دقيق
+            p.setPen(QPen(QColor("#78350f"), 1.0))
+            p.drawLine(QPointF(cx - 48, cy - 2), QPointF(cx + 48, cy - 2))
+
+            # النص العربي أسفل الشعار
+            if subtitle_txt:
+                ar_font = QFont("Tahoma", 8, QFont.Weight.Bold)
+                p.setFont(ar_font)
+                ar_rect = QRectF(cx - 68, cy + 1, 136, 20)
+                p.setPen(QColor("#451a03"))
+                p.drawText(ar_rect.translated(0, 1.0), Qt.AlignmentFlag.AlignCenter, subtitle_txt)
+                p.setPen(QColor("#fef9c3"))
+                p.drawText(ar_rect, Qt.AlignmentFlag.AlignCenter, subtitle_txt)
+
+        else:
+            # الوضع الافتراضي (أو النصي المخصص): شعار الحرف الملكي + العنوان + النص الفرعي
+            m_font = QFont("Georgia", 25, QFont.Weight.Black)
+            p.setFont(m_font)
+            m_rect = QRectF(cx - 45, cy - 58, 90, 36)
+            p.setPen(QColor(69, 26, 3, 190))
+            p.drawText(m_rect.translated(0, 1.5), Qt.AlignmentFlag.AlignCenter, symbol_txt)
+            p.setPen(QColor("#451a03"))
+            p.drawText(m_rect, Qt.AlignmentFlag.AlignCenter, symbol_txt)
+
+            # لمعة ذهبية فاتحة فوق الرمز
+            p.setPen(QColor("#fef9c3"))
+            p.drawText(m_rect.translated(-0.6, -0.6), Qt.AlignmentFlag.AlignCenter, symbol_txt)
+
+            # 2. العنوان الرئيسي (MILLION) بالذهب تحت الرمز
+            if title_txt:
+                mil_font = QFont("Arial", 9, QFont.Weight.Black)
+                mil_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.8)
+                p.setFont(mil_font)
+                mil_rect = QRectF(cx - 64, cy - 22, 128, 18)
+                p.setPen(QColor("#451a03"))
+                p.drawText(mil_rect.translated(0, 1.0), Qt.AlignmentFlag.AlignCenter, title_txt)
+                p.setPen(QColor("#fffbeb"))
+                p.drawText(mil_rect, Qt.AlignmentFlag.AlignCenter, title_txt)
+
+            # خط فاصل ذهبي دقيق
+            p.setPen(QPen(QColor("#78350f"), 1.0))
+            p.drawLine(QPointF(cx - 48, cy - 2), QPointF(cx + 48, cy - 2))
+
+            # 3. النص العربي الفرعي واضح ومقروء بالكامل بالذهب أسفله
+            if subtitle_txt:
+                ar_font = QFont("Tahoma", 8, QFont.Weight.Bold)
+                p.setFont(ar_font)
+                ar_rect = QRectF(cx - 68, cy + 1, 136, 20)
+                p.setPen(QColor("#451a03"))
+                p.drawText(ar_rect.translated(0, 1.0), Qt.AlignmentFlag.AlignCenter, subtitle_txt)
+                p.setPen(QColor("#fef9c3"))
+                p.drawText(ar_rect, Qt.AlignmentFlag.AlignCenter, subtitle_txt)
 
         p.end()
         self._center_hub_pixmap = hub_pm
@@ -981,6 +1114,89 @@ class LuxuryPrizeWheelWidget(QWidget):
         p.end()
 
 
+class WheelPreviewDialog(QDialog):
+    """نافذة معاينة وتجربة حية لعجلة القرعة والقرص الذهبي المركزي من شاشة الإعدادات."""
+    def __init__(self, parent=None, db=None, hub_config=None):
+        super().__init__(parent)
+        self.setWindowTitle("معاينة عجلة القرعة والقرص المركزي الذهبي")
+        self.setFixedSize(640, 680)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setStyleSheet("""
+            QDialog {
+                background: qradialgradient(cx:0.5, cy:0.5, radius:0.85, fx:0.5, fy:0.5,
+                    stop:0 #06351d, stop:0.6 #031c0f, stop:1 #010b06);
+                color: white;
+            }
+        """)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(12)
+
+        title = QLabel("🎡 معاينة عجلة القرعة والقرص الذهبي المركزي")
+        title.setStyleSheet("font-size: 20px; font-weight: 900; color: #fde047; background: transparent;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(title)
+
+        self.wheel = LuxuryPrizeWheelWidget(self, size=540, db=db, hub_config=hub_config)
+        lay.addWidget(self.wheel, 0, Qt.AlignmentFlag.AlignCenter)
+
+        btn_row = QHBoxLayout()
+        btn_spin = QPushButton("🎲 تجربة تدوير العجلة")
+        btn_spin.setObjectName("PrimaryBtn")
+        btn_spin.setFixedHeight(42)
+        btn_spin.clicked.connect(self.start_demo_spin)
+
+        btn_close = QPushButton("إغلاق المعاينة")
+        btn_close.setObjectName("DangerBtn")
+        btn_close.setFixedHeight(42)
+        btn_close.clicked.connect(self.accept)
+
+        btn_row.addWidget(btn_spin)
+        btn_row.addWidget(btn_close)
+        lay.addLayout(btn_row)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._step_demo)
+        self._t0 = 0.0
+        self._dur = 3.2
+        self._start_ang = 0.0
+        self._target_ang = 0.0
+        self._last_seg = -1
+        self._win_idx = 0
+
+    def start_demo_spin(self):
+        self.wheel.highlight_winner_segment(-1)
+        self._win_idx = random.randint(0, self.wheel.num_segments - 1)
+        target_mod = self.wheel.target_angle_for_segment(self._win_idx)
+        self._start_ang = self.wheel.wheel_angle % 360.0
+        delta = (target_mod - self._start_ang) % 360.0
+        self._target_ang = self._start_ang + 360.0 * 5 + delta
+        self._t0 = datetime.datetime.now().timestamp()
+        self._last_seg = -1
+        self._timer.setInterval(16)
+        self._timer.start()
+
+    def _step_demo(self):
+        elapsed = datetime.datetime.now().timestamp() - self._t0
+        p = min(1.0, max(0.0, elapsed / self._dur))
+        eased = 1.0 - pow(1.0 - p, 4)
+        cur = self._start_ang + (self._target_ang - self._start_ang) * eased
+        self.wheel.wheel_angle = cur
+        seg_under = int(((-cur) % 360.0) / self.wheel.seg_angle)
+        if seg_under != self._last_seg and p < 0.985:
+            self._last_seg = seg_under
+            self.wheel.pointer_deflection = -13.0 * min(1.0, (1.0 - eased) * 2.2 + 0.15)
+            self.wheel.set_Subscriber_Display(f"00{self.wheel.segments[seg_under]}", is_winner=False)
+        else:
+            self.wheel.pointer_deflection *= 0.72
+        self.wheel.update()
+        if p >= 1.0:
+            self._timer.stop()
+            self.wheel.pointer_deflection = 0.0
+            self.wheel.highlight_winner_segment(self._win_idx)
+            self.wheel.set_Subscriber_Display(f"00{self.wheel.segments[self._win_idx]}", is_winner=True)
+
+
 class DrawAnimationDialog(QDialog):
     def __init__(self, parent, qualified_by_category, draw_name, db):
         super().__init__(parent)
@@ -1013,8 +1229,8 @@ class DrawAnimationDialog(QDialog):
         self.cat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(self.cat_label)
 
-        # عجلة القرعة الفاخرة عالية الدقة
-        self.wheel_widget = LuxuryPrizeWheelWidget(self, size=540)
+        # عجلة القرعة الفاخرة عالية الدقة (تقرأ إعدادات القرص المركزي والشعار تلقائياً)
+        self.wheel_widget = LuxuryPrizeWheelWidget(self, size=540, db=self.db)
         self.layout.addWidget(self.wheel_widget, 0, Qt.AlignmentFlag.AlignCenter)
 
         # شريط عرض رقم المشترك الجاري تدويره / الفائز بخط ذهبي واضح
