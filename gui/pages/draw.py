@@ -119,12 +119,31 @@ def _dedupe_cycle_payments(payments_list):
     return [by_inst[k] for k in sorted(by_inst.keys())]
 
 
+def _natural_sub_sort_key(sub_num):
+    """ترتيب أرقام المشتركين طبيعياً (مثل A-1, A-2, A-10 بدلاً من الترتيب النصي)."""
+    s = str(sub_num or "").strip()
+    if "-" in s:
+        parts = s.split("-", 1)
+        prefix = parts[0].strip()
+        num_str = "".join(ch for ch in parts[1] if ch.isdigit())
+        if num_str.isdigit():
+            return (prefix, int(num_str), s)
+    num_only = "".join(ch for ch in s if ch.isdigit())
+    if num_only.isdigit():
+        return ("", int(num_only), s)
+    return (s, 0, s)
+
+
 def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
     """
-    حساب إحصائيات وأهلية السحب لجميع الفئات بسرعة فائقة (~15ms) وبدقة كاملة:
+    حساب إحصائيات وأهلية السحب وتفاصيل تقارير ما قبل القرعة لجميع الفئات بسرعة فائقة (~15ms) وبدقة كاملة:
     - يحدد تلقائياً آخر دورة مكتملة الجدول (أو التي أتمها المشتركون) لكل فئة بدلاً من الدورات التي بدأت للتو بقسط أو قسطين،
       ويتجاهل القيم الشاذة الفردية عند حساب الدورة التلقائية للفئة.
     - عند اختيار دورة محددة يدوياً من القائمة، يقيّم المشتركين بناءً على سدادهم والتزامهم داخل تلك الدورة تحديداً.
+    - يجهز لكل فئة قوائم تفصيلية بـ:
+      1) أرقام المؤهلين في هذه الدورة
+      2) أرقام الذين قد فازوا في الدورات السابقة (مع رقم الدورة التي فازوا فيها)
+      3) أرقام الذين خرجوا من القرعة في هذه الدورة (مع سبب الخروج)
     """
     selected_cycles = dict(selected_cycles or {})
     today = datetime.datetime.now()
@@ -133,18 +152,27 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
     q_cat = db.query(db_mod.Category)
     if season_id and season_id != -1:
         q_cat = q_cat.filter(db_mod.Category.season_id == season_id)
-    categories = q_cat.all()
+    categories = q_cat.order_by(db_mod.Category.id.asc()).all()
     if not categories:
-        categories = db.query(db_mod.Category).all()
+        categories = db.query(db_mod.Category).order_by(db_mod.Category.id.asc()).all()
 
-    all_accepted = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
+    all_subs_every_status = db.query(db_mod.Subscriber).all()
+    all_accepted = [s for s in all_subs_every_status if s.status == "accepted"]
     fin_status_map = db_mod.calculate_financial_status_batch(all_accepted, db) if all_accepted else {}
 
     subs_by_cat = {}
-    for s in all_accepted:
-        subs_by_cat.setdefault(s.category, []).append(s)
+    all_subs_by_cat = {}
+    for s in all_subs_every_status:
+        all_subs_by_cat.setdefault(s.category, []).append(s)
+        if s.status == "accepted":
+            subs_by_cat.setdefault(s.category, []).append(s)
 
-    all_sub_ids = [s.id for s in all_accepted]
+    for c_key in all_subs_by_cat:
+        all_subs_by_cat[c_key].sort(key=lambda x: _natural_sub_sort_key(x.subscriber_number))
+    for c_key in subs_by_cat:
+        subs_by_cat[c_key].sort(key=lambda x: _natural_sub_sort_key(x.subscriber_number))
+
+    all_sub_ids = [s.id for s in all_subs_every_status]
     raw_payments = (
         db.query(
             db_mod.Payment.subscriber_id,
@@ -174,20 +202,42 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
 
     max_late_allowed = _read_incentive_max_late(db)
 
-    weekly_won_subs = {
-        w[0]
-        for w in db.query(db_mod.Winner.subscriber_number)
-        .filter(
-            db_mod.Winner.draw_type.contains("الاسبوعية")
-            | db_mod.Winner.draw_type.contains("الأسبوعية")
-        )
-        .all()
-        if w[0]
-    }
+    all_winners_rows = db.query(
+        db_mod.Winner.subscriber_number,
+        db_mod.Winner.draw_type,
+        db_mod.Winner.cycle_number,
+        db_mod.Winner.draw_date,
+    ).order_by(db_mod.Winner.draw_date.asc()).all()
+
+    weekly_won_subs = set()
+    weekly_winners_info = {}     # sub_num -> list of cycle_number
+    incentive_winners_info = {}  # sub_num -> list of cycle_number
+    grand_winners_info = {}      # sub_num -> list of cycle_number
+
+    for w_num, w_type, w_cycle, _ in all_winners_rows:
+        if not w_num:
+            continue
+        w_t = str(w_type or "")
+        if "الاسبوعية" in w_t or "الأسبوعية" in w_t:
+            weekly_won_subs.add(w_num)
+            weekly_winners_info.setdefault(w_num, []).append(w_cycle)
+        elif "التحفيزية" in w_t or "تحفيزية" in w_t:
+            incentive_winners_info.setdefault(w_num, []).append(w_cycle)
+        elif "الكبرى" in w_t:
+            grand_winners_info.setdefault(w_num, []).append(w_cycle)
+
+    def _format_won_cycles(cycles_list):
+        if not cycles_list:
+            return "دورة سابقة"
+        valid_c = [str(c) for c in cycles_list if c is not None]
+        if valid_c:
+            return "دورة " + "، ".join(valid_c)
+        return "دورة سابقة"
 
     analytics = {}
     for cat in categories:
         cat_subs = subs_by_cat.get(cat.name, [])
+        cat_all_subs = all_subs_by_cat.get(cat.name, [])
         max_inst = max(1, int(cat.max_installments or 1))
         expected_amount = float(cat.amount or 0.0) * max_inst
 
@@ -235,12 +285,10 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
             if best_full_paid > 0:
                 sub_last_paid_full_cycles.append(best_full_paid)
 
-        # الدورة المكتملة الجدول الأكثر شيوعاً بين مشتركي الفئة (تتجاهل الشذوذ الفردي)
         if sub_full_due_cycles:
             freq = {}
             for c_val in sub_full_due_cycles:
                 freq[c_val] = freq.get(c_val, 0) + 1
-            # اختيار الدورة الأكثر تكراراً بين المشتركين، وعند التساوي اختيار الأحدث
             auto_completed_cycle = max(freq.keys(), key=lambda k: (freq[k], k))
         elif sub_latest_due_cycles:
             freq = {}
@@ -250,7 +298,6 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
         else:
             auto_completed_cycle = 1
 
-        # الدورة الجارية حالياً (التي قد تكون بدأت بقسط أو قسطين فقط)
         if sub_latest_due_cycles:
             freq_cur = {}
             for c_val in sub_latest_due_cycles:
@@ -259,7 +306,6 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
         else:
             current_running_cycle = auto_completed_cycle
 
-        # آخر دورة أتم المشتركون سدادها فعلياً (مفيدة جداً لمعرفة أين توقف السداد)
         if sub_last_paid_full_cycles:
             freq_paid = {}
             for c_val in sub_last_paid_full_cycles:
@@ -278,7 +324,14 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
         weekly_qualified_ids = []
         incentive_qualified_ids = []
 
-        # حساب عدد الأقساط المستحقة في الدورة الجارية لعرضه للمستخدم
+        weekly_qualified_entries = []
+        weekly_previous_winners_entries = []
+        weekly_excluded_entries = []
+
+        incentive_qualified_entries = []
+        incentive_previous_winners_entries = []
+        incentive_excluded_entries = []
+
         running_due_inst_count = 0
         for s in cat_subs:
             r_plist = sub_cycle_payments.get(s.id, {}).get(current_running_cycle, [])
@@ -288,26 +341,88 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
                     sum(1 for p in r_plist if p[4] and p[4].date() <= today_date),
                 )
 
-        for s in cat_subs:
-            # في الوضع التلقائي: نستبعد المتأخرين/الموقوفين حالياً
-            # في وضع اختيار دورة محددة يدوياً: نقيّم المشترك حسب التزامه وسداده داخل الدورة المختارة نفسها
-            if not is_manual_cycle:
-                if fin_status_map.get(s.id) in ("late", "suspended"):
-                    continue
-
+        for s in cat_all_subs:
+            s_num = s.subscriber_number or f"#{s.id}"
+            s_name = s.name or "-"
             c_map = sub_cycle_payments.get(s.id, {})
-            s_cycle = target_cycle
-            # إذا كان المشترك في الوضع التلقائي وقد دفع مقدماً لدورة أعلى بينما الدورة التلقائية للفئة هي auto_completed_cycle، نستخدم auto_completed_cycle الموحدة للفئة
-            s_payments = c_map.get(s_cycle, [])
-            if not s_payments and not is_manual_cycle:
-                # احتياط في حال لم توجد سجلات في auto_completed_cycle لمشترك معين
+            s_payments = c_map.get(target_cycle, [])
+            if not s_payments and not is_manual_cycle and c_map:
                 s_payments = c_map.get(max(c_map.keys(), default=1), [])
-            if not s_payments:
-                continue
 
             paid_rows = [p for p in s_payments if p[6]]
             paid_count = len(paid_rows)
             total_paid = sum(float(p[3] or 0.0) for p in paid_rows)
+
+            # إذا كان قد فاز سابقاً في القرعة الأسبوعية، يُسجّل في قائمة الفائزين بالدورات السابقة
+            if s_num in weekly_won_subs:
+                weekly_previous_winners_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "won_cycle": _format_won_cycles(weekly_winners_info.get(s_num, [])),
+                })
+
+            if s_num in incentive_winners_info:
+                incentive_previous_winners_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "won_cycle": _format_won_cycles(incentive_winners_info.get(s_num, [])),
+                })
+
+            # التحقق من حالة المشترك الإدارية والمالية
+            if s.status != "accepted":
+                reason_admin = "مستبعد إدارياً" if s.status == "excluded" else "طلب اشتراك معلق"
+                if s_num not in weekly_won_subs:
+                    weekly_excluded_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "reason": reason_admin,
+                    })
+                incentive_excluded_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "reason": reason_admin,
+                })
+                continue
+
+            fin_st = fin_status_map.get(s.id, "committed")
+            if not is_manual_cycle and fin_st in ("late", "suspended"):
+                st_label = "موقوف" if fin_st == "suspended" else "متأخر"
+                reason_fin = f"{st_label} (سدد {paid_count}/{max_inst} في الدورة {target_cycle})"
+                if s_num not in weekly_won_subs:
+                    weekly_excluded_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "reason": reason_fin,
+                    })
+                incentive_excluded_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "reason": reason_fin,
+                })
+                continue
+
+            if not s_payments:
+                reason_no_p = f"لا توجد أقساط مسجلة في الدورة {target_cycle}"
+                if s_num not in weekly_won_subs:
+                    weekly_excluded_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "reason": reason_no_p,
+                    })
+                incentive_excluded_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "reason": reason_no_p,
+                })
+                continue
 
             is_finished = (total_paid >= expected_amount - 0.01) and (paid_count >= max_inst)
             last_due_dt = s_payments[-1][4] if s_payments else today
@@ -335,13 +450,47 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
 
             if is_finished and is_date_reached:
                 completed_total += 1
-                if s.subscriber_number not in weekly_won_subs:
+                if s_num not in weekly_won_subs:
                     weekly_eligible += 1
                     weekly_qualified_ids.append(s.id)
+                    weekly_qualified_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "paid_count": paid_count,
+                        "max_inst": max_inst,
+                    })
+            else:
+                if s_num not in weekly_won_subs:
+                    weekly_excluded_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "reason": f"لم يُتم أقساط الدورة {target_cycle} (سدد {paid_count}/{max_inst})",
+                    })
 
             if is_inc:
                 incentive_count += 1
                 incentive_qualified_ids.append(s.id)
+                incentive_qualified_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "paid_count": paid_count,
+                    "max_inst": max_inst,
+                })
+            else:
+                inc_reason = (
+                    f"لم يسدد أي قسط في الدورة {target_cycle}"
+                    if not has_paid_something
+                    else f"تأخر في {late_count} أقساط بالدورة {target_cycle}"
+                )
+                incentive_excluded_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "reason": inc_reason,
+                })
 
         analytics[cat.name] = {
             "category_name": cat.name,
@@ -360,6 +509,12 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
             "incentive_count": incentive_count,
             "weekly_qualified_ids": weekly_qualified_ids,
             "incentive_qualified_ids": incentive_qualified_ids,
+            "weekly_qualified_entries": weekly_qualified_entries,
+            "weekly_previous_winners_entries": weekly_previous_winners_entries,
+            "weekly_excluded_entries": weekly_excluded_entries,
+            "incentive_qualified_entries": incentive_qualified_entries,
+            "incentive_previous_winners_entries": incentive_previous_winners_entries,
+            "incentive_excluded_entries": incentive_excluded_entries,
             "is_manual_cycle": is_manual_cycle,
         }
 
@@ -410,6 +565,7 @@ class DrawQualificationWorker(QThread):
                 selected_cycles=self.category_selected_cycles,
                 season_id=self.season_id,
             )
+            self.analytics = analytics
 
             disqualified_count = sum(info.get("late_now", 0) for info in analytics.values())
             qualified_by_category = {}
@@ -418,18 +574,16 @@ class DrawQualificationWorker(QThread):
             if "الاسبوعية" in self.draw_name or "الأسبوعية" in self.draw_name:
                 for cat_name, info in analytics.items():
                     q_ids = info.get("weekly_qualified_ids", [])
-                    if q_ids:
-                        qualified_by_category[cat_name] = list(q_ids)
-                        qualified_ids.extend(q_ids)
+                    qualified_by_category[cat_name] = list(q_ids)
+                    qualified_ids.extend(q_ids)
                 self.finished.emit(qualified_by_category, qualified_ids, disqualified_count)
                 return
 
             if self.draw_name == "الجائزة التحفيزية":
                 for cat_name, info in analytics.items():
                     q_ids = info.get("incentive_qualified_ids", [])
-                    if q_ids:
-                        qualified_by_category[cat_name] = list(q_ids)
-                        qualified_ids.extend(q_ids)
+                    qualified_by_category[cat_name] = list(q_ids)
+                    qualified_ids.extend(q_ids)
                 self.finished.emit(qualified_by_category, qualified_ids, disqualified_count)
                 return
 
@@ -1820,35 +1974,35 @@ class DrawMixin:
         qualified_by_category = {}
         for cat, sids in qualified_by_cat_ids.items():
             cat_subs = [sub_dict[sid] for sid in sids if sid in sub_dict]
-            if cat_subs:
-                qualified_by_category[cat] = cat_subs
+            qualified_by_category[cat] = cat_subs
 
+        analytics_reports = getattr(self._draw_qual_worker, "analytics", None) or {}
         draw_title = f"{draw_name} (الفترة {selected_period})" if (draw_name == "الجائزة الكبرى" and periods_count > 1) else draw_name
-        if not qualified_subs:
-            msg_alert = f"لا يوجد مشتركون مستوفون لشروط {draw_title} حالياً."
-            if disqualified_count > 0:
-                msg_alert += f"\n\n(تنبيه: تم استبعاد {disqualified_count} مشتركين بسبب عدم الانضباط المالي: متأخر/موقوف)."
-            ModernDialog(self, "تنبيه", msg_alert).exec()
-            return
 
         if draw_name in ["القرعة الاسبوعية", "الجائزة التحفيزية"]:
-            msg = f"هل أنت متأكد من بدء {draw_name}؟ (عدد الفئات المؤهلة: {len(qualified_by_category)})"
-            if disqualified_count > 0:
-                msg += f"\n\n⚠️ تم استبعاد {disqualified_count} مشتركين بسبب عدم الانضباط المالي (متأخر/موقوف)."
-            if not ModernDialog(self, "تأكيد", msg, is_confirm=True).exec():
+            if not analytics_reports and not qualified_subs:
+                msg_alert = f"لا توجد فئات أو مشتركون مستوفون لشروط {draw_title} حالياً."
+                ModernDialog(self, "تنبيه", msg_alert).exec()
                 return
-            
-            # Use the animated multi-category draw
-            anim_dlg = DrawAnimationDialog(self, qualified_by_category, draw_name, self.db)
+
+            # فتح نافذة السحب المتدرجة (تقرير الفئة الأولى -> قرعة الفئة الأولى -> تقرير الفئة الثانية -> قرعة الفئة الثانية -> ... -> التقرير النهائي للفائزين)
+            anim_dlg = DrawAnimationDialog(
+                self,
+                qualified_by_category,
+                draw_name,
+                self.db,
+                category_reports=analytics_reports,
+            )
             anim_dlg.exec()
             self.load_recent_winners()
             self.refresh_draw_stats()
             return
 
-        msg = f"هل أنت متأكد من بدء {draw_title}؟ (عدد المؤهلين: {len(qualified_subs)})"
-        if disqualified_count > 0:
-            msg += f"\n\n⚠️ تم استبعاد {disqualified_count} مشتركين بسبب عدم الانضباط المالي (متأخر/موقوف)."
-        if not ModernDialog(self, "تأكيد", msg, is_confirm=True).exec():
+        if not qualified_subs:
+            msg_alert = f"لا يوجد مشتركون مستوفون لشروط {draw_title} حالياً."
+            if disqualified_count > 0:
+                msg_alert += f"\n\n(تنبيه: تم استبعاد {disqualified_count} مشتركين بسبب عدم الانضباط المالي: متأخر/موقوف)."
+            ModernDialog(self, "تنبيه", msg_alert).exec()
             return
 
         if draw_name == "الجائزة الكبرى":
@@ -1862,7 +2016,13 @@ class DrawMixin:
             else:
                 grand_groups = {f"الفائز رقم {i + 1}": list(qualified_subs) for i in range(num_winners)}
 
-            anim_dlg = DrawAnimationDialog(self, grand_groups, draw_label, self.db)
+            anim_dlg = DrawAnimationDialog(
+                self,
+                grand_groups,
+                draw_label,
+                self.db,
+                category_reports=analytics_reports,
+            )
             anim_dlg.exec()
             self.load_recent_winners()
             self.refresh_draw_stats()
