@@ -1780,7 +1780,7 @@ class DrawAnimationDialog(QDialog):
             subs = self.qualified_by_category.get(cat_name, [])
             if subs:
                 random_sub = random.choice(subs)
-                self.wheel_label.setText(f"رقم المشترك: {random_sub.subscriber_number} — {random_sub.name or ''}")
+                self.wheel_label.setText(f"رقم المشترك: {random_sub.subscriber_number}  |  الدورة رقم ({self._current_target_cycle})")
                 self.wheel_widget.set_Subscriber_Display(random_sub.subscriber_number, is_winner=False)
         else:
             self.wheel_widget.pointer_deflection *= 0.72
@@ -1834,10 +1834,10 @@ class DrawAnimationDialog(QDialog):
             padding: 4px 24px;
         """)
         self.wheel_label.setText(
-            f"🏆 الفائز: رقم ({winner_sub.subscriber_number}) — {winner_sub.name or ''} [الدورة {cycle_num}]"
+            f"🏆 رقم المشترك الفائز: ({winner_sub.subscriber_number})  |  الدورة رقم ({cycle_num})"
         )
         self.status_label.setText(
-            f"🎉 مبروك للفائز في ({cat_name}) للدورة رقم ({cycle_num}): المشترك رقم ({winner_sub.subscriber_number})"
+            f"🎉 مبروك للفائز في ({cat_name}) — الدورة رقم ({cycle_num}): رقم المشترك ({winner_sub.subscriber_number})"
         )
 
         w_season_id = getattr(winner_sub, 'season_id', None)
@@ -1876,7 +1876,7 @@ class DrawAnimationDialog(QDialog):
         self.start_category_draw()
 
     def show_final_report(self):
-        """عرض التقرير النهائي الشامل للفائزين من كل فئة ورقم الدورة التي فاز فيها كل فائز."""
+        """عرض التقرير النهائي الشامل للفائزين من كل فئة (رقم الدورة ورقم المشترك فقط بدون الأسماء أو الهواتف)."""
         self._clear_layout(self.final_report_layout)
 
         title = QLabel(f"🏆 التقرير النهائي للفائزين — {self.draw_name}")
@@ -1884,7 +1884,7 @@ class DrawAnimationDialog(QDialog):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.final_report_layout.addWidget(title)
 
-        sub_title = QLabel("بيان الفائزين من كل فئة ورقم الدورة التي فاز فيها كل مشترك")
+        sub_title = QLabel("بيان الفائزين من كل فئة (رقم الدورة ورقم المشترك فقط)")
         sub_title.setStyleSheet("font-size: 14px; color: #a7f3d0; font-weight: bold; margin-bottom: 6px; background: transparent;")
         sub_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.final_report_layout.addWidget(sub_title)
@@ -1918,35 +1918,24 @@ class DrawAnimationDialog(QDialog):
                         border-radius: 14px;
                         border: 2px solid #eab308;
                         margin: 4px 16px;
-                        padding: 14px 22px;
+                        padding: 16px 26px;
                     }
                 """)
                 card_lay = QHBoxLayout(card)
-                card_lay.setSpacing(20)
+                card_lay.setSpacing(24)
 
-                right_v = QVBoxLayout()
-                right_v.setSpacing(4)
-                cat_lbl = QLabel(f"📊 الفئة المالية ({idx_w}): {cat}")
-                cat_lbl.setStyleSheet("font-size: 17px; color: #fde047; font-weight: 900; border: none; background: transparent;")
+                cat_lbl = QLabel(f"📊 الفئة ({idx_w}): {cat}")
+                cat_lbl.setStyleSheet("font-size: 18px; color: #fde047; font-weight: 900; border: none; background: transparent;")
 
-                cycle_lbl = QLabel(f"🔄 رقم الدورة التي فاز فيها: الدورة رقم ({cycle_num})")
-                cycle_lbl.setStyleSheet("font-size: 15px; color: #38bdf8; font-weight: bold; border: none; background: transparent;")
+                cycle_lbl = QLabel(f"🔄 رقم الدورة: الدورة رقم ({cycle_num})")
+                cycle_lbl.setStyleSheet("font-size: 18px; color: #38bdf8; font-weight: 900; border: none; background: transparent;")
 
-                right_v.addWidget(cat_lbl)
-                right_v.addWidget(cycle_lbl)
-                card_lay.addLayout(right_v, 1)
-
-                left_v = QVBoxLayout()
-                left_v.setSpacing(4)
                 sub_num_lbl = QLabel(f"🏆 رقم المشترك الفائز: {sub.subscriber_number}")
                 sub_num_lbl.setStyleSheet("font-size: 22px; color: #4ade80; font-weight: 900; border: none; background: transparent;")
 
-                sub_name_lbl = QLabel(f"👤 اسم المشترك: {sub.name or '-'}   |   📞 الهاتف: {sub.phone or '-'}")
-                sub_name_lbl.setStyleSheet("font-size: 14px; color: #e2e8f0; font-weight: bold; border: none; background: transparent;")
-
-                left_v.addWidget(sub_num_lbl)
-                left_v.addWidget(sub_name_lbl)
-                card_lay.addLayout(left_v, 2)
+                card_lay.addWidget(cat_lbl, 1)
+                card_lay.addWidget(cycle_lbl, 1)
+                card_lay.addWidget(sub_num_lbl, 1)
 
                 scroll_layout.addWidget(card)
 
@@ -1992,7 +1981,7 @@ class DrawAnimationDialog(QDialog):
         self.stage_stack.setCurrentWidget(self.page_final_report)
 
     def export_full_draw_session_excel(self):
-        """تصدير التقرير النهائي للفائزين وتقارير الفئات التفصيلية إلى ملف Excel."""
+        """تصدير التقرير النهائي للفائزين وتقارير الفئات التفصيلية إلى ملف Excel (رقم الدورة ورقم المشترك فقط)."""
         try:
             winners_rows = []
             for item_w in self.winners:
@@ -2001,8 +1990,6 @@ class DrawAnimationDialog(QDialog):
                     "الفئة المالية": cat,
                     "رقم الدورة التي فاز فيها": cycle_num,
                     "رقم المشترك الفائز": sub.subscriber_number or "-",
-                    "اسم المشترك الفائز": sub.name or "-",
-                    "رقم الهاتف": sub.phone or "-",
                     "نوع السحب": self.draw_name,
                     "تاريخ السحب": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 })
@@ -2013,29 +2000,23 @@ class DrawAnimationDialog(QDialog):
                 for e in q_list:
                     details_rows.append({
                         "الفئة": cat_name,
-                        "رقم الدورة المقررة": t_cycle,
-                        "تصنيف المشترك في القرعة": "مؤهل في هذه الدورة",
+                        "رقم الدورة": t_cycle,
                         "رقم المشترك": e.get("number", "-"),
-                        "اسم المشترك": e.get("name", "-"),
-                        "التفاصيل / السبب": f"مؤهل (أتم الدورة {t_cycle})",
+                        "الحالة في القرعة": "مؤهل في هذه الدورة",
                     })
                 for e in p_list:
                     details_rows.append({
                         "الفئة": cat_name,
-                        "رقم الدورة المقررة": t_cycle,
-                        "تصنيف المشترك في القرعة": "فاز في دورة سابقة",
+                        "رقم الدورة": e.get("won_cycle", f"دورة سابقة"),
                         "رقم المشترك": e.get("number", "-"),
-                        "اسم المشترك": e.get("name", "-"),
-                        "التفاصيل / السبب": f"فاز سابقاً ({e.get('won_cycle', 'دورة سابقة')})",
+                        "الحالة في القرعة": "فاز في دورة سابقة",
                     })
                 for e in x_list:
                     details_rows.append({
                         "الفئة": cat_name,
-                        "رقم الدورة المقررة": t_cycle,
-                        "تصنيف المشترك في القرعة": "خرج من القرعة في هذه الدورة",
+                        "رقم الدورة": t_cycle,
                         "رقم المشترك": e.get("number", "-"),
-                        "اسم المشترك": e.get("name", "-"),
-                        "التفاصيل / السبب": e.get("reason", "غير مؤهل"),
+                        "الحالة في القرعة": "خرج من القرعة في هذه الدورة",
                     })
 
             default_name = f"draw_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
