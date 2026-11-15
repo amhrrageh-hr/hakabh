@@ -16,6 +16,7 @@ from PyQt6.QtGui import *
 import database as db_mod
 from gui.utils import reshape_text, ServerWorker
 from gui.dialogs import *
+from gui.dialogs import BatchProgressDialog, ModernDialog
 
 class CapitalMixin:
     def init_capital_page(self):

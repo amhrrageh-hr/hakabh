@@ -190,6 +190,23 @@ class LoadingDialog(QDialog):
         self.lbl_message.setText(message)
         QCoreApplication.processEvents()
 
+
+class BatchProgressDialog(LoadingDialog):
+    """نافذة تقدم للعمليات الجماعية تعرض شريط تقدم حقيقي مع النسبة والرسالة"""
+    def __init__(self, parent=None, title="جاري تنفيذ العملية", message="يرجى الانتظار...", total_steps=100):
+        super().__init__(parent=parent, title=title, message=message)
+        self._total = max(1, int(total_steps or 1))
+        self.progress_bar.setRange(0, self._total)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFixedHeight(8)
+
+    def update_progress(self, current_step: int, message: str = None):
+        self.progress_bar.setValue(min(self._total, max(0, int(current_step))))
+        if message:
+            self.lbl_message.setText(message)
+        QCoreApplication.processEvents()
+
+
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
