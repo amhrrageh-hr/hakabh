@@ -1357,12 +1357,27 @@ class DrawAnimationDialog(QDialog):
         self.wheel_label.setText(f"🏆 الفائز: رقم المشترك ({winner_sub.subscriber_number})")
         self.status_label.setText(f"🎉 مبروك للفائز في فئة {cat_name}: رقم المشترك ({winner_sub.subscriber_number})")
 
-        # Calculate active cycle
-        active_p = self.db.query(db_mod.Payment).filter(
-            db_mod.Payment.subscriber_id == winner_sub.id,
-            db_mod.Payment.due_date <= datetime.datetime.now()
-        ).order_by(db_mod.Payment.due_date.desc()).first()
-        cycle_num = active_p.cycle_number if active_p else 1
+        # تحديد رقم الدورة بدقة (حسب الدورة المختارة في البطاقة أو الدورة المكتملة التلقائية للفئة)
+        cycle_num = None
+        parent_win = self.parent()
+        sub_cat_name = getattr(winner_sub, "category", None) or cat_name
+        if parent_win:
+            sel_map = getattr(parent_win, "category_selected_cycles", {}) or {}
+            sel_c = sel_map.get(sub_cat_name, "auto")
+            if sel_c != "auto" and isinstance(sel_c, int):
+                cycle_num = sel_c
+            else:
+                stats_cache = getattr(parent_win, "_draw_stats_cache", {}) or {}
+                c_info = stats_cache.get(sub_cat_name)
+                if isinstance(c_info, dict) and c_info.get("target_cycle"):
+                    cycle_num = c_info.get("target_cycle")
+
+        if not cycle_num:
+            active_p = self.db.query(db_mod.Payment).filter(
+                db_mod.Payment.subscriber_id == winner_sub.id,
+                db_mod.Payment.due_date <= datetime.datetime.now()
+            ).order_by(db_mod.Payment.due_date.desc()).first()
+            cycle_num = active_p.cycle_number if active_p else 1
 
         w_season_id = getattr(winner_sub, 'season_id', None)
         if not w_season_id and self.parent() and hasattr(self.parent(), 'combo_header_season'):

@@ -1754,7 +1754,8 @@ class DrawMixin:
                     self.db.delete(winner)
                     self.db.commit()
                     self.load_recent_winners()
-                    ModernDialog(self, "نجاح", "تم حذف السجل بنجاح").exec()
+                    self.refresh_draw_stats()
+                    ModernDialog(self, "نجاح", "تم حذف السجل بنجاح وتحديث إحصائيات الفئات").exec()
             except Exception as e:
                 self.db.rollback()
                 ModernDialog(self, "خطأ", f"فشل الحذف: {e}").exec()
@@ -1786,12 +1787,14 @@ class DrawMixin:
             self._draw_qual_worker.quit()
             self._draw_qual_worker.wait(100)
 
+        season_id = self._get_active_season_id_for_draw()
         self._draw_qual_worker = DrawQualificationWorker(
             draw_name,
             self.category_selected_cycles,
             selected_period=selected_period,
             periods_count=periods_count,
-            weeks_per_period=weeks_per_period
+            weeks_per_period=weeks_per_period,
+            season_id=season_id,
         )
 
         def _on_finished(qualified_by_cat_ids, qualified_ids, disqualified_count):
