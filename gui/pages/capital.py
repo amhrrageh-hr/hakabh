@@ -321,7 +321,12 @@ class CapitalMixin:
         
         self.capital_tabs.addTab(self.tab_cap_winners, "مستحقات الفائزين بالقرعة")
         self.capital_tabs.currentChanged.connect(self.refresh_current_capital_tab)
-        
+
+        try:
+            self.load_capital_category_filter()
+        except Exception:
+            pass
+
         page.setWidget(container)
         return page
 
@@ -363,9 +368,18 @@ class CapitalMixin:
         self.exp_sub_cat_combo.clear()
         self.exp_sub_cat_combo.addItem("مصاريف عامة (الكل)", None)
 
-        for cat in self.db.query(db_mod.Category).all():
-            self.cap_filter_cat.addItem(cat.name, cat.name)
-            self.exp_sub_cat_combo.addItem(cat.name, cat.name)
+        seen_names = set()
+        for cat in self.db.query(db_mod.Category).order_by(db_mod.Category.id.asc()).all():
+            if cat.name and cat.name not in seen_names:
+                seen_names.add(cat.name)
+                self.cap_filter_cat.addItem(cat.name, cat.name)
+                self.exp_sub_cat_combo.addItem(cat.name, cat.name)
+
+        for (sub_cat,) in self.db.query(db_mod.Subscriber.category).distinct().all():
+            if sub_cat and sub_cat not in seen_names:
+                seen_names.add(sub_cat)
+                self.cap_filter_cat.addItem(sub_cat, sub_cat)
+                self.exp_sub_cat_combo.addItem(sub_cat, sub_cat)
 
         if curr_filter:
             idx = self.cap_filter_cat.findData(curr_filter)

@@ -788,13 +788,20 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
             self.hide_loading()
 
     def show_capital_management(self):
-        """عرض صفحة رأس المال مع lazy initialization لتجنب التجميد."""
+        """عرض صفحة رأس المال مع تحميل قائمة الفئات والجدول النشط فوراً."""
         page = self._ensure_page('page_capital', self.init_capital_page)
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
+        self.db.expire_all()
         self.content_stack.setCurrentWidget(page)
         self._update_nav_style("إدارة رأس المال")
         self.show_loading("جاري تحميل رأس المال", "يرجى الانتظار، جاري حساب مؤشرات رأس المال والسيولة...")
         try:
+            self.load_capital_category_filter()
             self.refresh_capital_stats()
+            self.refresh_current_capital_tab()
         finally:
             self.hide_loading()
 
