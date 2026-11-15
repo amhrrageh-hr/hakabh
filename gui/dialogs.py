@@ -5,6 +5,7 @@ from PyQt6.QtGui import *
 from PyQt6.QtCore import *
 from PyQt6.QtWidgets import *
 import datetime
+import math
 import random
 import pandas as pd
 from PyQt6.QtWidgets import (
@@ -332,106 +333,845 @@ class SetupAdminDialog(QDialog):
         self.lbl_error.setText(message)
         self.lbl_error.setVisible(True)
 
+class LuxuryPrizeWheelWidget(QWidget):
+    """
+    عجلة القرعة الفاخرة عالية الدقة (زمردي ملكي + إطار ذهبي عريض مزخرف بالتروس والفيلجري + مؤشر مرصع بالألماس):
+    - مقسمة إلى 50 قطاعاً باللون الأخضر الزمردي الداكن مع خطوط تقسيم ذهبية دقيقة.
+    - مرقمة من 1 إلى 49 بأرقام ذهبية، مع ظهور الرقم 49 مرتين في الأعلى تماماً.
+    - محاطة بإطار معدني ذهبي عريض ثلاثي الأبعاد يحتوي على تروس دقيقة في حافته الخارجية، وزخارف هندسية كلاسيكية وفيلجري ذهبي.
+    - في أعلى المنتصف مؤشر ذهبي فاخر مرصع بالألماس يتحرك فيزيائياً مع مرور القطاعات.
+    - قرص مركزي ذهبي مصقول يحمل شعار "M" وكلمة "MILLION" وتحتها نص "هكبة المليون الأسبوعية" بالذهب.
+    - خلفية استوديو ناعمة بتدرج أخضر داكن وذهبي مع جزيئات إضاءة Bokeh خافتة.
+    """
+    def __init__(self, parent=None, size=540):
+        super().__init__(parent)
+        self.wheel_size = size
+        self.setFixedSize(size, size)
+
+        # 50 قطاعاً: الرقم 49 يظهر مرتين في القمة، تليه الأرقام من 1 إلى 48
+        self.segments = ["49", "49"] + [str(i) for i in range(1, 49)]
+        self.num_segments = len(self.segments)  # 50
+        self.seg_angle = 360.0 / self.num_segments  # 7.2 درجة لكل قطاع
+
+        self.wheel_angle = 0.0          # زاوية دوران قرص العجلة بالدرجات
+        self.pointer_deflection = 0.0   # زاوية ارتداد المؤشر العلوي المرصع بالألماس
+        self.winning_seg_index = -1     # القطاع الفائز لتوهيجه بالذهب عند التوقف
+        self.current_sub_number = "---"
+        self.is_winner_state = False
+
+        # جزيئات الإضاءة الخلفية (Bokeh Studio Particles)
+        rng = random.Random(49)
+        self._bokeh_particles = []
+        for _ in range(38):
+            bx = rng.uniform(0.04, 0.96)
+            by = rng.uniform(0.04, 0.96)
+            dist_center = math.hypot(bx - 0.5, by - 0.5)
+            if dist_center < 0.36:
+                # دفع الجزيئات نحو الهالة المحيطة بالعجلة
+                ang = math.atan2(by - 0.5, bx - 0.5)
+                bx = 0.5 + math.cos(ang) * rng.uniform(0.38, 0.49)
+                by = 0.5 + math.sin(ang) * rng.uniform(0.38, 0.49)
+            br = rng.uniform(3.0, 18.0)
+            b_alpha = rng.randint(18, 75)
+            is_gold = rng.random() > 0.25
+            self._bokeh_particles.append((bx, by, br, b_alpha, is_gold))
+
+        self._static_bg_frame_pixmap = None
+        self._wheel_disc_pixmap = None
+        self._center_hub_pixmap = None
+        self._build_cached_layers()
+
+    def _make_gold_conical(self, cx, cy, angle_offset=0.0):
+        grad = QConicalGradient(QPointF(cx, cy), angle_offset)
+        stops = [
+            (0.00, QColor("#fef08a")),
+            (0.08, QColor("#ca8a04")),
+            (0.16, QColor("#713f12")),
+            (0.25, QColor("#facc15")),
+            (0.34, QColor("#fef9c3")),
+            (0.42, QColor("#b45309")),
+            (0.50, QColor("#78350f")),
+            (0.58, QColor("#eab308")),
+            (0.67, QColor("#fef08a")),
+            (0.76, QColor("#a16207")),
+            (0.85, QColor("#d97706")),
+            (0.93, QColor("#fde047")),
+            (1.00, QColor("#fef08a")),
+        ]
+        for pos, col in stops:
+            grad.setColorAt(pos, col)
+        return grad
+
+    def _build_cached_layers(self):
+        dpr = 2.0
+        px_size = int(self.wheel_size * dpr)
+        cx = self.wheel_size / 2.0
+        cy = self.wheel_size / 2.0
+
+        # ═══════════════════════════════════════════════════════════════════
+        # 1) الطبقة الثابتة: خلفية الاستوديو + الإطار الذهبي العريض بالتروس والفيلجري
+        # ═══════════════════════════════════════════════════════════════════
+        bg_pm = QPixmap(px_size, px_size)
+        bg_pm.setDevicePixelRatio(dpr)
+        bg_pm.fill(Qt.GlobalColor.transparent)
+
+        p = QPainter(bg_pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        # أ) خلفية الاستوديو (تدرج زمردي داكن وذهبي ناعم + جزيئات Bokeh)
+        studio_grad = QRadialGradient(QPointF(cx, cy), self.wheel_size * 0.52)
+        studio_grad.setColorAt(0.00, QColor(212, 175, 55, 55))
+        studio_grad.setColorAt(0.55, QColor(6, 58, 34, 210))
+        studio_grad.setColorAt(0.82, QColor(3, 28, 16, 245))
+        studio_grad.setColorAt(1.00, QColor(2, 13, 8, 255))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(studio_grad))
+        p.drawRoundedRect(QRectF(0, 0, self.wheel_size, self.wheel_size), 28, 28)
+
+        # هالة ذهبية خلفية متوهجة خلف الإطار المعدني
+        halo_grad = QRadialGradient(QPointF(cx, cy), self.wheel_size * 0.48)
+        halo_grad.setColorAt(0.0, QColor(250, 204, 21, 0))
+        halo_grad.setColorAt(0.72, QColor(250, 204, 21, 42))
+        halo_grad.setColorAt(0.88, QColor(16, 185, 129, 28))
+        halo_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        p.setBrush(QBrush(halo_grad))
+        p.drawEllipse(QPointF(cx, cy), self.wheel_size * 0.49, self.wheel_size * 0.49)
+
+        # رسم جزيئات الـ Bokeh الخافتة
+        for bx, by, br, b_alpha, is_gold in self._bokeh_particles:
+            px_x = bx * self.wheel_size
+            px_y = by * self.wheel_size
+            b_grad = QRadialGradient(QPointF(px_x, px_y), br)
+            if is_gold:
+                b_grad.setColorAt(0.0, QColor(254, 240, 138, b_alpha))
+                b_grad.setColorAt(0.6, QColor(234, 179, 8, int(b_alpha * 0.45)))
+                b_grad.setColorAt(1.0, QColor(234, 179, 8, 0))
+            else:
+                b_grad.setColorAt(0.0, QColor(74, 222, 128, int(b_alpha * 0.7)))
+                b_grad.setColorAt(0.6, QColor(16, 185, 129, int(b_alpha * 0.3)))
+                b_grad.setColorAt(1.0, QColor(16, 185, 129, 0))
+            p.setBrush(QBrush(b_grad))
+            p.drawEllipse(QPointF(px_x, px_y), br, br)
+
+        # ب) منظور ثلاثي الأبعاد خفيف (حافة سفلية وظل عميق تحت الإطار المعدني)
+        shadow_grad = QRadialGradient(QPointF(cx, cy + 10), self.wheel_size * 0.46)
+        shadow_grad.setColorAt(0.75, QColor(0, 0, 0, 195))
+        shadow_grad.setColorAt(0.92, QColor(0, 0, 0, 95))
+        shadow_grad.setColorAt(1.00, QColor(0, 0, 0, 0))
+        p.setBrush(QBrush(shadow_grad))
+        p.drawEllipse(QPointF(cx, cy + 10), self.wheel_size * 0.46, self.wheel_size * 0.46)
+
+        # حافة العمق السفلي المعدنية لإعطاء منظور الارتفاع الطفيف (Slightly Elevated Perspective)
+        rim_3d_grad = QLinearGradient(cx - 220, cy + 180, cx + 220, cy + 250)
+        rim_3d_grad.setColorAt(0.0, QColor("#451a03"))
+        rim_3d_grad.setColorAt(0.3, QColor("#92400e"))
+        rim_3d_grad.setColorAt(0.5, QColor("#d97706"))
+        rim_3d_grad.setColorAt(0.7, QColor("#78350f"))
+        rim_3d_grad.setColorAt(1.0, QColor("#451a03"))
+        p.setBrush(QBrush(rim_3d_grad))
+        p.drawEllipse(QPointF(cx, cy + 5.5), 236, 236)
+
+        # ج) التروس الدقيقة المدمجة في الحافة الخارجية للإطار الذهبي (Fine-Toothed Outer Gears)
+        r_gear_outer = 238.0
+        r_gear_inner = 229.5
+        num_teeth = 96
+        gear_path = QPainterPath()
+        for i in range(num_teeth):
+            a1 = math.radians(i * (360.0 / num_teeth))
+            a2 = math.radians((i + 0.28) * (360.0 / num_teeth))
+            a3 = math.radians((i + 0.62) * (360.0 / num_teeth))
+            a4 = math.radians((i + 0.90) * (360.0 / num_teeth))
+            p1 = QPointF(cx + r_gear_inner * math.cos(a1), cy + r_gear_inner * math.sin(a1))
+            p2 = QPointF(cx + r_gear_outer * math.cos(a2), cy + r_gear_outer * math.sin(a2))
+            p3 = QPointF(cx + r_gear_outer * math.cos(a3), cy + r_gear_outer * math.sin(a3))
+            p4 = QPointF(cx + r_gear_inner * math.cos(a4), cy + r_gear_inner * math.sin(a4))
+            if i == 0:
+                gear_path.moveTo(p1)
+            else:
+                gear_path.lineTo(p1)
+            gear_path.lineTo(p2)
+            gear_path.lineTo(p3)
+            gear_path.lineTo(p4)
+        gear_path.closeSubpath()
+
+        p.setPen(QPen(QColor("#451a03"), 1.2))
+        p.setBrush(QBrush(self._make_gold_conical(cx, cy, 25.0)))
+        p.drawPath(gear_path)
+
+        # د) الإطار المعدني الذهبي العريض المصقول (Wide Polished Deep Gold Frame: R=230 -> R=178)
+        r_frame_outer = 230.0
+        r_frame_inner = 178.0
+
+        # الطبقة الأساسية للإطار العريض
+        p.setPen(QPen(QColor("#fef08a"), 1.6))
+        p.setBrush(QBrush(self._make_gold_conical(cx, cy, 70.0)))
+        p.drawEllipse(QPointF(cx, cy), r_frame_outer, r_frame_outer)
+
+        # تدرج دائري لإبراز انحناء المعدن ثلاثي الأبعاد على عرض الإطار
+        bevel_grad = QRadialGradient(QPointF(cx, cy), r_frame_outer)
+        bevel_grad.setColorAt(0.75, QColor(69, 26, 3, 180))
+        bevel_grad.setColorAt(0.80, QColor(254, 240, 138, 120))
+        bevel_grad.setColorAt(0.86, QColor(146, 64, 14, 70))
+        bevel_grad.setColorAt(0.93, QColor(254, 249, 195, 135))
+        bevel_grad.setColorAt(0.98, QColor(120, 53, 15, 160))
+        bevel_grad.setColorAt(1.00, QColor(69, 26, 3, 210))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(bevel_grad))
+        p.drawEllipse(QPointF(cx, cy), r_frame_outer, r_frame_outer)
+
+        # شريط الزخارف الهندسية الكلاسيكية والفيلجري الذهبي داخل الإطار العريض (R=222 -> R=188)
+        r_band_out = 221.0
+        r_band_in = 189.0
+        r_band_mid = (r_band_out + r_band_in) / 2.0
+
+        # خلفية غائرة داكنة قليلاً لإبراز نقوش الفيلجري الذهبية البارزة
+        recess_grad = QRadialGradient(QPointF(cx, cy), r_band_out)
+        recess_grad.setColorAt(0.84, QColor("#3b1704"))
+        recess_grad.setColorAt(0.92, QColor("#5c2808"))
+        recess_grad.setColorAt(1.00, QColor("#2e1002"))
+        band_path = QPainterPath()
+        band_path.addEllipse(QPointF(cx, cy), r_band_out, r_band_out)
+        inner_cut = QPainterPath()
+        inner_cut.addEllipse(QPointF(cx, cy), r_band_in, r_band_in)
+        band_path = band_path.subtracted(inner_cut)
+        p.setBrush(QBrush(recess_grad))
+        p.setPen(QPen(QColor("#facc15"), 1.2))
+        p.drawPath(band_path)
+
+        # رسم الزخارف الهندسية الكلاسيكية والفيلجري (Classical Geometric Lattice & Gold Filigree)
+        num_motifs = 48
+        p.save()
+        for i in range(num_motifs):
+            ang_deg = i * (360.0 / num_motifs)
+            ang_rad = math.radians(ang_deg)
+            next_rad = math.radians((i + 1) * (360.0 / num_motifs))
+            mid_rad = (ang_rad + next_rad) / 2.0
+
+            # معين هندسي كلاسيكي متشابك (Geometric Diamond Lattice)
+            p_out = QPointF(cx + (r_band_out - 2.0) * math.cos(mid_rad), cy + (r_band_out - 2.0) * math.sin(mid_rad))
+            p_in = QPointF(cx + (r_band_in + 2.0) * math.cos(mid_rad), cy + (r_band_in + 2.0) * math.sin(mid_rad))
+            p_left = QPointF(cx + r_band_mid * math.cos(ang_rad), cy + r_band_mid * math.sin(ang_rad))
+            p_right = QPointF(cx + r_band_mid * math.cos(next_rad), cy + r_band_mid * math.sin(next_rad))
+
+            motif_poly = QPolygonF([p_out, p_right, p_in, p_left])
+            p.setPen(QPen(QColor("#fde047"), 1.15))
+            p.setBrush(QBrush(QColor(234, 179, 8, 65)))
+            p.drawPolygon(motif_poly)
+
+            # أقواس فيلجري ذهبية دقيقة (Filigree Scrollwork)
+            filigree_pt = QPointF(cx + r_band_mid * math.cos(mid_rad), cy + r_band_mid * math.sin(mid_rad))
+            p.setPen(QPen(QColor("#fef08a"), 0.9))
+            p.setBrush(QBrush(QColor("#facc15")))
+            p.drawEllipse(filigree_pt, 2.2, 2.2)
+
+            # تروس داخلية مصغرة محفورة في الإطار عند كل زاوية
+            if i % 2 == 0:
+                g_cx = cx + (r_band_out - 6.0) * math.cos(ang_rad)
+                g_cy = cy + (r_band_out - 6.0) * math.sin(ang_rad)
+                p.setPen(QPen(QColor("#fef9c3"), 0.8))
+                p.setBrush(QBrush(QColor("#ca8a04")))
+                p.drawEllipse(QPointF(g_cx, g_cy), 3.2, 3.2)
+                p.setBrush(QBrush(QColor("#451a03")))
+                p.drawEllipse(QPointF(g_cx, g_cy), 1.3, 1.3)
+        p.restore()
+
+        # الحلقات الذهبية الداخلية المحيطة بقرص العجلة مع مسامير ألماسية/ذهبية (50 مسماراً)
+        p.setPen(QPen(QColor("#fef08a"), 2.0))
+        p.setBrush(QBrush(self._make_gold_conical(cx, cy, 140.0)))
+        inner_rim_path = QPainterPath()
+        inner_rim_path.addEllipse(QPointF(cx, cy), r_band_in, r_band_in)
+        wheel_cut = QPainterPath()
+        wheel_cut.addEllipse(QPointF(cx, cy), r_frame_inner, r_frame_inner)
+        p.drawPath(inner_rim_path.subtracted(wheel_cut))
+
+        # 50 جوهرة/مسمار ذهبي مضيء على الحافة الداخلية للإطار
+        r_studs = (r_band_in + r_frame_inner) / 2.0
+        for i in range(self.num_segments):
+            s_rad = math.radians(i * self.seg_angle - 90.0)
+            sx = cx + r_studs * math.cos(s_rad)
+            sy = cy + r_studs * math.sin(s_rad)
+            stud_grad = QRadialGradient(QPointF(sx - 0.8, sy - 0.8), 3.0)
+            stud_grad.setColorAt(0.0, QColor("#ffffff"))
+            stud_grad.setColorAt(0.45, QColor("#fef08a"))
+            stud_grad.setColorAt(0.85, QColor("#b45309"))
+            stud_grad.setColorAt(1.0, QColor("#451a03"))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(stud_grad))
+            p.drawEllipse(QPointF(sx, sy), 2.6, 2.6)
+
+        p.end()
+        self._static_bg_frame_pixmap = bg_pm
+
+        # ═══════════════════════════════════════════════════════════════════
+        # 2) طبقة قرص العجلة الدوار (50 قطاعاً باللون الزمردي الداكن + أرقام ذهبية 1..49)
+        # ═══════════════════════════════════════════════════════════════════
+        self._rebuild_wheel_disc_pixmap()
+
+        # ═══════════════════════════════════════════════════════════════════
+        # 3) القرص المركزي الذهبي (Central Hub: "M" + "MILLION" + "هكبة المليون الأسبوعية")
+        # ═══════════════════════════════════════════════════════════════════
+        self._rebuild_center_hub_pixmap()
+
+    def _rebuild_wheel_disc_pixmap(self):
+        dpr = 2.0
+        px_size = int(self.wheel_size * dpr)
+        cx = self.wheel_size / 2.0
+        cy = self.wheel_size / 2.0
+        r_wheel = 178.0
+        r_hub_outer = 74.0
+
+        disc_pm = QPixmap(px_size, px_size)
+        disc_pm.setDevicePixelRatio(dpr)
+        disc_pm.fill(Qt.GlobalColor.transparent)
+
+        p = QPainter(disc_pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        # نجعل الفهرس 0 و 1 (كلاهما '49') في قمة العجلة تماماً حول الساعة 12 (-90 درجة)
+        # الفهرس 0 على يسار القمة مباشرة، والفهرس 1 على يمين القمة مباشرة
+        for i, label_num in enumerate(self.segments):
+            # زاوية بداية القطاع بالدرجات في نظام الرياضيات (حيث -90 هي الأعلى)
+            start_deg_math = -90.0 + (i - 1) * self.seg_angle
+            mid_deg_math = start_deg_math + (self.seg_angle / 2.0)
+
+            path = QPainterPath()
+            path.moveTo(cx, cy)
+            # QPainter.arcTo يستخدم عكس عقارب الساعة حيث 90 هي الأعلى
+            qt_start_deg = -start_deg_math
+            qt_sweep_deg = -self.seg_angle
+            path.arcTo(
+                QRectF(cx - r_wheel, cy - r_wheel, r_wheel * 2, r_wheel * 2),
+                qt_start_deg,
+                qt_sweep_deg
+            )
+            path.closeSubpath()
+
+            # تدرج المينا الزمردي الداكن الفاخر (أو توهج ذهبي للقطاع الفائز)
+            seg_grad = QRadialGradient(QPointF(cx, cy), r_wheel)
+            if i == self.winning_seg_index:
+                seg_grad.setColorAt(0.35, QColor("#ca8a04"))
+                seg_grad.setColorAt(0.75, QColor("#eab308"))
+                seg_grad.setColorAt(0.95, QColor("#fef08a"))
+                seg_grad.setColorAt(1.00, QColor("#a16207"))
+            else:
+                if i % 2 == 0:
+                    seg_grad.setColorAt(0.35, QColor("#021f13"))
+                    seg_grad.setColorAt(0.72, QColor("#064e3b"))
+                    seg_grad.setColorAt(0.92, QColor("#053b2a"))
+                    seg_grad.setColorAt(1.00, QColor("#022417"))
+                else:
+                    seg_grad.setColorAt(0.35, QColor("#01170e"))
+                    seg_grad.setColorAt(0.72, QColor("#043927"))
+                    seg_grad.setColorAt(0.92, QColor("#032c1e"))
+                    seg_grad.setColorAt(1.00, QColor("#011c11"))
+
+            # خطوط التقسيم الذهبية الدقيقة بين القطاعات
+            p.setPen(QPen(QColor("#eab308"), 1.05))
+            p.setBrush(QBrush(seg_grad))
+            p.drawPath(path)
+
+            # زخرفة ذهبية داخلية ناعمة في قاعدة كل قطاع قرب المركز
+            inner_arc_r = r_hub_outer + 18.0
+            rad_mid = math.radians(mid_deg_math)
+            dot_x = cx + inner_arc_r * math.cos(rad_mid)
+            dot_y = cy + inner_arc_r * math.sin(rad_mid)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(QColor(250, 204, 21, 140)))
+            p.drawEllipse(QPointF(dot_x, dot_y), 1.4, 1.4)
+
+            # كتابة الأرقام الذهبية (1 إلى 49 مع 49 مرتين في الأعلى) بمحاذاة شعاعية واضحة
+            p.save()
+            p.translate(cx, cy)
+            p.rotate(mid_deg_math + 90.0)
+            num_font = QFont("Arial", 8, QFont.Weight.Black)
+            p.setFont(num_font)
+
+            # ظل النص لإبراز الرقم الذهبي فوق المينا الزمردية
+            text_rect = QRectF(-13, -r_wheel + 7.0, 26, 16)
+            p.setPen(QColor(0, 0, 0, 190))
+            p.drawText(text_rect.translated(0.6, 0.8), Qt.AlignmentFlag.AlignCenter, label_num)
+
+            if i == self.winning_seg_index:
+                p.setPen(QColor("#1e293b"))
+            else:
+                p.setPen(QColor("#fde047"))
+            p.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, label_num)
+            p.restore()
+
+        # حلقة ذهبية رفيعة داخل حافة القطاعات مباشرة
+        p.setPen(QPen(QColor(250, 204, 21, 165), 1.1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), r_wheel - 24.0, r_wheel - 24.0)
+        p.drawEllipse(QPointF(cx, cy), r_hub_outer + 12.0, r_hub_outer + 12.0)
+
+        # ظل داخلي حول حافة الإطار لإعطاء عمق زجاجي/مينا للقرص
+        inner_shadow = QRadialGradient(QPointF(cx, cy), r_wheel)
+        inner_shadow.setColorAt(0.0, QColor(0, 0, 0, 0))
+        inner_shadow.setColorAt(0.88, QColor(0, 0, 0, 0))
+        inner_shadow.setColorAt(0.96, QColor(0, 0, 0, 80))
+        inner_shadow.setColorAt(1.00, QColor(0, 0, 0, 150))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(inner_shadow))
+        p.drawEllipse(QPointF(cx, cy), r_wheel, r_wheel)
+
+        p.end()
+        self._wheel_disc_pixmap = disc_pm
+
+    def _rebuild_center_hub_pixmap(self):
+        dpr = 2.0
+        px_size = int(self.wheel_size * dpr)
+        cx = self.wheel_size / 2.0
+        cy = self.wheel_size / 2.0
+        r_hub_outer = 82.0
+
+        hub_pm = QPixmap(px_size, px_size)
+        hub_pm.setDevicePixelRatio(dpr)
+        hub_pm.fill(Qt.GlobalColor.transparent)
+
+        p = QPainter(hub_pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        # ظل القرص المركزي فوق العجلة
+        hub_shadow = QRadialGradient(QPointF(cx, cy + 3), r_hub_outer + 10)
+        hub_shadow.setColorAt(0.7, QColor(0, 0, 0, 180))
+        hub_shadow.setColorAt(1.0, QColor(0, 0, 0, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(hub_shadow))
+        p.drawEllipse(QPointF(cx, cy + 3), r_hub_outer + 10, r_hub_outer + 10)
+
+        # الإطار الخارجي للقرص المركزي الذهبي المزخرف
+        p.setPen(QPen(QColor("#fef08a"), 2.0))
+        p.setBrush(QBrush(self._make_gold_conical(cx, cy, 45.0)))
+        p.drawEllipse(QPointF(cx, cy), r_hub_outer, r_hub_outer)
+
+        # فصوص ذهبية صغيرة حول القرص المركزي
+        for i in range(28):
+            ang = math.radians(i * (360.0 / 28.0))
+            gx = cx + (r_hub_outer - 5.0) * math.cos(ang)
+            gy = cy + (r_hub_outer - 5.0) * math.sin(ang)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(QColor("#fef9c3")))
+            p.drawEllipse(QPointF(gx, gy), 1.7, 1.7)
+
+        # القرص المعدني الذهبي المصقول في الوسط (Clean Metallic Gold Disc)
+        r_disc = r_hub_outer - 10.0
+        disc_grad = QRadialGradient(QPointF(cx - 18, cy - 22), r_disc * 1.35)
+        disc_grad.setColorAt(0.00, QColor("#fffbeb"))
+        disc_grad.setColorAt(0.28, QColor("#fde047"))
+        disc_grad.setColorAt(0.62, QColor("#d97706"))
+        disc_grad.setColorAt(0.88, QColor("#92400e"))
+        disc_grad.setColorAt(1.00, QColor("#5c2808"))
+        p.setPen(QPen(QColor("#78350f"), 1.8))
+        p.setBrush(QBrush(disc_grad))
+        p.drawEllipse(QPointF(cx, cy), r_disc, r_disc)
+
+        # حلقة داخلية محفورة بالذهب
+        p.setPen(QPen(QColor("#fef08a"), 1.1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), r_disc - 4.5, r_disc - 4.5)
+
+        # 1. شعار حرف "M" الملكي في أعلى القرص المركزي
+        m_font = QFont("Georgia", 25, QFont.Weight.Black)
+        p.setFont(m_font)
+        m_rect = QRectF(cx - 45, cy - 58, 90, 36)
+        p.setPen(QColor(69, 26, 3, 190))
+        p.drawText(m_rect.translated(0, 1.5), Qt.AlignmentFlag.AlignCenter, "M")
+        p.setPen(QColor("#451a03"))
+        p.drawText(m_rect, Qt.AlignmentFlag.AlignCenter, "M")
+
+        # لمعة ذهبية فاتحة فوق حرف M
+        p.setPen(QColor("#fef9c3"))
+        p.drawText(m_rect.translated(-0.6, -0.6), Qt.AlignmentFlag.AlignCenter, "M")
+
+        # 2. كلمة "MILLION" بالذهب تحت حرف M
+        mil_font = QFont("Arial", 9, QFont.Weight.Black)
+        mil_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.8)
+        p.setFont(mil_font)
+        mil_rect = QRectF(cx - 64, cy - 22, 128, 18)
+        p.setPen(QColor("#451a03"))
+        p.drawText(mil_rect.translated(0, 1.0), Qt.AlignmentFlag.AlignCenter, "MILLION")
+        p.setPen(QColor("#fffbeb"))
+        p.drawText(mil_rect, Qt.AlignmentFlag.AlignCenter, "MILLION")
+
+        # خط فاصل ذهبي دقيق
+        p.setPen(QPen(QColor("#78350f"), 1.0))
+        p.drawLine(QPointF(cx - 48, cy - 2), QPointF(cx + 48, cy - 2))
+
+        # 3. النص العربي "هكبة المليون الأسبوعية" واضح ومقروء بالكامل بالذهب أسفله
+        ar_font = QFont("Tahoma", 8, QFont.Weight.Bold)
+        p.setFont(ar_font)
+        ar_rect = QRectF(cx - 68, cy + 1, 136, 20)
+        p.setPen(QColor("#451a03"))
+        p.drawText(ar_rect.translated(0, 1.0), Qt.AlignmentFlag.AlignCenter, "هكبة المليون الأسبوعية")
+        p.setPen(QColor("#fef9c3"))
+        p.drawText(ar_rect, Qt.AlignmentFlag.AlignCenter, "هكبة المليون الأسبوعية")
+
+        p.end()
+        self._center_hub_pixmap = hub_pm
+
+    def _draw_diamond_pointer(self, p: QPainter, cx: float, cy: float):
+        """
+        رسم المؤشر العلوي الذهبي المرصع بالألماس (Gold & Diamond-Encrusted Pointer)
+        في أعلى منتصف الإطار المعدني تماماً.
+        """
+        p.save()
+        # نقطة ارتكاز المؤشر في أعلى الإطار الذهبي العريض
+        pivot_x = cx
+        pivot_y = cy - 216.0
+        p.translate(pivot_x, pivot_y)
+        p.rotate(self.pointer_deflection)
+
+        # ظل المؤشر
+        p.save()
+        p.translate(0, 4.0)
+        shadow_path = QPainterPath()
+        shadow_path.moveTo(0, 56)
+        shadow_path.cubicTo(14, 26, 24, 10, 20, -14)
+        shadow_path.cubicTo(10, -26, -10, -26, -20, -14)
+        shadow_path.cubicTo(-24, 10, -14, 26, 0, 56)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 150))
+        p.drawPath(shadow_path)
+        p.restore()
+
+        # جسم المؤشر الذهبي المنحوت
+        ptr_grad = QLinearGradient(-22, -20, 22, 50)
+        ptr_grad.setColorAt(0.0, QColor("#fef08a"))
+        ptr_grad.setColorAt(0.3, QColor("#eab308"))
+        ptr_grad.setColorAt(0.5, QColor("#fffbeb"))
+        ptr_grad.setColorAt(0.75, QColor("#b45309"))
+        ptr_grad.setColorAt(1.0, QColor("#78350f"))
+
+        ptr_path = QPainterPath()
+        ptr_path.moveTo(0, 56)  # رأس المؤشر المدبب يشير إلى الرقم العلوي في العجلة
+        ptr_path.cubicTo(12, 28, 24, 12, 20, -12)
+        ptr_path.cubicTo(12, -25, -12, -25, -20, -12)
+        ptr_path.cubicTo(-24, 12, -12, 28, 0, 56)
+
+        p.setPen(QPen(QColor("#fef9c3"), 1.6))
+        p.setBrush(QBrush(ptr_grad))
+        p.drawPath(ptr_path)
+
+        # إطار داخلي ذهبي للمؤشر
+        inner_ptr = QPainterPath()
+        inner_ptr.moveTo(0, 44)
+        inner_ptr.lineTo(11, 4)
+        inner_ptr.lineTo(0, -14)
+        inner_ptr.lineTo(-11, 4)
+        inner_ptr.closeSubpath()
+        p.setPen(QPen(QColor("#fde047"), 1.0))
+        p.setBrush(QBrush(QColor("#92400e")))
+        p.drawPath(inner_ptr)
+
+        # ترصيع الألماس اللامع (Diamond Encrustation)
+        diamonds = [
+            (0, -2, 7.5),     # الجوهرة الماسية المركزية الكبرى
+            (0, 14, 4.2),     # ألماسة وسطى
+            (0, 26, 3.0),     # ألماسة قرب الحافة المدببة
+            (-11, -5, 3.4),   # ألماسة جانبية يسرى
+            (11, -5, 3.4),    # ألماسة جانبية يمنى
+            (-8, -14, 2.8),   # ألماسة علوية يسرى
+            (8, -14, 2.8),    # ألماسة علوية يمنى
+            (0, -16, 3.2),    # ألماسة التاج العلوي
+        ]
+        for dx, dy, dr in diamonds:
+            d_grad = QRadialGradient(QPointF(dx - dr * 0.25, dy - dr * 0.25), dr * 1.1)
+            d_grad.setColorAt(0.0, QColor("#ffffff"))
+            d_grad.setColorAt(0.45, QColor("#e0f2fe"))
+            d_grad.setColorAt(0.80, QColor("#7dd3fc"))
+            d_grad.setColorAt(1.0, QColor("#0284c7"))
+            p.setPen(QPen(QColor("#ffffff"), 0.8))
+            p.setBrush(QBrush(d_grad))
+            p.drawEllipse(QPointF(dx, dy), dr, dr)
+
+        # بريق نجمي فوق الماسة الرئيسية
+        p.setPen(QPen(QColor(255, 255, 255, 230), 1.3))
+        p.drawLine(QPointF(-10, -2), QPointF(10, -2))
+        p.drawLine(QPointF(0, -12), QPointF(0, 8))
+
+        p.restore()
+
+    def set_Subscriber_Display(self, sub_number: str, is_winner: bool = False):
+        self.current_sub_number = str(sub_number or "---")
+        self.is_winner_state = is_winner
+        self.update()
+
+    def highlight_winner_segment(self, seg_idx: int):
+        if self.winning_seg_index != seg_idx:
+            self.winning_seg_index = seg_idx
+            self._rebuild_wheel_disc_pixmap()
+            self.update()
+
+    def target_angle_for_segment(self, seg_idx: int) -> float:
+        """
+        حساب زاوية الدوران اللازمة ليتوقف القطاع seg_idx في الأعلى تماماً تحت المؤشر.
+        بما أن القطاع i مركزه عند: -90 + (i - 0.5) * seg_angle
+        فإن زاوية الدوران المطلوبة هي: -(i - 0.5) * seg_angle (موجبة باتجاه عقارب الساعة).
+        """
+        center_offset = (seg_idx - 0.5) * self.seg_angle
+        return (-center_offset) % 360.0
+
+    def segment_index_for_subscriber(self, sub_number: str) -> int:
+        """تحويل رقم المشترك إلى القطاع المقابل (1..49) على العجلة."""
+        digits = "".join(ch for ch in str(sub_number or "") if ch.isdigit())
+        if digits:
+            num_val = ((int(digits) - 1) % 49) + 1
+        else:
+            num_val = 49
+        if num_val == 49:
+            return random.choice([0, 1])
+        return num_val + 1  # لأن الفهرس 2 يقابل الرقم '1'، والفهرس 49 يقابل الرقم '48'
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        cx = self.wheel_size / 2.0
+        cy = self.wheel_size / 2.0
+
+        # 1. خلفية الاستوديو والإطار الذهبي العريض الثابت
+        if self._static_bg_frame_pixmap:
+            p.drawPixmap(0, 0, self._static_bg_frame_pixmap)
+
+        # 2. قرص العجلة الزمردي الدوار
+        if self._wheel_disc_pixmap:
+            p.save()
+            p.translate(cx, cy)
+            p.rotate(self.wheel_angle)
+            p.translate(-cx, -cy)
+            p.drawPixmap(0, 0, self._wheel_disc_pixmap)
+            p.restore()
+
+        # 3. القرص المركزي الذهبي الثابت (يحمل شعار M و MILLION وهكبة المليون الأسبوعية)
+        if self._center_hub_pixmap:
+            p.drawPixmap(0, 0, self._center_hub_pixmap)
+
+        # شارة رقم المشترك أسفل القرص المركزي مباشرة داخل العجلة
+        if self.current_sub_number and self.current_sub_number != "---":
+            badge_w = 136.0
+            badge_h = 26.0
+            badge_rect = QRectF(cx - badge_w / 2.0, cy + 31.0, badge_w, badge_h)
+            badge_bg = QLinearGradient(badge_rect.topLeft(), badge_rect.bottomRight())
+            if self.is_winner_state:
+                badge_bg.setColorAt(0.0, QColor("#fef08a"))
+                badge_bg.setColorAt(0.5, QColor("#facc15"))
+                badge_bg.setColorAt(1.0, QColor("#ca8a04"))
+                p.setPen(QPen(QColor("#ffffff"), 1.5))
+                txt_col = QColor("#052e16")
+            else:
+                badge_bg.setColorAt(0.0, QColor(2, 44, 34, 235))
+                badge_bg.setColorAt(1.0, QColor(6, 78, 59, 235))
+                p.setPen(QPen(QColor("#facc15"), 1.3))
+                txt_col = QColor("#fef08a")
+
+            p.setBrush(QBrush(badge_bg))
+            p.drawRoundedRect(badge_rect, 13, 13)
+
+            sub_font = QFont("Arial", 11, QFont.Weight.Black)
+            p.setFont(sub_font)
+            p.setPen(txt_col)
+            p.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, f"#{self.current_sub_number}")
+
+        # 4. المؤشر العلوي الذهبي المرصع بالألماس
+        self._draw_diamond_pointer(p, cx, cy)
+        p.end()
+
+
 class DrawAnimationDialog(QDialog):
     def __init__(self, parent, qualified_by_category, draw_name, db):
         super().__init__(parent)
         self.setWindowTitle(draw_name)
-        self.setFixedSize(900, 700)
+        self.setFixedSize(940, 760)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setStyleSheet("background-color: #052109; color: white;")
+        self.setStyleSheet("""
+            QDialog {
+                background: qradialgradient(cx:0.5, cy:0.5, radius:0.85, fx:0.5, fy:0.5,
+                    stop:0 #06351d, stop:0.6 #031c0f, stop:1 #010b06);
+                color: white;
+            }
+        """)
         self.db = db
         self.draw_name = draw_name
         self.qualified_by_category = qualified_by_category
         self.categories = list(qualified_by_category.keys())
         self.current_cat_index = 0
         self.winners = []
-        
+
         self.layout = QVBoxLayout(self)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.layout.setSpacing(40)
-        
+        self.layout.setContentsMargins(24, 16, 24, 18)
+        self.layout.setSpacing(10)
+
         self.cat_label = QLabel("")
-        self.cat_label.setStyleSheet("font-size: 38px; color: #4ade80; font-weight: bold;")
+        self.cat_label.setStyleSheet(
+            "font-size: 28px; color: #fde047; font-weight: 900; background: transparent;"
+        )
         self.cat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(self.cat_label)
-        
-        self.wheel_container = QFrame()
-        self.wheel_container.setFixedSize(600, 300)
-        self.wheel_container.setStyleSheet("border: 10px solid #2e7d32; border-radius: 40px; background-color: #0a3d0e;")
-        container_layout = QVBoxLayout(self.wheel_container)
-        
+
+        # عجلة القرعة الفاخرة عالية الدقة
+        self.wheel_widget = LuxuryPrizeWheelWidget(self, size=540)
+        self.layout.addWidget(self.wheel_widget, 0, Qt.AlignmentFlag.AlignCenter)
+
+        # شريط عرض رقم المشترك الجاري تدويره / الفائز بخط ذهبي واضح
         self.wheel_label = QLabel("---")
-        self.wheel_label.setStyleSheet("font-size: 100px; font-weight: 900; color: #ffffff;")
+        self.wheel_label.setFixedHeight(48)
+        self.wheel_label.setMinimumWidth(420)
+        self.wheel_label.setStyleSheet("""
+            font-size: 28px;
+            font-weight: 900;
+            color: #fef08a;
+            background-color: rgba(4, 47, 29, 0.85);
+            border: 2px solid #eab308;
+            border-radius: 14px;
+            padding: 4px 20px;
+        """)
         self.wheel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        container_layout.addWidget(self.wheel_label)
-        
-        self.layout.addWidget(self.wheel_container, 0, Qt.AlignmentFlag.AlignCenter)
-        
+        self.layout.addWidget(self.wheel_label, 0, Qt.AlignmentFlag.AlignCenter)
+
         self.status_label = QLabel("استعد للسحب...")
-        self.status_label.setStyleSheet("font-size: 24px; color: #94a3b8;")
+        self.status_label.setStyleSheet("font-size: 20px; color: #a7f3d0; font-weight: bold; background: transparent;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(self.status_label)
-        
-        self.timer = QTimer()
+
+        self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_wheel)
-        self.animation_step = 0
-        self.animation_duration = 50
-        
-        QTimer.singleShot(2000, self.start_category_draw)
+        self._spin_start_time = 0.0
+        self._spin_duration = 4.6  # مدة دوران العجلة بالثواني لكل فئة
+        self._start_angle = 0.0
+        self._target_angle = 0.0
+        self._last_tick_seg = -1
+        self._selected_winner = None
+
+        QTimer.singleShot(900, self.start_category_draw)
 
     def start_category_draw(self):
         if self.current_cat_index >= len(self.categories):
             self.show_final_report()
             return
-            
+
         cat_name = self.categories[self.current_cat_index]
-        self.cat_label.setText(f"سحب فئة: {cat_name}")
-        self.status_label.setText("جاري تدوير عجلة الحظ...")
-        self.wheel_container.setStyleSheet("border: 10px solid #2e7d32; border-radius: 40px; background-color: #0a3d0e;")
-        self.wheel_label.setStyleSheet("font-size: 100px; font-weight: 900; color: #ffffff;")
-        
-        self.animation_step = 0
-        self.timer.setInterval(60)
+        subs = self.qualified_by_category[cat_name]
+        self._selected_winner = random.choice(subs)
+
+        self.cat_label.setText(f"✨ {self.draw_name} — سحب فئة: {cat_name} ✨")
+        self.status_label.setText("جاري تدوير عجلة هكبة المليون...")
+        self.wheel_label.setStyleSheet("""
+            font-size: 28px;
+            font-weight: 900;
+            color: #fef08a;
+            background-color: rgba(4, 47, 29, 0.85);
+            border: 2px solid #eab308;
+            border-radius: 14px;
+            padding: 4px 20px;
+        """)
+
+        self.wheel_widget.highlight_winner_segment(-1)
+        self.wheel_widget.set_Subscriber_Display("---", is_winner=False)
+
+        # تحديد القطاع المستهدف على العجلة (1..49) ليقف تحت المؤشر الماسي بدقة
+        win_seg_idx = self.wheel_widget.segment_index_for_subscriber(self._selected_winner.subscriber_number)
+        self._win_seg_idx = win_seg_idx
+        base_target_mod = self.wheel_widget.target_angle_for_segment(win_seg_idx)
+
+        self._start_angle = self.wheel_widget.wheel_angle % 360.0
+        self.wheel_widget.wheel_angle = self._start_angle
+        extra_rotations = random.randint(6, 8) * 360.0
+        delta = (base_target_mod - self._start_angle) % 360.0
+        self._target_angle = self._start_angle + extra_rotations + delta
+
+        self._spin_start_time = datetime.datetime.now().timestamp()
+        self._last_tick_seg = -1
+        self.timer.setInterval(16)  # ~60 FPS دوران ناعم فائق الدقة
         self.timer.start()
 
     def update_wheel(self):
-        cat_name = self.categories[self.current_cat_index]
-        subs = self.qualified_by_category[cat_name]
-        random_sub = random.choice(subs)
-        self.wheel_label.setText(random_sub.subscriber_number)
-        
-        self.animation_step += 1
-        if self.animation_step > 35:
-            self.timer.setInterval(self.timer.interval() + 25)
-            
-        if self.animation_step >= self.animation_duration:
+        now = datetime.datetime.now().timestamp()
+        elapsed = now - self._spin_start_time
+        progress = min(1.0, max(0.0, elapsed / self._spin_duration))
+
+        # تباطؤ فيزيائي واقعي للعجلة (Quartic Ease-Out)
+        eased = 1.0 - pow(1.0 - progress, 4)
+        current_angle = self._start_angle + (self._target_angle - self._start_angle) * eased
+        self.wheel_widget.wheel_angle = current_angle
+
+        # حساب حركة ارتداد المؤشر الماسي عند عبور فواصل القطاعات
+        seg_under_ptr = int(((-current_angle) % 360.0) / self.wheel_widget.seg_angle)
+        speed_factor = max(0.0, 1.0 - eased)
+        if seg_under_ptr != self._last_tick_seg and progress < 0.985:
+            self._last_tick_seg = seg_under_ptr
+            self.wheel_widget.pointer_deflection = -14.0 * min(1.0, speed_factor * 2.4 + 0.18)
+            # تحديث رقم المشترك المعروض أثناء الدوران
+            cat_name = self.categories[self.current_cat_index]
+            subs = self.qualified_by_category[cat_name]
+            random_sub = random.choice(subs)
+            self.wheel_label.setText(f"رقم المشترك: {random_sub.subscriber_number}")
+            self.wheel_widget.set_Subscriber_Display(random_sub.subscriber_number, is_winner=False)
+        else:
+            self.wheel_widget.pointer_deflection *= 0.72
+
+        self.wheel_widget.update()
+
+        if progress >= 1.0:
             self.timer.stop()
-            self.conclude_category_draw(random_sub)
+            self.wheel_widget.wheel_angle = self._target_angle % 360.0
+            self.wheel_widget.pointer_deflection = 0.0
+            self.wheel_widget.highlight_winner_segment(self._win_seg_idx)
+            self.conclude_category_draw(self._selected_winner)
 
     def conclude_category_draw(self, winner_sub):
         cat_name = self.categories[self.current_cat_index]
         self.winners.append((cat_name, winner_sub))
-        
-        self.wheel_container.setStyleSheet("border: 12px solid #facc15; border-radius: 40px; background-color: #1e293b;")
-        self.wheel_label.setStyleSheet("font-size: 110px; font-weight: 900; color: #facc15;")
-        self.status_label.setText(f"🎉 الفائز في فئة {cat_name}: رقم المشترك ({winner_sub.subscriber_number})")
-        
+
+        self.wheel_widget.set_Subscriber_Display(winner_sub.subscriber_number, is_winner=True)
+        self.wheel_label.setStyleSheet("""
+            font-size: 32px;
+            font-weight: 900;
+            color: #052e16;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 #fde047, stop:0.5 #facc15, stop:1 #eab308);
+            border: 3px solid #ffffff;
+            border-radius: 14px;
+            padding: 4px 24px;
+        """)
+        self.wheel_label.setText(f"🏆 الفائز: رقم المشترك ({winner_sub.subscriber_number})")
+        self.status_label.setText(f"🎉 مبروك للفائز في فئة {cat_name}: رقم المشترك ({winner_sub.subscriber_number})")
+
         # Calculate active cycle
         active_p = self.db.query(db_mod.Payment).filter(
             db_mod.Payment.subscriber_id == winner_sub.id,
             db_mod.Payment.due_date <= datetime.datetime.now()
         ).order_by(db_mod.Payment.due_date.desc()).first()
         cycle_num = active_p.cycle_number if active_p else 1
-        
+
+        w_season_id = getattr(winner_sub, 'season_id', None)
+        if not w_season_id and self.parent() and hasattr(self.parent(), 'combo_header_season'):
+            w_season_id = self.parent().combo_header_season.currentData()
+
+        if "الجائزة الكبرى" in self.draw_name:
+            saved_draw_type = self.draw_name
+        else:
+            saved_draw_type = f"{self.draw_name} - {cat_name}"
+
         new_w = db_mod.Winner(
-            subscriber_number=winner_sub.subscriber_number, 
-            draw_type=f"{self.draw_name} - {cat_name}", 
+            subscriber_number=winner_sub.subscriber_number,
+            draw_type=saved_draw_type,
             draw_date=datetime.datetime.now(),
-            cycle_number=cycle_num
+            cycle_number=cycle_num,
+            season_id=w_season_id
         )
-        self.db.add(new_w); self.db.commit()
-        
-        QTimer.singleShot(4000, self.next_category)
+        self.db.add(new_w)
+        self.db.commit()
+
+        # في حال سحب أكثر من فائز في الجائزة الكبرى، نستبعد الفائز المختار من الجولات التالية في نفس السحب
+        for k_cat, k_list in self.qualified_by_category.items():
+            self.qualified_by_category[k_cat] = [s for s in k_list if s.id != winner_sub.id]
+
+        QTimer.singleShot(3500, self.next_category)
 
     def next_category(self):
         self.current_cat_index += 1

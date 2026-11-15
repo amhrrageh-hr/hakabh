@@ -1517,37 +1517,15 @@ class DrawMixin:
             count_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "grand_prize_winners_count").first()
             num_winners = int(count_setting.value) if count_setting and count_setting.value.isdigit() else 1
             num_winners = min(num_winners, len(qualified_subs))
-            
-            winners = random.sample(qualified_subs, num_winners)
             draw_label = f"الجائزة الكبرى - الفترة {selected_period}" if periods_count > 1 else "الجائزة الكبرى"
-            
-            res_msg = f"مبروك للفائزين في {draw_label}!\n\n"
-            for w in winners:
-                cat_selected = self.category_selected_cycles.get(w.category, "auto")
-                if cat_selected != "auto" and isinstance(cat_selected, int):
-                    cycle_num = cat_selected
-                else:
-                    active_p = self.db.query(db_mod.Payment).filter(
-                        db_mod.Payment.subscriber_id == w.id,
-                        db_mod.Payment.due_date <= datetime.datetime.now()
-                    ).order_by(db_mod.Payment.due_date.desc()).first()
-                    cycle_num = active_p.cycle_number if active_p else 1
 
-                w_season_id = getattr(w, 'season_id', None)
-                if not w_season_id and hasattr(self, 'combo_header_season'):
-                    w_season_id = self.combo_header_season.currentData()
-                new_w = db_mod.Winner(
-                    subscriber_number=w.subscriber_number, 
-                    draw_type=draw_label,
-                    draw_date=datetime.datetime.now(),
-                    cycle_number=cycle_num,
-                    season_id=w_season_id
-                )
-                self.db.add(new_w)
-                res_msg += f"الفئة المالية: {w.category} - رقم المشترك: {w.subscriber_number}\n"
-            
-            self.db.commit()
-            ModernDialog(self, "تم السحب بنجاح", res_msg).exec()
+            if num_winners == 1:
+                grand_groups = {"الجائزة الكبرى": list(qualified_subs)}
+            else:
+                grand_groups = {f"الفائز رقم {i + 1}": list(qualified_subs) for i in range(num_winners)}
+
+            anim_dlg = DrawAnimationDialog(self, grand_groups, draw_label, self.db)
+            anim_dlg.exec()
             self.load_recent_winners()
             self.refresh_draw_stats()
             return
