@@ -188,7 +188,10 @@ class LoadingDialog(QDialog):
         if title:
             self.lbl_title.setText(title)
         self.lbl_message.setText(message)
-        QCoreApplication.processEvents()
+        try:
+            self.card.repaint()
+        except Exception:
+            pass
 
 
 class BatchProgressDialog(LoadingDialog):
@@ -204,7 +207,10 @@ class BatchProgressDialog(LoadingDialog):
         self.progress_bar.setValue(min(self._total, max(0, int(current_step))))
         if message:
             self.lbl_message.setText(message)
-        QCoreApplication.processEvents()
+        try:
+            self.card.repaint()
+        except Exception:
+            pass
 
 
 class LoginDialog(QDialog):
