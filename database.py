@@ -795,7 +795,7 @@ class Subscriber(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
-    phone = Column(String, unique=True, index=True)
+    phone = Column(String, index=True)
     national_id = Column(String, nullable=True)   # رقم الهوية أو البطاقة
     address = Column(String, nullable=True)        # العنوان
     email = Column(String, nullable=True)          # البريد الإلكتروني
