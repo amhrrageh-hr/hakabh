@@ -65,117 +65,479 @@ class GrandPrizePeriodDialog(QDialog):
     def get_selected_period(self):
         return self.combo_period.currentData()
 
+def _read_incentive_max_late(db):
+    """قراءة الحد الأقصى للأقساط المتأخرة المسموح بها في الجائزة التحفيزية من قاعدة البيانات."""
+    try:
+        keys = [
+            "incentive_allow_late_3",
+            "incentive_allow_late_2",
+            "incentive_allow_late_1",
+            "incentive_max_late_installments",
+        ]
+        rows = db.query(db_mod.Setting).filter(db_mod.Setting.key.in_(keys)).all()
+        s_map = {r.key: str(r.value or "").strip() for r in rows}
+        if s_map.get("incentive_allow_late_3") == "1":
+            return 3
+        if s_map.get("incentive_allow_late_2") == "1":
+            return 2
+        if s_map.get("incentive_allow_late_1") == "1":
+            return 1
+        legacy = s_map.get("incentive_max_late_installments", "")
+        if legacy.isdigit():
+            return int(legacy)
+    except Exception:
+        pass
+    return 0
+
+
+def _dedupe_cycle_payments(payments_list):
+    """
+    إزالة أي تكرار لرقم القسط داخل نفس الدورة مع تفضيل السجل المسدد (is_paid=True).
+    كل عنصر في القائمة: (sub_id, cycle_num, inst_num, amount, due_date, paid_date, is_paid)
+    """
+    if not payments_list:
+        return []
+    by_inst = {}
+    fallback_idx = 10000
+    for p in payments_list:
+        inst_num = p[2]
+        if inst_num is None or inst_num <= 0:
+            fallback_idx += 1
+            key = fallback_idx
+        else:
+            key = int(inst_num)
+        existing = by_inst.get(key)
+        if existing is None:
+            by_inst[key] = p
+        else:
+            # تفضيل القسط المسدد على المكرر غير المسدد
+            if bool(p[6]) and not bool(existing[6]):
+                by_inst[key] = p
+            elif bool(p[6]) == bool(existing[6]):
+                if p[5] and (not existing[5] or p[5] < existing[5]):
+                    by_inst[key] = p
+    return [by_inst[k] for k in sorted(by_inst.keys())]
+
+
+def _natural_sub_sort_key(sub_num):
+    """ترتيب أرقام المشتركين طبيعياً (مثل A-1, A-2, A-10 بدلاً من الترتيب النصي)."""
+    s = str(sub_num or "").strip()
+    if "-" in s:
+        parts = s.split("-", 1)
+        prefix = parts[0].strip()
+        num_str = "".join(ch for ch in parts[1] if ch.isdigit())
+        if num_str.isdigit():
+            return (prefix, int(num_str), s)
+    num_only = "".join(ch for ch in s if ch.isdigit())
+    if num_only.isdigit():
+        return ("", int(num_only), s)
+    return (s, 0, s)
+
+
+def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
+    """
+    حساب إحصائيات وأهلية السحب وتفاصيل تقارير ما قبل القرعة لجميع الفئات بسرعة فائقة (~15ms) وبدقة كاملة:
+    - يحدد تلقائياً آخر دورة مكتملة الجدول (أو التي أتمها المشتركون) لكل فئة بدلاً من الدورات التي بدأت للتو بقسط أو قسطين،
+      ويتجاهل القيم الشاذة الفردية عند حساب الدورة التلقائية للفئة.
+    - عند اختيار دورة محددة يدوياً من القائمة، يقيّم المشتركين بناءً على سدادهم والتزامهم داخل تلك الدورة تحديداً.
+    - يجهز لكل فئة قوائم تفصيلية بـ:
+      1) أرقام المؤهلين في هذه الدورة
+      2) أرقام الذين قد فازوا في الدورات السابقة (مع رقم الدورة التي فازوا فيها)
+      3) أرقام الذين خرجوا من القرعة في هذه الدورة (مع سبب الخروج)
+    """
+    selected_cycles = dict(selected_cycles or {})
+    today = datetime.datetime.now()
+    today_date = today.date()
+
+    q_cat = db.query(db_mod.Category)
+    if season_id and season_id != -1:
+        q_cat = q_cat.filter(db_mod.Category.season_id == season_id)
+    categories = q_cat.order_by(db_mod.Category.id.asc()).all()
+    if not categories:
+        categories = db.query(db_mod.Category).order_by(db_mod.Category.id.asc()).all()
+
+    all_subs_every_status = db.query(db_mod.Subscriber).all()
+    all_accepted = [s for s in all_subs_every_status if s.status == "accepted"]
+    fin_status_map = db_mod.calculate_financial_status_batch(all_accepted, db) if all_accepted else {}
+
+    subs_by_cat = {}
+    all_subs_by_cat = {}
+    for s in all_subs_every_status:
+        all_subs_by_cat.setdefault(s.category, []).append(s)
+        if s.status == "accepted":
+            subs_by_cat.setdefault(s.category, []).append(s)
+
+    for c_key in all_subs_by_cat:
+        all_subs_by_cat[c_key].sort(key=lambda x: _natural_sub_sort_key(x.subscriber_number))
+    for c_key in subs_by_cat:
+        subs_by_cat[c_key].sort(key=lambda x: _natural_sub_sort_key(x.subscriber_number))
+
+    all_sub_ids = [s.id for s in all_subs_every_status]
+    raw_payments = (
+        db.query(
+            db_mod.Payment.subscriber_id,
+            db_mod.Payment.cycle_number,
+            db_mod.Payment.installment_number,
+            db_mod.Payment.amount,
+            db_mod.Payment.due_date,
+            db_mod.Payment.paid_date,
+            db_mod.Payment.is_paid,
+        )
+        .filter(db_mod.Payment.subscriber_id.in_(all_sub_ids))
+        .all()
+        if all_sub_ids
+        else []
+    )
+
+    # تجميع المدفوعات حسب (المشترك -> الدورة -> قائمة الأقساط المنظفة)
+    sub_cycle_payments = {}
+    for p in raw_payments:
+        sid = p[0]
+        c_num = p[1] or 1
+        sub_cycle_payments.setdefault(sid, {}).setdefault(c_num, []).append(p)
+
+    for sid, c_map in sub_cycle_payments.items():
+        for c_num, plist in list(c_map.items()):
+            c_map[c_num] = _dedupe_cycle_payments(plist)
+
+    max_late_allowed = _read_incentive_max_late(db)
+
+    all_winners_rows = db.query(
+        db_mod.Winner.subscriber_number,
+        db_mod.Winner.draw_type,
+        db_mod.Winner.cycle_number,
+        db_mod.Winner.draw_date,
+    ).order_by(db_mod.Winner.draw_date.asc()).all()
+
+    weekly_won_subs = set()
+    weekly_winners_info = {}     # sub_num -> list of cycle_number
+    incentive_winners_info = {}  # sub_num -> list of cycle_number
+    grand_winners_info = {}      # sub_num -> list of cycle_number
+
+    for w_num, w_type, w_cycle, _ in all_winners_rows:
+        if not w_num:
+            continue
+        w_t = str(w_type or "")
+        if "الاسبوعية" in w_t or "الأسبوعية" in w_t:
+            weekly_won_subs.add(w_num)
+            weekly_winners_info.setdefault(w_num, []).append(w_cycle)
+        elif "التحفيزية" in w_t or "تحفيزية" in w_t:
+            incentive_winners_info.setdefault(w_num, []).append(w_cycle)
+        elif "الكبرى" in w_t:
+            grand_winners_info.setdefault(w_num, []).append(w_cycle)
+
+    def _format_won_cycles(cycles_list):
+        if not cycles_list:
+            return "دورة سابقة"
+        valid_c = [str(c) for c in cycles_list if c is not None]
+        if valid_c:
+            return "دورة " + "، ".join(valid_c)
+        return "دورة سابقة"
+
+    analytics = {}
+    for cat in categories:
+        cat_subs = subs_by_cat.get(cat.name, [])
+        cat_all_subs = all_subs_by_cat.get(cat.name, [])
+        max_inst = max(1, int(cat.max_installments or 1))
+        expected_amount = float(cat.amount or 0.0) * max_inst
+
+        total_subs_count = len(cat_subs)
+        committed_now_count = 0
+        late_now_count = 0
+        for s in cat_subs:
+            if fin_status_map.get(s.id) in ("late", "suspended"):
+                late_now_count += 1
+            else:
+                committed_now_count += 1
+
+        # تحديد أقصى دورة مولّدة وأفضل دورة مكتملة الأقساط تلقائياً للفئة
+        sub_full_due_cycles = []
+        sub_latest_due_cycles = []
+        sub_last_paid_full_cycles = []
+        max_cycle_seen = int(cat.max_cycles or 1)
+
+        for s in cat_subs:
+            c_map = sub_cycle_payments.get(s.id, {})
+            if not c_map:
+                continue
+            s_max_c = max(c_map.keys())
+            if s_max_c > max_cycle_seen:
+                max_cycle_seen = s_max_c
+
+            best_full_due = 0
+            best_any_due = 0
+            best_full_paid = 0
+            for c_num, plist in c_map.items():
+                due_le_today = [p for p in plist if p[4] and p[4].date() <= today_date]
+                paid_in_c = [p for p in plist if p[6]]
+                if due_le_today:
+                    if c_num > best_any_due:
+                        best_any_due = c_num
+                    if len(due_le_today) >= max_inst and c_num > best_full_due:
+                        best_full_due = c_num
+                if len(paid_in_c) >= max_inst and c_num > best_full_paid:
+                    best_full_paid = c_num
+
+            if best_full_due > 0:
+                sub_full_due_cycles.append(best_full_due)
+            if best_any_due > 0:
+                sub_latest_due_cycles.append(best_any_due)
+            if best_full_paid > 0:
+                sub_last_paid_full_cycles.append(best_full_paid)
+
+        if sub_full_due_cycles:
+            freq = {}
+            for c_val in sub_full_due_cycles:
+                freq[c_val] = freq.get(c_val, 0) + 1
+            auto_completed_cycle = max(freq.keys(), key=lambda k: (freq[k], k))
+        elif sub_latest_due_cycles:
+            freq = {}
+            for c_val in sub_latest_due_cycles:
+                freq[c_val] = freq.get(c_val, 0) + 1
+            auto_completed_cycle = max(freq.keys(), key=lambda k: (freq[k], k))
+        else:
+            auto_completed_cycle = 1
+
+        if sub_latest_due_cycles:
+            freq_cur = {}
+            for c_val in sub_latest_due_cycles:
+                freq_cur[c_val] = freq_cur.get(c_val, 0) + 1
+            current_running_cycle = max(freq_cur.keys(), key=lambda k: (freq_cur[k], k))
+        else:
+            current_running_cycle = auto_completed_cycle
+
+        if sub_last_paid_full_cycles:
+            freq_paid = {}
+            for c_val in sub_last_paid_full_cycles:
+                freq_paid[c_val] = freq_paid.get(c_val, 0) + 1
+            last_group_paid_cycle = max(freq_paid.keys(), key=lambda k: (freq_paid[k], k))
+        else:
+            last_group_paid_cycle = auto_completed_cycle
+
+        sel_c = selected_cycles.get(cat.name, "auto")
+        is_manual_cycle = (sel_c != "auto" and isinstance(sel_c, int))
+        target_cycle = int(sel_c) if is_manual_cycle else auto_completed_cycle
+
+        completed_total = 0
+        weekly_eligible = 0
+        incentive_count = 0
+        weekly_qualified_ids = []
+        incentive_qualified_ids = []
+
+        weekly_qualified_entries = []
+        weekly_previous_winners_entries = []
+        weekly_excluded_entries = []
+
+        incentive_qualified_entries = []
+        incentive_previous_winners_entries = []
+        incentive_excluded_entries = []
+
+        running_due_inst_count = 0
+        for s in cat_subs:
+            r_plist = sub_cycle_payments.get(s.id, {}).get(current_running_cycle, [])
+            if r_plist:
+                running_due_inst_count = max(
+                    running_due_inst_count,
+                    sum(1 for p in r_plist if p[4] and p[4].date() <= today_date),
+                )
+
+        for s in cat_all_subs:
+            s_num = s.subscriber_number or f"#{s.id}"
+            s_name = s.name or "-"
+            c_map = sub_cycle_payments.get(s.id, {})
+            s_payments = c_map.get(target_cycle, [])
+            if not s_payments and not is_manual_cycle and c_map:
+                s_payments = c_map.get(max(c_map.keys(), default=1), [])
+
+            paid_rows = [p for p in s_payments if p[6]]
+            paid_count = len(paid_rows)
+            total_paid = sum(float(p[3] or 0.0) for p in paid_rows)
+
+            # إذا كان قد فاز سابقاً في القرعة الأسبوعية، يُسجّل في قائمة الفائزين بالدورات السابقة
+            if s_num in weekly_won_subs:
+                weekly_previous_winners_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "won_cycle": _format_won_cycles(weekly_winners_info.get(s_num, [])),
+                })
+
+            if s_num in incentive_winners_info:
+                incentive_previous_winners_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "won_cycle": _format_won_cycles(incentive_winners_info.get(s_num, [])),
+                })
+
+            # التحقق من حالة المشترك الإدارية والمالية
+            if s.status != "accepted":
+                reason_admin = "مستبعد إدارياً" if s.status == "excluded" else "طلب اشتراك معلق"
+                if s_num not in weekly_won_subs:
+                    weekly_excluded_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "reason": reason_admin,
+                    })
+                incentive_excluded_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "reason": reason_admin,
+                })
+                continue
+
+            fin_st = fin_status_map.get(s.id, "committed")
+            if not is_manual_cycle and fin_st in ("late", "suspended"):
+                st_label = "موقوف" if fin_st == "suspended" else "متأخر"
+                reason_fin = f"{st_label} (سدد {paid_count}/{max_inst} في الدورة {target_cycle})"
+                if s_num not in weekly_won_subs:
+                    weekly_excluded_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "reason": reason_fin,
+                    })
+                incentive_excluded_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "reason": reason_fin,
+                })
+                continue
+
+            if not s_payments:
+                reason_no_p = f"لا توجد أقساط مسجلة في الدورة {target_cycle}"
+                if s_num not in weekly_won_subs:
+                    weekly_excluded_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "reason": reason_no_p,
+                    })
+                incentive_excluded_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "reason": reason_no_p,
+                })
+                continue
+
+            is_finished = (total_paid >= expected_amount - 0.01) and (paid_count >= max_inst)
+            last_due_dt = s_payments[-1][4] if s_payments else today
+            is_date_reached = (today >= last_due_dt) if (last_due_dt and not is_manual_cycle) else True
+
+            has_paid_something = paid_count > 0
+            late_count = 0
+            for p in s_payments:
+                p_due = p[4].date() if p[4] else None
+                p_paid = p[5].date() if p[5] else None
+                is_p = bool(p[6])
+                if p_due is None:
+                    continue
+                if p_due <= today_date or is_manual_cycle:
+                    if not is_p:
+                        late_count += 1
+                    else:
+                        if p_paid and p_paid > p_due:
+                            late_count += 1
+                else:
+                    if is_p and p_paid and p_paid > p_due:
+                        late_count += 1
+
+            is_inc = has_paid_something and (late_count <= max_late_allowed)
+
+            if is_finished and is_date_reached:
+                completed_total += 1
+                if s_num not in weekly_won_subs:
+                    weekly_eligible += 1
+                    weekly_qualified_ids.append(s.id)
+                    weekly_qualified_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "paid_count": paid_count,
+                        "max_inst": max_inst,
+                    })
+            else:
+                if s_num not in weekly_won_subs:
+                    weekly_excluded_entries.append({
+                        "id": s.id,
+                        "number": s_num,
+                        "name": s_name,
+                        "reason": f"لم يُتم أقساط الدورة {target_cycle} (سدد {paid_count}/{max_inst})",
+                    })
+
+            if is_inc:
+                incentive_count += 1
+                incentive_qualified_ids.append(s.id)
+                incentive_qualified_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "paid_count": paid_count,
+                    "max_inst": max_inst,
+                })
+            else:
+                inc_reason = (
+                    f"لم يسدد أي قسط في الدورة {target_cycle}"
+                    if not has_paid_something
+                    else f"تأخر في {late_count} أقساط بالدورة {target_cycle}"
+                )
+                incentive_excluded_entries.append({
+                    "id": s.id,
+                    "number": s_num,
+                    "name": s_name,
+                    "reason": inc_reason,
+                })
+
+        analytics[cat.name] = {
+            "category_name": cat.name,
+            "target_cycle": target_cycle,
+            "auto_cycle": auto_completed_cycle,
+            "current_running_cycle": current_running_cycle,
+            "running_due_inst_count": running_due_inst_count,
+            "max_installments": max_inst,
+            "last_group_paid_cycle": last_group_paid_cycle,
+            "total_cycles": max(max_cycle_seen, auto_completed_cycle, current_running_cycle),
+            "total_subs": total_subs_count,
+            "committed_now": committed_now_count,
+            "late_now": late_now_count,
+            "completed_total": completed_total,
+            "weekly_eligible": weekly_eligible,
+            "incentive_count": incentive_count,
+            "weekly_qualified_ids": weekly_qualified_ids,
+            "incentive_qualified_ids": incentive_qualified_ids,
+            "weekly_qualified_entries": weekly_qualified_entries,
+            "weekly_previous_winners_entries": weekly_previous_winners_entries,
+            "weekly_excluded_entries": weekly_excluded_entries,
+            "incentive_qualified_entries": incentive_qualified_entries,
+            "incentive_previous_winners_entries": incentive_previous_winners_entries,
+            "incentive_excluded_entries": incentive_excluded_entries,
+            "is_manual_cycle": is_manual_cycle,
+        }
+
+    return analytics
+
+
 class DrawStatsLoader(QThread):
     stats_loaded = pyqtSignal(dict)
 
-    def __init__(self, selected_cycles):
+    def __init__(self, selected_cycles, season_id=None):
         super().__init__()
         self.selected_cycles = dict(selected_cycles or {})
+        self.season_id = season_id
 
     def run(self):
-        try:
-            from api_client import get_api_client
-            client = get_api_client()
-            res = client.get_draw_stats()
-            stats = {c["category_name"]: (c["completed_cycle_count"], c["incentive_count"]) for c in res.get("categories", [])}
-            if stats:
-                self.stats_loaded.emit(stats)
-                return
-        except Exception:
-            pass
-
         bg_db = db_mod.SessionLocal()
         try:
-            today = datetime.datetime.now()
-            today_date = today.date()
-            categories = bg_db.query(db_mod.Category).all()
-            all_accepted = bg_db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == 'accepted').all()
-            fin_status_map = db_mod.calculate_financial_status_batch(all_accepted, bg_db)
-            disciplined_by_cat = {}
-            for s in all_accepted:
-                if fin_status_map.get(s.id) not in ['late', 'suspended']:
-                    disciplined_by_cat.setdefault(s.category, []).append(s)
-
-            sub_ids = [s.id for subs in disciplined_by_cat.values() for s in subs]
-            active_cycles = dict(
-                bg_db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
-                .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
-                .group_by(db_mod.Payment.subscriber_id)
-                .all()
-            ) if sub_ids else {}
-
-            needed_sub_cycles = {}
-            for cat in categories:
-                sel_c = self.selected_cycles.get(cat.name, 'auto')
-                for s in disciplined_by_cat.get(cat.name, []):
-                    if sel_c != 'auto' and isinstance(sel_c, int):
-                        needed_sub_cycles[s.id] = sel_c
-                    else:
-                        needed_sub_cycles[s.id] = active_cycles.get(s.id, 1)
-
-            needed_cycles_set = set(needed_sub_cycles.values()) if needed_sub_cycles else {1}
-            payments_data = bg_db.query(
-                db_mod.Payment.subscriber_id,
-                db_mod.Payment.cycle_number,
-                db_mod.Payment.amount,
-                db_mod.Payment.due_date,
-                db_mod.Payment.paid_date,
-                db_mod.Payment.is_paid
-            ).filter(
-                db_mod.Payment.subscriber_id.in_(sub_ids),
-                db_mod.Payment.cycle_number.in_(needed_cycles_set)
-            ).all() if sub_ids else []
-
-            payments_by_sub = {}
-            for p in payments_data:
-                if p[1] == needed_sub_cycles.get(p[0]):
-                    payments_by_sub.setdefault(p[0], []).append(p)
-
-            setting_inc = bg_db.query(db_mod.Setting).filter(db_mod.Setting.key == 'incentive_max_late_installments').first()
-            max_late_allowed = int(setting_inc.value) if (setting_inc and setting_inc.value and str(setting_inc.value).isdigit()) else 1
-
-            weekly_won_subs = {
-                w[0] for w in bg_db.query(db_mod.Winner.subscriber_number).filter(
-                    (db_mod.Winner.draw_type.contains("الاسبوعية") | db_mod.Winner.draw_type.contains("الأسبوعية"))
-                ).all() if w[0]
-            }
-
-            cat_stats = {}
-            for cat in categories:
-                subs = disciplined_by_cat.get(cat.name, [])
-                max_inst = cat.max_installments or 0
-                total_expected = (cat.amount * max_inst)
-                completed = 0
-                incentive = 0
-                for s in subs:
-                    s_payments = payments_by_sub.get(s.id, [])
-                    if not s_payments: continue
-                    total_paid = sum(p[2] for p in s_payments if p[5])
-                    is_finished = (total_paid >= total_expected - 0.01) and all(p[5] for p in s_payments)
-                    is_inc = True
-                    has_paid = False
-                    late_count = 0
-                    for p in s_payments:
-                        if not p[3]: continue
-                        p_due = p[3].date()
-                        is_p = p[5]
-                        p_paid = p[4].date() if p[4] else None
-                        if p_due <= today_date:
-                            if not is_p: late_count += 1
-                            else:
-                                has_paid = True
-                                if p_paid and p_paid > p_due: late_count += 1
-                        else:
-                            if is_p:
-                                has_paid = True
-                                if p_paid and p_paid > p_due: late_count += 1
-                    if late_count > max_late_allowed:
-                        is_inc = False
-                    if is_finished and (s.subscriber_number not in weekly_won_subs): completed += 1
-                    if is_inc and has_paid: incentive += 1
-                cat_stats[cat.name] = (completed, incentive)
-
-            self.stats_loaded.emit(cat_stats)
+            analytics = compute_category_draw_analytics(
+                bg_db,
+                selected_cycles=self.selected_cycles,
+                season_id=self.season_id,
+            )
+            self.stats_loaded.emit(analytics)
         except Exception as e:
             print("Error in DrawStatsLoader:", e)
         finally:
@@ -183,174 +545,117 @@ class DrawStatsLoader(QThread):
 
 
 class DrawQualificationWorker(QThread):
-    finished = pyqtSignal(dict, list, int) # (qualified_by_category, qualified_ids, disqualified_count)
+    finished = pyqtSignal(dict, list, int)  # (qualified_by_category, qualified_ids, disqualified_count)
     error = pyqtSignal(str)
 
-    def __init__(self, draw_name, category_selected_cycles, selected_period=1, periods_count=1, weeks_per_period=12):
+    def __init__(self, draw_name, category_selected_cycles, selected_period=1, periods_count=1, weeks_per_period=12, season_id=None):
         super().__init__()
         self.draw_name = draw_name
         self.category_selected_cycles = dict(category_selected_cycles or {})
         self.selected_period = selected_period
         self.periods_count = periods_count
         self.weeks_per_period = weeks_per_period
+        self.season_id = season_id
 
     def run(self):
         bg_db = db_mod.SessionLocal()
         try:
-            today = datetime.datetime.now()
-            today_date = today.date()
+            analytics = compute_category_draw_analytics(
+                bg_db,
+                selected_cycles=self.category_selected_cycles,
+                season_id=self.season_id,
+            )
+            self.analytics = analytics
 
-            # 1. Get accepted subscribers
+            disqualified_count = sum(info.get("late_now", 0) for info in analytics.values())
+            qualified_by_category = {}
+            qualified_ids = []
+
+            if "الاسبوعية" in self.draw_name or "الأسبوعية" in self.draw_name:
+                for cat_name, info in analytics.items():
+                    q_ids = info.get("weekly_qualified_ids", [])
+                    qualified_by_category[cat_name] = list(q_ids)
+                    qualified_ids.extend(q_ids)
+                self.finished.emit(qualified_by_category, qualified_ids, disqualified_count)
+                return
+
+            if self.draw_name == "الجائزة التحفيزية":
+                for cat_name, info in analytics.items():
+                    q_ids = info.get("incentive_qualified_ids", [])
+                    qualified_by_category[cat_name] = list(q_ids)
+                    qualified_ids.extend(q_ids)
+                self.finished.emit(qualified_by_category, qualified_ids, disqualified_count)
+                return
+
+            # الجائزة الكبرى
+            today = datetime.datetime.now()
             all_subs = bg_db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
             if not all_subs:
                 self.finished.emit({}, [], 0)
                 return
 
             fin_status_map = db_mod.calculate_financial_status_batch(all_subs, bg_db)
-            cats_map = {c.name: c for c in bg_db.query(db_mod.Category).all()}
-
-            disciplined_subs = []
-            disqualified_count = 0
-            for s in all_subs:
-                fin_status = fin_status_map.get(s.id)
-                if fin_status in ["late", "suspended"]:
-                    disqualified_count += 1
-                else:
-                    disciplined_subs.append(s)
-
-            if not disciplined_subs:
-                self.finished.emit({}, [], disqualified_count)
-                return
-
-            sub_ids = [s.id for s in disciplined_subs]
-
-            # 2. Fast fetch of active cycles
-            active_cycles = dict(
-                bg_db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
-                .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
-                .group_by(db_mod.Payment.subscriber_id)
-                .all()
-            ) if sub_ids else {}
-
-            needed_sub_cycles = {}
-            for sub in disciplined_subs:
-                cat_selected = self.category_selected_cycles.get(sub.category, "auto")
-                if cat_selected != "auto" and isinstance(cat_selected, int):
-                    sub_current_cycle = cat_selected
-                else:
-                    sub_current_cycle = active_cycles.get(sub.id, 1)
-                needed_sub_cycles[sub.id] = sub_current_cycle
-
-            needed_cycles_set = set(needed_sub_cycles.values()) if needed_sub_cycles else {1}
-
-            # 3. Fast column tuple query - bypasses heavy ORM model instantiation
-            raw_payments_data = bg_db.query(
-                db_mod.Payment.subscriber_id,
-                db_mod.Payment.cycle_number,
-                db_mod.Payment.installment_number,
-                db_mod.Payment.amount,
-                db_mod.Payment.due_date,
-                db_mod.Payment.paid_date,
-                db_mod.Payment.is_paid
-            ).filter(
-                db_mod.Payment.subscriber_id.in_(sub_ids),
-                db_mod.Payment.cycle_number.in_(needed_cycles_set)
-            ).order_by(db_mod.Payment.installment_number.asc()).all() if sub_ids else []
-
-            payments_by_sub = {}
-            for p in raw_payments_data:
-                # p[0]=sub_id, p[1]=cycle_number, p[2]=installment_number, p[3]=amount, p[4]=due_date, p[5]=paid_date, p[6]=is_paid
-                if p[1] == needed_sub_cycles.get(p[0]):
-                    payments_by_sub.setdefault(p[0], []).append(p)
-
-            setting_inc = bg_db.query(db_mod.Setting).filter(db_mod.Setting.key == 'incentive_max_late_installments').first()
-            max_late_allowed = int(setting_inc.value) if (setting_inc and setting_inc.value and str(setting_inc.value).isdigit()) else 1
-
-            weekly_winners_sub_numbers = {
-                w[0] for w in bg_db.query(db_mod.Winner.subscriber_number).filter(
-                    (db_mod.Winner.draw_type.contains("الاسبوعية") | db_mod.Winner.draw_type.contains("الأسبوعية"))
-                ).all() if w[0]
-            }
-
             grand_prize_won_numbers = set()
-            if self.draw_name == "الجائزة الكبرى" and self.periods_count > 1:
+            if self.periods_count > 1:
                 grand_prize_won_numbers = {
-                    w[0] for w in bg_db.query(db_mod.Winner.subscriber_number).filter(
+                    w[0]
+                    for w in bg_db.query(db_mod.Winner.subscriber_number)
+                    .filter(
                         db_mod.Winner.draw_type.contains("الجائزة الكبرى"),
-                        db_mod.Winner.draw_type.contains(f"الفترة {self.selected_period}")
-                    ).all() if w[0]
+                        db_mod.Winner.draw_type.contains(f"الفترة {self.selected_period}"),
+                    )
+                    .all()
+                    if w[0]
                 }
 
-            qualified_by_category = {}
-            qualified_ids = []
+            for cat_name, info in analytics.items():
+                if self.periods_count <= 1:
+                    # إذا كانت الجائزة الكبرى فترة واحدة، نعتمد من أتموا الدورة
+                    q_ids = info.get("weekly_qualified_ids", [])
+                    if q_ids:
+                        qualified_by_category[cat_name] = list(q_ids)
+                        qualified_ids.extend(q_ids)
 
-            for sub in disciplined_subs:
-                payments = payments_by_sub.get(sub.id, [])
-                if not payments:
-                    continue
+            if self.periods_count > 1:
+                req_weeks = self.selected_period * self.weeks_per_period
+                disciplined_subs = [
+                    s for s in all_subs
+                    if fin_status_map.get(s.id) not in ("late", "suspended")
+                    and s.subscriber_number not in grand_prize_won_numbers
+                ]
+                sub_ids = [s.id for s in disciplined_subs]
+                raw_p = (
+                    bg_db.query(
+                        db_mod.Payment.subscriber_id,
+                        db_mod.Payment.cycle_number,
+                        db_mod.Payment.installment_number,
+                        db_mod.Payment.amount,
+                        db_mod.Payment.due_date,
+                        db_mod.Payment.paid_date,
+                        db_mod.Payment.is_paid,
+                    )
+                    .filter(db_mod.Payment.subscriber_id.in_(sub_ids))
+                    .all()
+                    if sub_ids
+                    else []
+                )
+                p_by_sub_cycle = {}
+                for p in raw_p:
+                    p_by_sub_cycle.setdefault(p[0], {}).setdefault(p[1] or 1, []).append(p)
 
-                cat = cats_map.get(sub.category)
-                max_inst = cat.max_installments if cat else 0
-                total_expected_for_cycle = (cat.amount * max_inst) if cat else 0
-                total_paid_in_cycle = sum(p[3] for p in payments if p[6])
-
-                is_cycle_finished = (total_paid_in_cycle >= total_expected_for_cycle - 0.01) and all(p[6] for p in payments)
-                last_payment_date = payments[-1][4] if payments else today
-                is_date_reached = today >= last_payment_date if last_payment_date else True
-
-                is_incentive = True
-                has_paid_something = False
-                late_count = 0
-
-                for p in payments:
-                    p_due = p[4]
-                    p_paid = p[5]
-                    p_is_paid = p[6]
-                    if p_due and p_due.date() <= today_date:
-                        if not p_is_paid:
-                            late_count += 1
-                        else:
-                            has_paid_something = True
-                            if p_paid and p_paid.date() > p_due.date():
-                                late_count += 1
-                    else:
-                        if p_is_paid:
-                            has_paid_something = True
-                            if p_paid and p_due and p_paid.date() > p_due.date():
-                                late_count += 1
-
-                if late_count > max_late_allowed:
-                    is_incentive = False
-
-                if "الاسبوعية" in self.draw_name or "الأسبوعية" in self.draw_name:
-                    if sub.subscriber_number in weekly_winners_sub_numbers:
+                for s in disciplined_subs:
+                    info = analytics.get(s.category, {})
+                    t_cycle = info.get("target_cycle", 1)
+                    plist = _dedupe_cycle_payments(p_by_sub_cycle.get(s.id, {}).get(t_cycle, []))
+                    period_payments = [p for p in plist if (p[2] or 0) <= req_weeks]
+                    if not period_payments:
                         continue
-                    if is_cycle_finished and is_date_reached:
-                        qualified_ids.append(sub.id)
-                        qualified_by_category.setdefault(sub.category, []).append(sub.id)
-                elif self.draw_name == "الجائزة التحفيزية":
-                    if is_incentive and has_paid_something:
-                        qualified_ids.append(sub.id)
-                        qualified_by_category.setdefault(sub.category, []).append(sub.id)
-                else:
-                    # الجائزة الكبرى
-                    if self.periods_count > 1:
-                        if sub.subscriber_number in grand_prize_won_numbers:
-                            continue
-                        req_weeks = self.selected_period * self.weeks_per_period
-                        period_payments = [p for p in payments if (p[2] or 0) <= req_weeks]
-                        if not period_payments:
-                            continue
-                        is_period_paid = all(p[6] for p in period_payments)
-                        last_period_date = period_payments[-1][4] if period_payments else today
-                        is_period_date_reached = today >= last_period_date if last_period_date else True
-                        if is_period_paid and is_period_date_reached:
-                            qualified_ids.append(sub.id)
-                            qualified_by_category.setdefault(sub.category, []).append(sub.id)
-                    else:
-                        if is_cycle_finished and is_date_reached:
-                            qualified_ids.append(sub.id)
-                            qualified_by_category.setdefault(sub.category, []).append(sub.id)
+                    is_period_paid = all(p[6] for p in period_payments)
+                    last_period_date = period_payments[-1][4] if period_payments else today
+                    is_period_date_reached = (today >= last_period_date) if last_period_date else True
+                    if is_period_paid and is_period_date_reached:
+                        qualified_ids.append(s.id)
+                        qualified_by_category.setdefault(s.category, []).append(s.id)
 
             self.finished.emit(qualified_by_category, qualified_ids, disqualified_count)
         except Exception as e:
@@ -373,16 +678,15 @@ class DrawMixin:
         self.refresh_draw_stats()
         current_idx = self.draw_tabs.currentIndex()
         if current_idx == 1:
-            self.load_draw_excluded()
-        elif current_idx == 2:
             self.load_recent_winners()
-
+        elif current_idx == 2:
+            self.load_draw_excluded()
 
     def _on_draw_tab_changed(self, idx):
         if idx == 1:
-            self.load_draw_excluded()
-        elif idx == 2:
             self.load_recent_winners()
+        elif idx == 2:
+            self.load_draw_excluded()
     def init_draw_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -656,6 +960,108 @@ class DrawMixin:
         set_lay.addWidget(btn_save)
         
         lay3.addWidget(settings_frame)
+
+        # --- Wheel Central Golden Hub Settings (إعدادات القرص المركزي الذهبي لعجلة القرعة) ---
+        hub_frame = QFrame(); hub_frame.setObjectName("StatCard")
+        hub_lay = QVBoxLayout(hub_frame); hub_lay.setContentsMargins(20, 20, 20, 20); hub_lay.setSpacing(15)
+
+        hub_title_color = "color: #eab308;" if is_dark else "color: #a16207;"
+        hub_title = QLabel("🎡  إعدادات القرص الذهبي المركزي لعجلة القرعة (الشعار والنصوص)")
+        hub_title.setObjectName("SectionTitle")
+        hub_title.setStyleSheet(f"font-size: 16px; font-weight: bold; {hub_title_color}")
+        hub_lay.addWidget(hub_title)
+
+        hub_desc = QLabel(
+            "تحكم بمحتوى القرص الذهبي الموجود في منتصف عجلة القرعة: يمكنك عرض الشعار الذهبي النصي الافتراضي، "
+            "أو وضع شعار الشركة مع نص أسفله، أو جعل شعار الشركة يملأ القرص الذهبي بالكامل."
+        )
+        hub_desc.setWordWrap(True)
+        hub_desc.setStyleSheet(f"font-size: 12px; {lbl_muted}")
+        hub_lay.addWidget(hub_desc)
+
+        hub_content_row = QHBoxLayout()
+        hub_content_row.setSpacing(20)
+
+        # Left/Right: Form controls
+        hub_form = QFormLayout()
+        hub_form.setSpacing(12)
+
+        self.combo_wheel_hub_mode = QComboBox()
+        self.combo_wheel_hub_mode.setFixedHeight(38)
+        self.combo_wheel_hub_mode.addItem("✨ شعار نصي ذهبي (الرمز M + العنوان + النص الفرعي)", "text")
+        self.combo_wheel_hub_mode.addItem("🏢 شعار الشركة (صورة الشعار في الأعلى + نص أسفله)", "logo_with_text")
+        self.combo_wheel_hub_mode.addItem("🌕 شعار الشركة ملء القرص الذهبي بالكامل", "logo_full")
+        self.combo_wheel_hub_mode.currentIndexChanged.connect(self._on_wheel_hub_mode_changed)
+
+        self.ent_wheel_hub_symbol = QLineEdit("M")
+        self.ent_wheel_hub_symbol.setPlaceholderText("مثال: M")
+        self.ent_wheel_hub_symbol.setMaxLength(6)
+
+        self.ent_wheel_hub_title = QLineEdit("MILLION")
+        self.ent_wheel_hub_title.setPlaceholderText("مثال: MILLION")
+
+        self.ent_wheel_hub_subtitle = QLineEdit("هكبة المليون الأسبوعية")
+        self.ent_wheel_hub_subtitle.setPlaceholderText("مثال: هكبة المليون الأسبوعية")
+
+        hub_form.addRow("نمط عرض القرص المركزي:", self.combo_wheel_hub_mode)
+        hub_form.addRow("الرمز الذهبي العلوي:", self.ent_wheel_hub_symbol)
+        hub_form.addRow("العنوان الذهبي الرئيسي:", self.ent_wheel_hub_title)
+        hub_form.addRow("النص الفرعي أسفل القرص:", self.ent_wheel_hub_subtitle)
+
+        hub_content_row.addLayout(hub_form, 2)
+
+        # Logo preview & picker buttons
+        logo_side_lay = QVBoxLayout()
+        logo_side_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_side_lay.setSpacing(8)
+
+        self.lbl_wheel_hub_logo_preview = QLabel("الشعار النصي\nالافتراضي (M)")
+        self.lbl_wheel_hub_logo_preview.setFixedSize(130, 130)
+        self.lbl_wheel_hub_logo_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_wheel_hub_logo_preview.setStyleSheet(
+            "border: 3px solid #eab308; border-radius: 65px; background: #1e293b; color: #fde047; font-size: 12px; font-weight: bold;"
+        )
+        logo_side_lay.addWidget(self.lbl_wheel_hub_logo_preview, 0, Qt.AlignmentFlag.AlignCenter)
+
+        btn_pick_hub_logo = QPushButton("📁 اختيار صورة شعار للقرص...")
+        btn_pick_hub_logo.setObjectName("PrimaryBtn")
+        btn_pick_hub_logo.clicked.connect(self.select_wheel_hub_logo)
+        logo_side_lay.addWidget(btn_pick_hub_logo)
+
+        btn_use_comp_logo = QPushButton("🏢 استخدام شعار الشركة العام")
+        btn_use_comp_logo.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 6px 12px; border-radius: 6px;")
+        btn_use_comp_logo.clicked.connect(self.use_company_logo_for_wheel_hub)
+        logo_side_lay.addWidget(btn_use_comp_logo)
+
+        btn_clear_hub_logo = QPushButton("🔄 استعادة الشعار الذهبي الافتراضي")
+        btn_clear_hub_logo.setStyleSheet("background-color: #475569; color: white; padding: 5px 10px; border-radius: 6px;")
+        btn_clear_hub_logo.clicked.connect(self.reset_wheel_hub_defaults)
+        logo_side_lay.addWidget(btn_clear_hub_logo)
+
+        hub_content_row.addLayout(logo_side_lay, 1)
+        hub_lay.addLayout(hub_content_row)
+
+        hub_actions_row = QHBoxLayout()
+        hub_actions_row.setSpacing(12)
+
+        btn_save_hub = QPushButton("💾 حفظ إعدادات القرص المركزي")
+        btn_save_hub.setObjectName("PrimaryBtn")
+        btn_save_hub.setFixedHeight(42)
+        btn_save_hub.clicked.connect(self.save_wheel_hub_settings)
+
+        btn_preview_wheel = QPushButton("🎡 معاينة وتجربة العجلة الآن")
+        btn_preview_wheel.setStyleSheet(
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ca8a04, stop:1 #eab308); "
+            "color: #052e16; font-weight: 900; font-size: 14px; border-radius: 8px; padding: 0 20px;"
+        )
+        btn_preview_wheel.setFixedHeight(42)
+        btn_preview_wheel.clicked.connect(self.preview_luxury_wheel)
+
+        hub_actions_row.addWidget(btn_save_hub, 2)
+        hub_actions_row.addWidget(btn_preview_wheel, 1)
+        hub_lay.addLayout(hub_actions_row)
+
+        lay3.addWidget(hub_frame)
         lay3.addStretch()
 
         tab3.setWidget(con3)
@@ -723,8 +1129,167 @@ class DrawMixin:
             self.chk_late_1.setChecked(late1.value == "1" if late1 else False)
             self.chk_late_2.setChecked(late2.value == "1" if late2 else False)
             self.chk_late_3.setChecked(late3.value == "1" if late3 else False)
+
+            # Load Wheel Central Golden Hub Settings
+            hub_keys = ["wheel_hub_mode", "wheel_hub_logo_path", "wheel_hub_symbol", "wheel_hub_title", "wheel_hub_subtitle", "company_logo_path"]
+            hub_rows = self.db.query(db_mod.Setting).filter(db_mod.Setting.key.in_(hub_keys)).all()
+            hub_map = {r.key: (r.value or "") for r in hub_rows}
+
+            mode_val = hub_map.get("wheel_hub_mode", "text") or "text"
+            idx_mode = self.combo_wheel_hub_mode.findData(mode_val)
+            self.combo_wheel_hub_mode.setCurrentIndex(idx_mode if idx_mode >= 0 else 0)
+
+            self.ent_wheel_hub_symbol.setText(hub_map.get("wheel_hub_symbol") or "M")
+            self.ent_wheel_hub_title.setText(hub_map["wheel_hub_title"] if "wheel_hub_title" in hub_map else "MILLION")
+            self.ent_wheel_hub_subtitle.setText(hub_map["wheel_hub_subtitle"] if "wheel_hub_subtitle" in hub_map else "هكبة المليون الأسبوعية")
+
+            raw_logo = hub_map.get("wheel_hub_logo_path", "").strip()
+            self._wheel_hub_logo_setting_val = raw_logo
+            effective_logo = hub_map.get("company_logo_path", "").strip() if raw_logo == "__company_logo__" else raw_logo
+            self._update_wheel_hub_logo_preview(effective_logo)
+            self._on_wheel_hub_mode_changed()
         except Exception as e:
             print(f"Error loading draw settings: {e}")
+
+    def _on_wheel_hub_mode_changed(self):
+        if not hasattr(self, "combo_wheel_hub_mode"):
+            return
+        mode = self.combo_wheel_hub_mode.currentData()
+        is_text_mode = (mode == "text")
+        is_logo_with_text = (mode == "logo_with_text")
+        self.ent_wheel_hub_symbol.setEnabled(is_text_mode)
+        self.ent_wheel_hub_title.setEnabled(is_text_mode)
+        self.ent_wheel_hub_subtitle.setEnabled(is_text_mode or is_logo_with_text)
+
+    def _update_wheel_hub_logo_preview(self, logo_path: str):
+        if not hasattr(self, "lbl_wheel_hub_logo_preview"):
+            return
+        if logo_path and os.path.exists(logo_path):
+            pm = QPixmap(logo_path)
+            if not pm.isNull():
+                size = 124
+                rounded = QPixmap(size, size)
+                rounded.fill(Qt.GlobalColor.transparent)
+                p = QPainter(rounded)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                path = QPainterPath()
+                path.addEllipse(0, 0, size, size)
+                p.setClipPath(path)
+                scaled = pm.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                p.drawPixmap((size - scaled.width()) // 2, (size - scaled.height()) // 2, scaled)
+                p.end()
+                self.lbl_wheel_hub_logo_preview.setPixmap(rounded)
+                return
+        self.lbl_wheel_hub_logo_preview.setPixmap(QPixmap())
+        sym = self.ent_wheel_hub_symbol.text().strip() or "M"
+        self.lbl_wheel_hub_logo_preview.setText(f"الشعار النصي\n({sym})")
+
+    def select_wheel_hub_logo(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "اختر صورة شعار القرص المركزي للعجلة", "", "ملفات الصور (*.png *.jpg *.jpeg *.webp *.bmp)"
+        )
+        if not file_path:
+            return
+        import sys
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        uploads_dir = os.path.join(base_dir, "uploads")
+        os.makedirs(uploads_dir, exist_ok=True)
+        ext = os.path.splitext(file_path)[1] or ".png"
+        dest = os.path.join(uploads_dir, f"wheel_hub_logo{ext}")
+        try:
+            shutil.copy(file_path, dest)
+            self._wheel_hub_logo_setting_val = dest
+            self._update_wheel_hub_logo_preview(dest)
+            # إذا كان النمط نصياً، نحوله تلقائياً إلى شعار الشركة مع النص ليرى المستخدم الشعار مباشرة
+            if self.combo_wheel_hub_mode.currentData() == "text":
+                idx = self.combo_wheel_hub_mode.findData("logo_with_text")
+                if idx >= 0:
+                    self.combo_wheel_hub_mode.setCurrentIndex(idx)
+        except Exception as e:
+            ModernDialog(self, "خطأ", f"تعذر نسخ ملف الشعار: {e}").exec()
+
+    def use_company_logo_for_wheel_hub(self):
+        comp_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "company_logo_path").first()
+        comp_path = (comp_setting.value or "").strip() if comp_setting else ""
+        if not comp_path or not os.path.exists(comp_path):
+            ModernDialog(
+                self, "تنبيه",
+                "لم يتم العثور على شعار عام مسجل للشركة في (إعدادات الشركة).\nيمكنك اختيار صورة الشعار مباشرة من زر 'اختيار صورة شعار للقرص'."
+            ).exec()
+            return
+        self._wheel_hub_logo_setting_val = "__company_logo__"
+        self._update_wheel_hub_logo_preview(comp_path)
+        if self.combo_wheel_hub_mode.currentData() == "text":
+            idx = self.combo_wheel_hub_mode.findData("logo_with_text")
+            if idx >= 0:
+                self.combo_wheel_hub_mode.setCurrentIndex(idx)
+        ModernDialog(self, "تم التحديد", "تم ربط القرص المركزي بشعار الشركة العام بنجاح.\nاضغط 'حفظ إعدادات القرص المركزي' لاعتماد التغيير.").exec()
+
+    def reset_wheel_hub_defaults(self):
+        self._wheel_hub_logo_setting_val = ""
+        idx = self.combo_wheel_hub_mode.findData("text")
+        if idx >= 0:
+            self.combo_wheel_hub_mode.setCurrentIndex(idx)
+        self.ent_wheel_hub_symbol.setText("M")
+        self.ent_wheel_hub_title.setText("MILLION")
+        self.ent_wheel_hub_subtitle.setText("هكبة المليون الأسبوعية")
+        self._update_wheel_hub_logo_preview("")
+
+    def _get_current_ui_hub_config(self) -> dict:
+        raw_logo = getattr(self, "_wheel_hub_logo_setting_val", "") or ""
+        if raw_logo == "__company_logo__":
+            comp_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "company_logo_path").first()
+            effective_logo = (comp_setting.value or "").strip() if comp_setting else ""
+        else:
+            effective_logo = raw_logo
+        return {
+            "mode": self.combo_wheel_hub_mode.currentData() or "text",
+            "logo_path": effective_logo,
+            "symbol": self.ent_wheel_hub_symbol.text().strip() or "M",
+            "title": self.ent_wheel_hub_title.text().strip(),
+            "subtitle": self.ent_wheel_hub_subtitle.text().strip(),
+        }
+
+    def save_wheel_hub_settings(self):
+        try:
+            mode_val = self.combo_wheel_hub_mode.currentData() or "text"
+            raw_logo = getattr(self, "_wheel_hub_logo_setting_val", "") or ""
+            if mode_val in ("logo_with_text", "logo_full") and not raw_logo:
+                # محاولة استخدام شعار الشركة تلقائياً إذا كان موجوداً
+                comp_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "company_logo_path").first()
+                if comp_setting and comp_setting.value and os.path.exists(comp_setting.value):
+                    raw_logo = "__company_logo__"
+                    self._wheel_hub_logo_setting_val = raw_logo
+                else:
+                    ModernDialog(self, "تنبيه", "يرجى اختيار صورة الشعار أولاً أو اختيار نمط 'شعار نصي ذهبي'.").exec()
+                    return
+
+            hub_settings = {
+                "wheel_hub_mode": mode_val,
+                "wheel_hub_logo_path": raw_logo,
+                "wheel_hub_symbol": self.ent_wheel_hub_symbol.text().strip() or "M",
+                "wheel_hub_title": self.ent_wheel_hub_title.text().strip(),
+                "wheel_hub_subtitle": self.ent_wheel_hub_subtitle.text().strip(),
+            }
+            for key, val in hub_settings.items():
+                setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == key).first()
+                if setting:
+                    setting.value = val
+                else:
+                    self.db.add(db_mod.Setting(key=key, value=val))
+            self.db.commit()
+            ModernDialog(self, "نجاح", "تم حفظ إعدادات القرص المركزي الذهبي لعجلة القرعة بنجاح ✅").exec()
+        except Exception as e:
+            self.db.rollback()
+            ModernDialog(self, "خطأ", f"حدث خطأ أثناء حفظ إعدادات القرص المركزي: {e}").exec()
+
+    def preview_luxury_wheel(self):
+        cfg = self._get_current_ui_hub_config()
+        dlg = WheelPreviewDialog(self, db=self.db, hub_config=cfg)
+        dlg.exec()
 
     def save_draw_settings(self):
         try:
@@ -770,138 +1335,38 @@ class DrawMixin:
                 else:
                     self.db.add(db_mod.Setting(key=key, value=val))
             self.db.commit()
-            ModernDialog(self, "نجاح", "تم حفظ إعدادات الجائزة التحفيزية بنجاح.").exec()
+            self.refresh_draw_stats()
+            ModernDialog(self, "نجاح", "تم حفظ إعدادات الجائزة التحفيزية بنجاح وتحديث إحصائيات الفئات.").exec()
         except Exception as e:
             self.db.rollback()
             ModernDialog(self, "خطأ", f"حدث خطأ أثناء الحفظ: {e}").exec()
 
     def _get_incentive_max_late(self):
         """إرجاع الحد الأقصى للأقساط المتأخرة المسموح بها للجائزة التحفيزية حسب الإعدادات."""
-        try:
-            late3 = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "incentive_allow_late_3").first()
-            late2 = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "incentive_allow_late_2").first()
-            late1 = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "incentive_allow_late_1").first()
-            if late3 and late3.value == "1":
-                return 3
-            if late2 and late2.value == "1":
-                return 2
-            if late1 and late1.value == "1":
-                return 1
-        except Exception:
-            pass
-        return 0  # لا يُسمح بأي تأخر (الإعداد الافتراضي)
+        return _read_incentive_max_late(self.db)
 
     def _get_category_stats(self, cat, target_cycle=None):
-        today = datetime.datetime.now()
-        subs_in_cat = self.db.query(db_mod.Subscriber).filter(
-            db_mod.Subscriber.category == cat.name,
-            db_mod.Subscriber.status == "accepted"
-        ).all()
-        if not subs_in_cat:
-            return 0, 0
+        sel_map = {cat.name: target_cycle if target_cycle is not None else "auto"}
+        analytics = compute_category_draw_analytics(self.db, selected_cycles=sel_map)
+        info = analytics.get(cat.name, {})
+        return info.get("weekly_eligible", 0), info.get("incentive_count", 0)
 
-        # جلب الحالات المالية دفعة واحدة
-        fin_status_map = db_mod.calculate_financial_status_batch(subs_in_cat, self.db)
-        disciplined_subs = [s for s in subs_in_cat if fin_status_map.get(s.id) not in ["late", "suspended"]]
-        if not disciplined_subs:
-            return 0, 0
-
-        sub_ids = [s.id for s in disciplined_subs]
-
-        # جلب الدورات الحالية دفعة واحدة
-        if target_cycle and target_cycle != "auto" and isinstance(target_cycle, int):
-            active_cycles = {sid: target_cycle for sid in sub_ids}
-        else:
-            try:
-                active_cycles = dict(
-                    self.db.query(db_mod.Payment.subscriber_id, func.max(db_mod.Payment.cycle_number))
-                    .filter(db_mod.Payment.subscriber_id.in_(sub_ids), db_mod.Payment.due_date <= today)
-                    .group_by(db_mod.Payment.subscriber_id)
-                    .all()
-                )
-            except Exception:
-                active_cycles = {}
-
-        # جلب دفعات هؤلاء المشتركين للدورات المطلوبة فقط (تجنب تحميل 14 ألف سجل وتجميد الواجهة)
-        needed_cycles = set(active_cycles.values()) if active_cycles else {1}
-        payments_data = self.db.query(
-            db_mod.Payment.subscriber_id,
-            db_mod.Payment.cycle_number,
-            db_mod.Payment.amount,
-            db_mod.Payment.due_date,
-            db_mod.Payment.paid_date,
-            db_mod.Payment.is_paid
-        ).filter(
-            db_mod.Payment.subscriber_id.in_(sub_ids),
-            db_mod.Payment.cycle_number.in_(needed_cycles)
-        ).all()
-
-        payments_by_sub = {}
-        for p in payments_data:
-            payments_by_sub.setdefault(p[0], []).append(p)
-
-        max_late_allowed = self._get_incentive_max_late()
-        weekly_won_subs = {
-            w[0] for w in self.db.query(db_mod.Winner.subscriber_number).filter(
-                (db_mod.Winner.draw_type.contains("الاسبوعية") | db_mod.Winner.draw_type.contains("الأسبوعية"))
-            ).all() if w[0]
-        }
-        completed_cycle_count = 0
-        incentive_count = 0
-        max_inst = cat.max_installments if cat else 0
-        total_expected_for_cycle = (cat.amount * max_inst) if cat else 0
-        today_date = today.date()
-
-        for sub in disciplined_subs:
-            sub_current_cycle = active_cycles.get(sub.id, 1)
-            all_s_p = payments_by_sub.get(sub.id, [])
-            cycle_payments = [p for p in all_s_p if p[1] == sub_current_cycle]
-            if not cycle_payments:
-                continue
-
-            total_paid_in_cycle = sum(p[2] for p in cycle_payments if p[5])
-            is_cycle_finished = (total_paid_in_cycle >= total_expected_for_cycle - 0.01) and all(p[5] for p in cycle_payments)
-
-            is_incentive = True
-            has_paid_something = False
-            late_count = 0
-
-            for p in cycle_payments:
-                if not p[3]:
-                    continue
-                p_due = p[3].date()
-                is_p = p[5]
-                p_paid = p[4].date() if p[4] else None
-
-                if p_due <= today_date:
-                    if not is_p:
-                        late_count += 1
-                    else:
-                        has_paid_something = True
-                        if p_paid and p_paid > p_due:
-                            late_count += 1
-                else:
-                    if is_p:
-                        has_paid_something = True
-                        if p_paid and p_paid > p_due:
-                            late_count += 1
-
-            if late_count > max_late_allowed:
-                is_incentive = False
-
-            if is_cycle_finished and (sub.subscriber_number not in weekly_won_subs):
-                completed_cycle_count += 1
-            if is_incentive and has_paid_something:
-                incentive_count += 1
-
-        return completed_cycle_count, incentive_count
+    def _get_active_season_id_for_draw(self):
+        try:
+            if hasattr(self, 'combo_header_season'):
+                sid = self.combo_header_season.currentData()
+                if sid:
+                    return sid
+            curr_s = db_mod.get_current_season(self.db)
+            return curr_s.id if curr_s else None
+        except Exception:
+            return None
 
     def refresh_draw_stats(self):
-        """إعادة رسم إحصائيات السحب بشكل غير متزامن تماماً لتجنب التجميد."""
+        """إعادة رسم إحصائيات السحب بشكل غير متزامن وسريع جداً (~15ms) من قاعدة البيانات المحلية."""
         if not hasattr(self, "category_selected_cycles"):
             self.category_selected_cycles = {}
 
-        # إظهار حالة التحميل فوراً دون أي استعلام DB
         for i in reversed(range(self.draw_stats_layout.count())):
             item = self.draw_stats_layout.itemAt(i)
             if item and item.widget():
@@ -912,26 +1377,48 @@ class DrawMixin:
                     if child.widget():
                         child.widget().setParent(None)
 
-        loading_lbl = QLabel("⏳ جاري تحميل إحصائيات السحب...")
+        loading_lbl = QLabel("⏳ جاري تحميل إحصائيات الفئات...")
         loading_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         loading_lbl.setStyleSheet("color: #94a3b8; font-size: 14px; padding: 20px;")
         self.draw_stats_layout.addWidget(loading_lbl)
 
-        # تشغيل العامل في الخلفية لجلب البيانات
+        self._stats_reload_pending = False
         if hasattr(self, '_draw_stats_loader') and self._draw_stats_loader.isRunning():
             self._draw_stats_loader.quit()
             self._draw_stats_loader.wait(100)
-        self._draw_stats_loader = DrawStatsLoader(self.category_selected_cycles)
+
+        season_id = self._get_active_season_id_for_draw()
+        self._draw_stats_loader = DrawStatsLoader(self.category_selected_cycles, season_id=season_id)
         self._draw_stats_loader.stats_loaded.connect(self._on_draw_stats_loaded_full)
         self._draw_stats_loader.start()
 
-    def _on_draw_stats_loaded_full(self, cat_stats):
-        """يُستدعى من الخيط الخلفي بعد تحميل الإحصائيات - يبني واجهة البطاقات."""
+    def _format_category_footer_text(self, info):
+        total_subs = info.get("total_subs", 0)
+        committed_now = info.get("committed_now", 0)
+        late_now = info.get("late_now", 0)
+        auto_c = info.get("auto_cycle", 1)
+        run_c = info.get("current_running_cycle", auto_c)
+        run_inst = info.get("running_due_inst_count", 0)
+        max_inst = info.get("max_installments", 1)
+        last_paid_c = info.get("last_group_paid_cycle", auto_c)
+
+        parts = [
+            f"👥 إجمالي الفئة: {total_subs}",
+            f"🟢 ملتزمون حالياً: {committed_now}",
+            f"🔴 متأخرون: {late_now}",
+        ]
+        if run_c > auto_c and 0 < run_inst < max_inst:
+            parts.append(f"🔄 الدورة الجارية: {run_c} ({run_inst}/{max_inst} أقساط)")
+        elif late_now > 0 and last_paid_c < auto_c:
+            parts.append(f"📌 آخر دورة سددها المتأخرون: دورة {last_paid_c}")
+        return "   |   ".join(parts)
+
+    def _on_draw_stats_loaded_full(self, analytics_map):
+        """يُستدعى بعد تحميل الإحصائيات لبناء بطاقات الفئات التفصيلية والدقيقة."""
         if not hasattr(self, '_draw_stats_cache'):
             self._draw_stats_cache = {}
-        self._draw_stats_cache.update(cat_stats)
+        self._draw_stats_cache.update(analytics_map)
 
-        # مسح عنصر التحميل
         for i in reversed(range(self.draw_stats_layout.count())):
             item = self.draw_stats_layout.itemAt(i)
             if item and item.widget():
@@ -942,45 +1429,7 @@ class DrawMixin:
                     if child.widget():
                         child.widget().setParent(None)
 
-        # جلب الفئات والدورات في استعلام واحد خفيف للموسم النشط
-        try:
-            curr_sid = None
-            if hasattr(self, 'combo_header_season'):
-                curr_sid = self.combo_header_season.currentData()
-            if not curr_sid:
-                curr_s = db_mod.get_current_season(self.db)
-                curr_sid = curr_s.id if curr_s else None
-            
-            q_cat = self.db.query(db_mod.Category)
-            if curr_sid and curr_sid != -1:
-                q_cat = q_cat.filter(db_mod.Category.season_id == curr_sid)
-            categories = q_cat.all()
-        except Exception:
-            categories = []
-        
-        today = datetime.datetime.now()
-        try:
-            active_cycles_by_cat = dict(
-                self.db.query(db_mod.Subscriber.category, func.max(db_mod.Payment.cycle_number))
-                .join(db_mod.Payment, db_mod.Subscriber.id == db_mod.Payment.subscriber_id)
-                .filter(db_mod.Payment.due_date <= today)
-                .group_by(db_mod.Subscriber.category)
-                .all()
-            )
-        except Exception:
-            active_cycles_by_cat = {}
-
-        try:
-            max_cycles_by_cat = dict(
-                self.db.query(db_mod.Subscriber.category, func.max(db_mod.Payment.cycle_number))
-                .join(db_mod.Payment, db_mod.Subscriber.id == db_mod.Payment.subscriber_id)
-                .group_by(db_mod.Subscriber.category)
-                .all()
-            )
-        except Exception:
-            max_cycles_by_cat = {}
-
-        if not categories:
+        if not analytics_map:
             no_cat_lbl = QLabel("لا توجد فئات مسجلة حالياً.")
             no_cat_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.draw_stats_layout.addWidget(no_cat_lbl)
@@ -992,16 +1441,15 @@ class DrawMixin:
         self._draw_stats_labels = {}
         cols = 2
 
-        for idx, cat in enumerate(categories):
-            active_cycle = active_cycles_by_cat.get(cat.name, 1)
-            cat_max = cat.max_cycles or 1
-            max_p_cycle = max_cycles_by_cat.get(cat.name, 1)
-            total_cycles = max(cat_max, max_p_cycle)
+        for idx, (cat_name, info) in enumerate(analytics_map.items()):
+            auto_cycle = info.get("auto_cycle", 1)
+            running_cycle = info.get("current_running_cycle", auto_cycle)
+            total_cycles = info.get("total_cycles", 1)
+            selected_cycle = self.category_selected_cycles.get(cat_name, "auto")
 
-            selected_cycle = self.category_selected_cycles.get(cat.name, "auto")
-            cached_val = self._draw_stats_cache.get(cat.name)
-            init_w = str(cached_val[0]) if cached_val else "—"
-            init_i = str(cached_val[1]) if cached_val else "—"
+            completed_total = info.get("completed_total", 0)
+            weekly_eligible = info.get("weekly_eligible", 0)
+            incentive_count = info.get("incentive_count", 0)
 
             cat_card = QFrame()
             cat_card.setObjectName("StatCard")
@@ -1009,15 +1457,22 @@ class DrawMixin:
             v_lay.setSpacing(12)
 
             header_row = QHBoxLayout()
-            header = QLabel(f"📊 {cat.name}")
+            header = QLabel(f"📊 {cat_name}")
             header.setObjectName("SectionTitle")
-            header.setStyleSheet("font-size: 16px;")
+            header.setStyleSheet("font-size: 16px; font-weight: bold;")
 
             combo_cycle = QComboBox()
-            combo_cycle.setMinimumWidth(170)
-            combo_cycle.addItem(f"الدورة الحالية تلقائياً (دورة {active_cycle})", "auto")
+            combo_cycle.setMinimumWidth(210)
+            combo_cycle.addItem(f"تلقائي — آخر دورة مكتملة (دورة {auto_cycle})", "auto")
             for c_i in range(1, total_cycles + 1):
-                combo_cycle.addItem(f"الدورة {c_i}", c_i)
+                tag = ""
+                if c_i == auto_cycle:
+                    tag = " (مكتملة)"
+                elif c_i == running_cycle and running_cycle > auto_cycle:
+                    tag = " (جارية حالياً)"
+                elif c_i == info.get("last_group_paid_cycle") and info.get("late_now", 0) > 0 and c_i < auto_cycle:
+                    tag = " (آخر سداد للمتأخرين)"
+                combo_cycle.addItem(f"الدورة {c_i}{tag}", c_i)
 
             if selected_cycle == "auto" or selected_cycle is None:
                 combo_cycle.setCurrentIndex(0)
@@ -1031,61 +1486,95 @@ class DrawMixin:
             header_row.addWidget(combo_cycle)
             v_lay.addLayout(header_row)
 
+            # صف الأرقام الثلاثة: (أتموا الدورة) | (مؤهلون للأسبوعية) | (مؤهلون للتحفيزية)
             stats_row = QHBoxLayout()
+
+            c_vbox = QVBoxLayout()
+            c_val = QLabel(str(completed_total))
+            c_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #0284c7;")
+            c_lbl = QLabel("أتموا الدورة")
+            c_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
+            c_vbox.addWidget(c_val)
+            c_vbox.addWidget(c_lbl)
+
             w_vbox = QVBoxLayout()
-            w_val = QLabel(init_w)
-            w_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #2e7d32;")
-            w_lbl = QLabel("أتموا الدورة")
+            w_val = QLabel(str(weekly_eligible))
+            w_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #16a34a;")
+            w_lbl = QLabel("مؤهلين الأسبوعية")
             w_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
             w_vbox.addWidget(w_val)
             w_vbox.addWidget(w_lbl)
 
             i_vbox = QVBoxLayout()
-            i_val = QLabel(init_i)
-            i_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #1b5e20;")
+            i_val = QLabel(str(incentive_count))
+            i_val.setStyleSheet("font-size: 24px; font-weight: 800; color: #eab308;")
             i_lbl = QLabel("مؤهلين التحفيزية")
             i_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
             i_vbox.addWidget(i_val)
             i_vbox.addWidget(i_lbl)
 
+            stats_row.addLayout(c_vbox)
+            stats_row.addStretch()
             stats_row.addLayout(w_vbox)
             stats_row.addStretch()
             stats_row.addLayout(i_vbox)
             v_lay.addLayout(stats_row)
 
-            self._draw_stats_labels[cat.name] = (w_val, i_val)
+            # شريط معلومات تفصيلي أسفل البطاقة يوضح إجمالي الفئة والملتزمين والمتأخرين
+            footer_lbl = QLabel(self._format_category_footer_text(info))
+            footer_lbl.setWordWrap(True)
+            footer_lbl.setStyleSheet(
+                "font-size: 11px; color: #64748b; background: rgba(148, 163, 184, 0.10); "
+                "padding: 6px 10px; border-radius: 6px;"
+            )
+            v_lay.addWidget(footer_lbl)
 
-            # عند تغيير الدورة: تحديث النتائج بالخلفية لا على main thread
-            def make_on_change(c_box, cat_obj, w_l, i_l):
+            self._draw_stats_labels[cat_name] = (c_val, w_val, i_val, footer_lbl)
+
+            def make_on_change(c_box, c_name, c_l, w_l, i_l):
                 def on_change():
                     val = c_box.currentData()
-                    self.category_selected_cycles[cat_obj.name] = val
+                    self.category_selected_cycles[c_name] = val
+                    c_l.setText("...")
                     w_l.setText("...")
                     i_l.setText("...")
-                    # إعادة تشغيل الـ loader للفئة المحددة فقط
-                    if hasattr(self, '_draw_stats_loader') and self._draw_stats_loader.isRunning():
-                        return  # لا تزيد حمل الخيط إذا كان يعمل
-                    self._draw_stats_loader = DrawStatsLoader(self.category_selected_cycles)
-                    self._draw_stats_loader.stats_loaded.connect(self._on_draw_stats_loaded)
-                    self._draw_stats_loader.start()
+                    self._trigger_fast_stats_update()
                 return on_change
 
-            combo_cycle.currentIndexChanged.connect(make_on_change(combo_cycle, cat, w_val, i_val))
+            combo_cycle.currentIndexChanged.connect(
+                make_on_change(combo_cycle, cat_name, c_val, w_val, i_val)
+            )
 
-            cat_card.setMinimumWidth(300)
+            cat_card.setMinimumWidth(340)
             grid.addWidget(cat_card, idx // cols, idx % cols)
 
-    def _on_draw_stats_loaded(self, cat_stats):
-        """تحديث الأرقام في البطاقات الموجودة (للتحديث عند تغيير الدورة)."""
+    def _trigger_fast_stats_update(self):
+        """تشغيل تحديث سريع للإحصائيات مع جدولة تلقائية إذا كان الخيط يعمل حالياً."""
+        if hasattr(self, '_draw_stats_loader') and self._draw_stats_loader.isRunning():
+            self._stats_reload_pending = True
+            return
+        self._stats_reload_pending = False
+        season_id = self._get_active_season_id_for_draw()
+        self._draw_stats_loader = DrawStatsLoader(self.category_selected_cycles, season_id=season_id)
+        self._draw_stats_loader.stats_loaded.connect(self._on_draw_stats_loaded)
+        self._draw_stats_loader.start()
+
+    def _on_draw_stats_loaded(self, analytics_map):
+        """تحديث الأرقام في البطاقات الموجودة فوراً عند تغيير الدورة."""
         if not hasattr(self, '_draw_stats_cache'):
             self._draw_stats_cache = {}
-        self._draw_stats_cache.update(cat_stats)
+        self._draw_stats_cache.update(analytics_map)
         if hasattr(self, '_draw_stats_labels'):
-            for cat_name, (w_cnt, i_cnt) in cat_stats.items():
+            for cat_name, info in analytics_map.items():
                 if cat_name in self._draw_stats_labels:
-                    w_l, i_l = self._draw_stats_labels[cat_name]
-                    w_l.setText(str(w_cnt))
-                    i_l.setText(str(i_cnt))
+                    c_l, w_l, i_l, footer_l = self._draw_stats_labels[cat_name]
+                    c_l.setText(str(info.get("completed_total", 0)))
+                    w_l.setText(str(info.get("weekly_eligible", 0)))
+                    i_l.setText(str(info.get("incentive_count", 0)))
+                    footer_l.setText(self._format_category_footer_text(info))
+
+        if getattr(self, '_stats_reload_pending', False):
+            self._trigger_fast_stats_update()
 
     def refresh_draw_categories_filter(self):
         cats = self.db.query(db_mod.Category).all()
@@ -1419,7 +1908,8 @@ class DrawMixin:
                     self.db.delete(winner)
                     self.db.commit()
                     self.load_recent_winners()
-                    ModernDialog(self, "نجاح", "تم حذف السجل بنجاح").exec()
+                    self.refresh_draw_stats()
+                    ModernDialog(self, "نجاح", "تم حذف السجل بنجاح وتحديث إحصائيات الفئات").exec()
             except Exception as e:
                 self.db.rollback()
                 ModernDialog(self, "خطأ", f"فشل الحذف: {e}").exec()
@@ -1451,12 +1941,14 @@ class DrawMixin:
             self._draw_qual_worker.quit()
             self._draw_qual_worker.wait(100)
 
+        season_id = self._get_active_season_id_for_draw()
         self._draw_qual_worker = DrawQualificationWorker(
             draw_name,
             self.category_selected_cycles,
             selected_period=selected_period,
             periods_count=periods_count,
-            weeks_per_period=weeks_per_period
+            weeks_per_period=weeks_per_period,
+            season_id=season_id,
         )
 
         def _on_finished(qualified_by_cat_ids, qualified_ids, disqualified_count):
@@ -1482,10 +1974,30 @@ class DrawMixin:
         qualified_by_category = {}
         for cat, sids in qualified_by_cat_ids.items():
             cat_subs = [sub_dict[sid] for sid in sids if sid in sub_dict]
-            if cat_subs:
-                qualified_by_category[cat] = cat_subs
+            qualified_by_category[cat] = cat_subs
 
+        analytics_reports = getattr(self._draw_qual_worker, "analytics", None) or {}
         draw_title = f"{draw_name} (الفترة {selected_period})" if (draw_name == "الجائزة الكبرى" and periods_count > 1) else draw_name
+
+        if draw_name in ["القرعة الاسبوعية", "الجائزة التحفيزية"]:
+            if not analytics_reports and not qualified_subs:
+                msg_alert = f"لا توجد فئات أو مشتركون مستوفون لشروط {draw_title} حالياً."
+                ModernDialog(self, "تنبيه", msg_alert).exec()
+                return
+
+            # فتح نافذة السحب المتدرجة (تقرير الفئة الأولى -> قرعة الفئة الأولى -> تقرير الفئة الثانية -> قرعة الفئة الثانية -> ... -> التقرير النهائي للفائزين)
+            anim_dlg = DrawAnimationDialog(
+                self,
+                qualified_by_category,
+                draw_name,
+                self.db,
+                category_reports=analytics_reports,
+            )
+            anim_dlg.exec()
+            self.load_recent_winners()
+            self.refresh_draw_stats()
+            return
+
         if not qualified_subs:
             msg_alert = f"لا يوجد مشتركون مستوفون لشروط {draw_title} حالياً."
             if disqualified_count > 0:
@@ -1493,61 +2005,25 @@ class DrawMixin:
             ModernDialog(self, "تنبيه", msg_alert).exec()
             return
 
-        if draw_name in ["القرعة الاسبوعية", "الجائزة التحفيزية"]:
-            msg = f"هل أنت متأكد من بدء {draw_name}؟ (عدد الفئات المؤهلة: {len(qualified_by_category)})"
-            if disqualified_count > 0:
-                msg += f"\n\n⚠️ تم استبعاد {disqualified_count} مشتركين بسبب عدم الانضباط المالي (متأخر/موقوف)."
-            if not ModernDialog(self, "تأكيد", msg, is_confirm=True).exec():
-                return
-            
-            # Use the animated multi-category draw
-            anim_dlg = DrawAnimationDialog(self, qualified_by_category, draw_name, self.db)
-            anim_dlg.exec()
-            self.load_recent_winners()
-            self.refresh_draw_stats()
-            return
-
-        msg = f"هل أنت متأكد من بدء {draw_title}؟ (عدد المؤهلين: {len(qualified_subs)})"
-        if disqualified_count > 0:
-            msg += f"\n\n⚠️ تم استبعاد {disqualified_count} مشتركين بسبب عدم الانضباط المالي (متأخر/موقوف)."
-        if not ModernDialog(self, "تأكيد", msg, is_confirm=True).exec():
-            return
-
         if draw_name == "الجائزة الكبرى":
             count_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "grand_prize_winners_count").first()
             num_winners = int(count_setting.value) if count_setting and count_setting.value.isdigit() else 1
             num_winners = min(num_winners, len(qualified_subs))
-            
-            winners = random.sample(qualified_subs, num_winners)
             draw_label = f"الجائزة الكبرى - الفترة {selected_period}" if periods_count > 1 else "الجائزة الكبرى"
-            
-            res_msg = f"مبروك للفائزين في {draw_label}!\n\n"
-            for w in winners:
-                cat_selected = self.category_selected_cycles.get(w.category, "auto")
-                if cat_selected != "auto" and isinstance(cat_selected, int):
-                    cycle_num = cat_selected
-                else:
-                    active_p = self.db.query(db_mod.Payment).filter(
-                        db_mod.Payment.subscriber_id == w.id,
-                        db_mod.Payment.due_date <= datetime.datetime.now()
-                    ).order_by(db_mod.Payment.due_date.desc()).first()
-                    cycle_num = active_p.cycle_number if active_p else 1
 
-                w_season_id = getattr(w, 'season_id', None)
-                if not w_season_id and hasattr(self, 'combo_header_season'):
-                    w_season_id = self.combo_header_season.currentData()
-                new_w = db_mod.Winner(
-                    subscriber_number=w.subscriber_number, 
-                    draw_type=draw_label,
-                    draw_date=datetime.datetime.now(),
-                    cycle_number=cycle_num,
-                    season_id=w_season_id
-                )
-                self.db.add(new_w)
-                res_msg += f"الفئة المالية: {w.category} - رقم المشترك: {w.subscriber_number}\n"
-            
-            self.db.commit()
-            ModernDialog(self, "تم السحب بنجاح", res_msg).exec()
+            if num_winners == 1:
+                grand_groups = {"الجائزة الكبرى": list(qualified_subs)}
+            else:
+                grand_groups = {f"الفائز رقم {i + 1}": list(qualified_subs) for i in range(num_winners)}
+
+            anim_dlg = DrawAnimationDialog(
+                self,
+                grand_groups,
+                draw_label,
+                self.db,
+                category_reports=analytics_reports,
+            )
+            anim_dlg.exec()
             self.load_recent_winners()
             self.refresh_draw_stats()
             return

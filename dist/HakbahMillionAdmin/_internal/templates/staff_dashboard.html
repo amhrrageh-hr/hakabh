@@ -828,19 +828,22 @@
 
         <!-- ── MODAL: Live Draw Animation & Winner Display ── -->
         <div id="draw-modal-overlay" class="modal-overlay-custom">
-            <div class="modal-box-custom modal-box-dark">
-                <div class="modal-header-custom">
-                    <h3 id="draw-modal-title" style="margin: 0; font-size: 1.05rem; font-weight: 800; color: #38bdf8;">🎲 جاري إجراء القرعة العشوائية...</h3>
-                    <button type="button" id="btn-close-draw-modal" onclick="closeDrawModal()" style="display: none; background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #94a3b8;">&times;</button>
+            <div class="modal-box-custom modal-box-dark" style="max-width: 640px; background: radial-gradient(circle at center, #06351d 0%, #031c0f 65%, #010b06 100%); border: 2px solid #ca8a04;">
+                <div class="modal-header-custom" style="border-bottom: 1px solid rgba(250, 204, 21, 0.25);">
+                    <h3 id="draw-modal-title" style="margin: 0; font-size: 1.15rem; font-weight: 800; color: #fde047;">🎡 جاري إجراء القرعة...</h3>
+                    <button type="button" id="btn-close-draw-modal" onclick="closeDrawModal()" style="display: none; background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #fde047;">&times;</button>
                 </div>
-                <div class="modal-body-custom">
-                    <div class="roller-arena-box">
-                        <div id="roller-number" class="roller-number-val">---</div>
-                        <div id="roller-name" class="roller-name-val">جاري التدوير...</div>
-                        <div id="roller-cat" class="roller-cat-val">-</div>
+                <div class="modal-body-custom" style="text-align: center; padding: 14px 20px;">
+                    <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 10px;">
+                        <canvas id="luxury-prize-wheel-canvas" width="460" height="460" style="max-width: 100%; height: auto; border-radius: 22px; box-shadow: 0 12px 35px rgba(0,0,0,0.65);"></canvas>
                     </div>
-                    <div id="roller-status-text" style="text-align: center; color: #94a3b8; font-size: 0.88rem; margin-bottom: 12px;">
-                        يتم الآن تدوير المشتركين المؤهلين عشوائياً لاختيار الفائز...
+                    <div class="roller-arena-box" style="padding: 10px 16px; margin-bottom: 10px; background: rgba(4, 47, 29, 0.85); border: 2px solid #eab308; border-radius: 14px;">
+                        <div id="roller-number" class="roller-number-val" style="font-size: 1.8rem; color: #fef08a;">---</div>
+                        <div id="roller-name" class="roller-name-val" style="font-size: 0.95rem; color: #a7f3d0;">جاري التدوير...</div>
+                        <div id="roller-cat" class="roller-cat-val" style="font-size: 0.85rem; color: #cbd5e1;">-</div>
+                    </div>
+                    <div id="roller-status-text" style="text-align: center; color: #a7f3d0; font-size: 0.92rem; font-weight: 700; margin-bottom: 12px;">
+                        يتم الآن تدوير عجلة هكبة المليون لاختيار الفائز...
                     </div>
                     <div id="winner-result-card" style="display: none;"></div>
                 </div>

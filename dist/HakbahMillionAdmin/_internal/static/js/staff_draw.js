@@ -250,6 +250,272 @@
             startDrawAnimation('الجائزة الكبرى', period);
         }
 
+        // --- Luxury Prize Wheel Renderer (Emerald & Gold Filigree 1..49 Wheel) ---
+        const WHEEL_SEGMENTS = ['49', '49', ...Array.from({ length: 48 }, (_, i) => String(i + 1))];
+        const WHEEL_SEG_ANGLE = (Math.PI * 2) / WHEEL_SEGMENTS.length;
+        let currentWheelRotationDeg = 0;
+
+        function getSegmentIndexForSubNumber(subNum) {
+            const digits = String(subNum || '').replace(/\D/g, '');
+            const numVal = digits ? (((parseInt(digits, 10) - 1) % 49) + 1) : 49;
+            if (numVal === 49) return Math.random() < 0.5 ? 0 : 1;
+            return numVal + 1;
+        }
+
+        function drawLuxuryPrizeWheel(angleDeg, ptrDeflectDeg = 0, winningSegIdx = -1) {
+            const canvas = document.getElementById('luxury-prize-wheel-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+            const cx = w / 2;
+            const cy = h / 2;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // 1. Studio Dark Emerald & Gold Bokeh Background
+            const bgGrad = ctx.createRadialGradient(cx, cy, 10, cx, cy, w * 0.55);
+            bgGrad.addColorStop(0, 'rgba(212, 175, 55, 0.22)');
+            bgGrad.addColorStop(0.55, '#063a22');
+            bgGrad.addColorStop(0.85, '#031c10');
+            bgGrad.addColorStop(1, '#010b06');
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, 0, w, h);
+
+            // Subtle Bokeh Particles
+            for (let i = 0; i < 24; i++) {
+                const ang = (i * 137.5 * Math.PI) / 180;
+                const dist = 175 + (i % 5) * 11;
+                const bx = cx + Math.cos(ang) * dist;
+                const by = cy + Math.sin(ang) * dist;
+                const br = 3 + (i % 4) * 3.5;
+                const bGrad = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+                bGrad.addColorStop(0, i % 3 === 0 ? 'rgba(74, 222, 128, 0.22)' : 'rgba(254, 240, 138, 0.28)');
+                bGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = bGrad;
+                ctx.beginPath();
+                ctx.arc(bx, by, br, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 2. Elevated Perspective Rim & Outer Fine-Toothed Gears
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy + 5, 202, 0, Math.PI * 2);
+            ctx.fillStyle = '#451a03';
+            ctx.shadowColor = 'rgba(0,0,0,0.75)';
+            ctx.shadowBlur = 18;
+            ctx.shadowOffsetY = 6;
+            ctx.fill();
+            ctx.restore();
+
+            const numTeeth = 96;
+            const rGearOuter = 204;
+            const rGearInner = 196;
+            ctx.save();
+            ctx.beginPath();
+            for (let i = 0; i < numTeeth; i++) {
+                const a1 = (i * 2 * Math.PI) / numTeeth;
+                const a2 = ((i + 0.28) * 2 * Math.PI) / numTeeth;
+                const a3 = ((i + 0.62) * 2 * Math.PI) / numTeeth;
+                const a4 = ((i + 0.90) * 2 * Math.PI) / numTeeth;
+                if (i === 0) ctx.moveTo(cx + rGearInner * Math.cos(a1), cy + rGearInner * Math.sin(a1));
+                else ctx.lineTo(cx + rGearInner * Math.cos(a1), cy + rGearInner * Math.sin(a1));
+                ctx.lineTo(cx + rGearOuter * Math.cos(a2), cy + rGearOuter * Math.sin(a2));
+                ctx.lineTo(cx + rGearOuter * Math.cos(a3), cy + rGearOuter * Math.sin(a3));
+                ctx.lineTo(cx + rGearInner * Math.cos(a4), cy + rGearInner * Math.sin(a4));
+            }
+            ctx.closePath();
+            const gearGrad = ctx.createLinearGradient(0, 0, w, h);
+            gearGrad.addColorStop(0, '#fef08a');
+            gearGrad.addColorStop(0.3, '#ca8a04');
+            gearGrad.addColorStop(0.5, '#78350f');
+            gearGrad.addColorStop(0.75, '#facc15');
+            gearGrad.addColorStop(1, '#92400e');
+            ctx.fillStyle = gearGrad;
+            ctx.strokeStyle = '#451a03';
+            ctx.lineWidth = 1;
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            // 3. Wide Metallic Gold Frame with Classical Geometric Lattice & Filigree
+            const rFrameOuter = 196;
+            const rFrameInner = 152;
+            const frameGrad = ctx.createLinearGradient(cx - rFrameOuter, cy - rFrameOuter, cx + rFrameOuter, cy + rFrameOuter);
+            frameGrad.addColorStop(0, '#fef9c3');
+            frameGrad.addColorStop(0.22, '#eab308');
+            frameGrad.addColorStop(0.45, '#78350f');
+            frameGrad.addColorStop(0.68, '#fde047');
+            frameGrad.addColorStop(0.85, '#b45309');
+            frameGrad.addColorStop(1, '#fef08a');
+
+            ctx.beginPath();
+            ctx.arc(cx, cy, rFrameOuter, 0, Math.PI * 2);
+            ctx.fillStyle = frameGrad;
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#fef08a';
+            ctx.stroke();
+
+            // Filigree & Classical Geometric Band
+            const rBandOut = 189;
+            const rBandIn = 161;
+            const rBandMid = (rBandOut + rBandIn) / 2;
+            ctx.beginPath();
+            ctx.arc(cx, cy, rBandOut, 0, Math.PI * 2);
+            ctx.arc(cx, cy, rBandIn, 0, Math.PI * 2, true);
+            ctx.fillStyle = '#3b1704';
+            ctx.fill();
+
+            const motifs = 48;
+            for (let i = 0; i < motifs; i++) {
+                const a1 = (i * 2 * Math.PI) / motifs;
+                const a2 = ((i + 1) * 2 * Math.PI) / motifs;
+                const amid = (a1 + a2) / 2;
+                ctx.beginPath();
+                ctx.moveTo(cx + (rBandOut - 2) * Math.cos(amid), cy + (rBandOut - 2) * Math.sin(amid));
+                ctx.lineTo(cx + rBandMid * Math.cos(a2), cy + rBandMid * Math.sin(a2));
+                ctx.lineTo(cx + (rBandIn + 2) * Math.cos(amid), cy + (rBandIn + 2) * Math.sin(amid));
+                ctx.lineTo(cx + rBandMid * Math.cos(a1), cy + rBandMid * Math.sin(a1));
+                ctx.closePath();
+                ctx.strokeStyle = '#fde047';
+                ctx.lineWidth = 1;
+                ctx.fillStyle = 'rgba(234, 179, 8, 0.28)';
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(cx + rBandMid * Math.cos(amid), cy + rBandMid * Math.sin(amid), 1.8, 0, Math.PI * 2);
+                ctx.fillStyle = '#fef08a';
+                ctx.fill();
+            }
+
+            // 50 Gold Studs around inner bezel
+            const rStuds = (rBandIn + rFrameInner) / 2;
+            for (let i = 0; i < WHEEL_SEGMENTS.length; i++) {
+                const sa = i * WHEEL_SEG_ANGLE - Math.PI / 2;
+                ctx.beginPath();
+                ctx.arc(cx + rStuds * Math.cos(sa), cy + rStuds * Math.sin(sa), 2.1, 0, Math.PI * 2);
+                ctx.fillStyle = '#fef9c3';
+                ctx.fill();
+            }
+
+            // 4. Rotating 1..49 Dark Emerald Wheel Disc
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate((angleDeg * Math.PI) / 180);
+
+            for (let i = 0; i < WHEEL_SEGMENTS.length; i++) {
+                const startRad = -Math.PI / 2 + (i - 1) * WHEEL_SEG_ANGLE;
+                const endRad = startRad + WHEEL_SEG_ANGLE;
+                const midRad = (startRad + endRad) / 2;
+
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.arc(0, 0, rFrameInner, startRad, endRad);
+                ctx.closePath();
+
+                if (i === winningSegIdx) {
+                    ctx.fillStyle = '#eab308';
+                } else {
+                    ctx.fillStyle = i % 2 === 0 ? '#053b2a' : '#03281b';
+                }
+                ctx.fill();
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = '#eab308';
+                ctx.stroke();
+
+                // Gold Number (1..49 with 49 twice at top)
+                ctx.save();
+                ctx.rotate(midRad + Math.PI / 2);
+                ctx.font = '900 9.5px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = i === winningSegIdx ? '#052e16' : '#fde047';
+                ctx.fillText(WHEEL_SEGMENTS[i], 0, -rFrameInner + 13);
+                ctx.restore();
+            }
+
+            // Fine inner gold circles
+            ctx.beginPath();
+            ctx.arc(0, 0, rFrameInner - 22, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(250, 204, 21, 0.65)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.restore();
+
+            // 5. Central Metallic Gold Hub ("M" + "MILLION" + "هكبة المليون الأسبوعية")
+            const rHub = 64;
+            const hubGrad = ctx.createRadialGradient(cx - 14, cy - 18, 4, cx, cy, rHub);
+            hubGrad.addColorStop(0, '#fffbeb');
+            hubGrad.addColorStop(0.35, '#fde047');
+            hubGrad.addColorStop(0.7, '#d97706');
+            hubGrad.addColorStop(1, '#78350f');
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, rHub, 0, Math.PI * 2);
+            ctx.fillStyle = hubGrad;
+            ctx.shadowColor = 'rgba(0,0,0,0.65)';
+            ctx.shadowBlur = 12;
+            ctx.fill();
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = '#fef08a';
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.beginPath();
+            ctx.arc(cx, cy, rHub - 6, 0, Math.PI * 2);
+            ctx.strokeStyle = '#78350f';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#451a03';
+            ctx.font = '900 28px Georgia, serif';
+            ctx.fillText('M', cx, cy - 16);
+            ctx.fillStyle = '#fef9c3';
+            ctx.fillText('M', cx - 0.8, cy - 16.8);
+
+            ctx.fillStyle = '#fffbeb';
+            ctx.font = '900 11px Arial';
+            ctx.fillText('MILLION', cx, cy + 1);
+
+            ctx.fillStyle = '#fef08a';
+            ctx.font = '700 10px Tajawal, Tahoma, Arial';
+            ctx.fillText('هكبة المليون الأسبوعية', cx, cy + 18);
+
+            // 6. Top-Center Gold & Diamond-Encrusted Pointer
+            ctx.save();
+            ctx.translate(cx, cy - 186);
+            ctx.rotate((ptrDeflectDeg * Math.PI) / 180);
+
+            ctx.beginPath();
+            ctx.moveTo(0, 48);
+            ctx.quadraticCurveTo(18, 12, 16, -10);
+            ctx.quadraticCurveTo(0, -22, -16, -10);
+            ctx.quadraticCurveTo(-18, 12, 0, 48);
+            ctx.closePath();
+            ctx.fillStyle = '#eab308';
+            ctx.strokeStyle = '#fef9c3';
+            ctx.lineWidth = 1.6;
+            ctx.fill();
+            ctx.stroke();
+
+            const diamonds = [[0, -2, 6.5], [0, 12, 3.8], [0, 23, 2.6], [-9, -4, 3], [9, -4, 3], [0, -13, 2.8]];
+            for (const [dx, dy, dr] of diamonds) {
+                ctx.beginPath();
+                ctx.arc(dx, dy, dr, 0, Math.PI * 2);
+                ctx.fillStyle = '#e0f2fe';
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
         async function startDrawAnimation(drawType, period = 1) {
             const overlay = document.getElementById('draw-modal-overlay');
             const modalTitle = document.getElementById('draw-modal-title');
@@ -262,25 +528,15 @@
             const closeBtn = document.getElementById('btn-close-draw-modal');
 
             overlay.style.display = 'flex';
-            modalTitle.textContent = `🎲 جاري السحب على: ${drawType}`;
-            statusText.textContent = 'يتم الآن تدوير المشتركين المؤهلين عشوائياً لاختيار الفائز...';
-            statusText.style.color = '#94a3b8';
+            modalTitle.textContent = `🎡 جاري السحب على: ${drawType}`;
+            statusText.textContent = 'يتم الآن تدوير عجلة هكبة المليون لاختيار الفائز...';
+            statusText.style.color = '#a7f3d0';
             resultCard.style.display = 'none';
             resultCard.innerHTML = '';
             modalFooter.style.display = 'none';
             closeBtn.style.display = 'none';
 
-            // Start Fast Slot Machine Shuffling
-            let animCount = 0;
-            const interval = setInterval(() => {
-                const randomCand = drawState.currentCandidates[Math.floor(Math.random() * drawState.currentCandidates.length)];
-                if (randomCand) {
-                    rollerNum.textContent = randomCand.number;
-                    rollerName.textContent = randomCand.name;
-                    rollerCat.textContent = `الفئة: ${randomCand.category}`;
-                }
-                animCount++;
-            }, 80);
+            drawLuxuryPrizeWheel(currentWheelRotationDeg, 0, -1);
 
             try {
                 const selectedCat = drawState.selectedCategory === 'الكل' ? null : drawState.selectedCategory;
@@ -295,7 +551,6 @@
                 });
 
                 const data = await res.json();
-                clearInterval(interval);
 
                 if (!res.ok) {
                     overlay.style.display = 'none';
@@ -307,6 +562,47 @@
                 if (winners.length > 0) {
                     const firstW = winners[0];
                     drawState.lastPerformedWinner = firstW;
+
+                    // Animate the Luxury Wheel to land accurately on the winner's segment
+                    const winSegIdx = getSegmentIndexForSubNumber(firstW.subscriber_number);
+                    const segDeg = 360 / WHEEL_SEGMENTS.length;
+                    const targetMod = (-(winSegIdx - 0.5) * segDeg % 360 + 360) % 360;
+                    const startDeg = currentWheelRotationDeg % 360;
+                    const delta = (targetMod - startDeg + 360) % 360;
+                    const totalTargetDeg = startDeg + 360 * 7 + delta;
+                    const spinDurationMs = 4400;
+                    const t0 = performance.now();
+                    let lastTickSeg = -1;
+
+                    await new Promise((resolve) => {
+                        function stepFrame(now) {
+                            const p = Math.min(1, Math.max(0, (now - t0) / spinDurationMs));
+                            const eased = 1 - Math.pow(1 - p, 4);
+                            const curDeg = startDeg + (totalTargetDeg - startDeg) * eased;
+                            currentWheelRotationDeg = curDeg;
+
+                            const segUnderPtr = Math.floor(((-curDeg % 360) + 360) % 360 / segDeg);
+                            let ptrDeflect = 0;
+                            if (segUnderPtr !== lastTickSeg && p < 0.985) {
+                                lastTickSeg = segUnderPtr;
+                                ptrDeflect = -14 * Math.min(1, (1 - eased) * 2.4 + 0.18);
+                                const randomCand = drawState.currentCandidates[Math.floor(Math.random() * drawState.currentCandidates.length)];
+                                if (randomCand) {
+                                    rollerNum.textContent = randomCand.number;
+                                    rollerName.textContent = randomCand.name;
+                                    rollerCat.textContent = `الفئة: ${randomCand.category}`;
+                                }
+                            }
+
+                            drawLuxuryPrizeWheel(curDeg, ptrDeflect, p >= 1 ? winSegIdx : -1);
+                            if (p < 1) {
+                                requestAnimationFrame(stepFrame);
+                            } else {
+                                resolve();
+                            }
+                        }
+                        requestAnimationFrame(stepFrame);
+                    });
 
                     rollerNum.textContent = firstW.subscriber_number;
                     rollerName.textContent = `رقم المشترك: ${firstW.subscriber_number}`;
@@ -340,7 +636,6 @@
                     loadAllDrawStats(false);
                 }
             } catch (err) {
-                clearInterval(interval);
                 overlay.style.display = 'none';
                 showDrawAlert("حدث خطأ في الاتصال أثناء إجراء السحب.", "danger");
             }
