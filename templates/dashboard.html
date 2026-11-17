@@ -1295,6 +1295,20 @@
                 font-size: 0.82rem !important;
             }
         }
+        .switch-acc-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem 1.25rem;
+            border-radius: 16px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1.5px solid rgba(212, 175, 55, 0.3);
+        }
+        .switch-acc-card.active {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(15, 23, 42, 0.9));
+            border-color: #10b981;
+        }
     </style>
 </head>
 <body>
@@ -2408,7 +2422,7 @@
                 <div style="display: flex; flex-direction: column; gap: 0.85rem;">
                     {% if linked_accounts %}
                         {% for acc in linked_accounts %}
-                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1rem 1.25rem; border-radius: 16px; background: {% if acc.id == sub.id %}linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(15, 23, 42, 0.9)){% else %}rgba(15, 23, 42, 0.7){% endif %}; border: 1.5px solid {% if acc.id == sub.id %}#10b981{% else %}rgba(212, 175, 55, 0.3){% endif %};">
+                        <div class="switch-acc-card {% if acc.id == sub.id %}active{% endif %}">
                             <div>
                                 <div style="font-size: 1.05rem; font-weight: 800; color: #f8fafc; margin-bottom: 0.25rem;">
                                     🏷️ {{ acc.category or 'بدون فئة' }}
@@ -2423,7 +2437,7 @@
                                     ✅ الحساب المفتوح
                                 </span>
                                 {% else %}
-                                <button type="button" onclick="switchSubscriberAccount({{ acc.id }})" style="cursor: pointer; padding: 0.55rem 1.1rem; border-radius: 12px; background: linear-gradient(135deg, #d4af37, #b8860b); color: #052e16; border: none; font-family: inherit; font-size: 0.88rem; font-weight: 900; box-shadow: 0 4px 12px rgba(212, 175, 55, 0.35);">
+                                <button type="button" data-sub-id="{{ acc.id }}" onclick="switchSubscriberAccount(this.dataset.subId)" style="cursor: pointer; padding: 0.55rem 1.1rem; border-radius: 12px; background: linear-gradient(135deg, #d4af37, #b8860b); color: #052e16; border: none; font-family: inherit; font-size: 0.88rem; font-weight: 900; box-shadow: 0 4px 12px rgba(212, 175, 55, 0.35);">
                                     دخول للحساب ⬅️
                                 </button>
                                 {% endif %}
