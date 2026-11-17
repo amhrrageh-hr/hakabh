@@ -2623,17 +2623,23 @@ class PaymentReceiptDialog(QDialog):
             ModernDialog(self, "خطأ", str(e)).exec()
 
 class PaymentDialog(QDialog):
-    def __init__(self, parent, payment=None, max_inst=24, max_cycles=10, staff_list=None):
+    def __init__(self, parent, payment=None, max_inst=24, max_cycles=10, staff_list=None, default_amount=None):
         super().__init__(parent)
         self.setWindowTitle("بيانات العملية المالية" if not payment else "تعديل العملية المالية")
         self.setFixedWidth(400)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+        max_inst = max(1, int(max_inst or 24))
+        max_cycles = max(1, int(max_cycles or 10))
         
         layout = QVBoxLayout(self)
         form = QFormLayout()
         
         self.ent_amount = QLineEdit()
-        self.ent_amount.setText(str(payment.amount) if payment else "")
+        if payment:
+            self.ent_amount.setText(str(payment.amount))
+        elif default_amount and float(default_amount) > 0:
+            self.ent_amount.setText(str(default_amount))
         form.addRow("المبلغ:", self.ent_amount)
 
         self.cb_staff = QComboBox()
@@ -2647,7 +2653,7 @@ class PaymentDialog(QDialog):
         
         self.ent_date = QDateEdit()
         self.ent_date.setCalendarPopup(True)
-        if payment:
+        if payment and payment.due_date:
             self.ent_date.setDate(QDate(payment.due_date.year, payment.due_date.month, payment.due_date.day))
         else:
             self.ent_date.setDate(QDate.currentDate())
@@ -2655,7 +2661,8 @@ class PaymentDialog(QDialog):
         
         self.cb_paid = QComboBox()
         self.cb_paid.addItems(["غير مدفوع", "مدفوع"])
-        if payment and payment.is_paid: self.cb_paid.setCurrentIndex(1)
+        if payment is None or (payment and payment.is_paid):
+            self.cb_paid.setCurrentIndex(1)
         form.addRow("الحالة:", self.cb_paid)
         
         self.cb_inst = QComboBox()
@@ -2676,8 +2683,20 @@ class PaymentDialog(QDialog):
         
         self.btn_save = QPushButton("حفظ")
         self.btn_save.setObjectName("PrimaryBtn")
-        self.btn_save.clicked.connect(self.accept)
+        self.btn_save.clicked.connect(self.validate_and_accept)
         layout.addWidget(self.btn_save)
+
+    def validate_and_accept(self):
+        amt_txt = self.ent_amount.text().strip()
+        try:
+            val = float(amt_txt)
+            if val <= 0:
+                ModernDialog(self, "تنبيه", "يرجى إدخال مبلغ أكبر من الصفر.").exec()
+                return
+        except ValueError:
+            ModernDialog(self, "تنبيه", "يرجى إدخال مبلغ رقمي صحيح.").exec()
+            return
+        self.accept()
 
 class AddSubscriberDialog(QDialog):
     def __init__(self, parent, db):
@@ -2839,12 +2858,7 @@ class _BatchPaymentWorker(QThread):
         self.staff_id     = staff_id
 
     def run(self):
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        kw = {"check_same_thread": False} if "sqlite" in self.db_url else {}
-        engine  = create_engine(self.db_url, connect_args=kw)
-        Session = sessionmaker(bind=engine)
-        db      = Session()
+        db = db_mod.SessionLocal()
         try:
             skipped = 0
             updated = 0
