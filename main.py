@@ -492,11 +492,14 @@ async def login_auth(
         # Find subscriber by subscriber_number OR phone
         try:
             sub = db.query(db_mod.Subscriber).filter(
-                or_(
-                    func.lower(db_mod.Subscriber.subscriber_number) == normalized_number,
-                    db_mod.Subscriber.phone == normalized_phone
-                )
+                func.lower(db_mod.Subscriber.subscriber_number) == normalized_number
             ).first()
+            if not sub and normalized_phone:
+                matched_subs = db.query(db_mod.Subscriber).filter(
+                    db_mod.Subscriber.phone == normalized_phone
+                ).order_by(db_mod.Subscriber.id.asc()).all()
+                if matched_subs:
+                    sub = next((s for s in matched_subs if s.status == "accepted"), matched_subs[0])
         except Exception as query_err:
             logger.error(f"Login query error, fallback to phone only: {query_err}")
             traceback.print_exc()
@@ -845,10 +848,36 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 
         season_name = sub.season.name if (hasattr(sub, 'season') and sub.season) else (category_info.season.name if (category_info and hasattr(category_info, 'season') and category_info.season) else "الموسم الأول")
 
+        # ─── جلب جميع حسابات المشترك في الفئات المختلفة والفئات المتاحة للاشتراك الإضافي ───
+        linked_accounts = db_mod.get_linked_subscriber_accounts(db, sub)
+        subscribed_cat_names = {
+            (a.category or "").strip() for a in linked_accounts if a.category
+        }
+
+        target_season_id = sub.season_id or (category_info.season_id if category_info else None)
+        if not target_season_id:
+            curr_s_obj = db_mod.get_current_season(db)
+            target_season_id = curr_s_obj.id if curr_s_obj else None
+
+        cat_q = db.query(db_mod.Category).filter(db_mod.Category.is_active == True)
+        if target_season_id:
+            cat_q = cat_q.filter(db_mod.Category.season_id == target_season_id)
+        all_season_categories = cat_q.order_by(db_mod.Category.id.asc()).all()
+        if not all_season_categories:
+            all_season_categories = db.query(db_mod.Category).filter(db_mod.Category.is_active == True).order_by(db_mod.Category.id.asc()).all()
+
+        available_other_categories = [
+            c for c in all_season_categories if (c.name or "").strip() not in subscribed_cat_names
+        ]
+
         return templates.TemplateResponse(request=request, name="dashboard.html", context={
             "request": request,
             "sub": sub,
             "season_name": season_name,
+            "linked_accounts": linked_accounts,
+            "all_season_categories": all_season_categories,
+            "available_other_categories": available_other_categories,
+            "subscribed_cat_names": subscribed_cat_names,
             "payments": sorted_payments_desc,
             "winners": category_winners,
             "winners_table_rows": winners_table_rows,
@@ -877,6 +906,129 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         print(f"[Dashboard Error]: {str(e)}", flush=True)
         traceback.print_exc()
         return HTMLResponse(content="<h2>حدث خطأ أثناء تحميل لوحة التحكم. يرجى التواصل مع الإدارة.</h2>", status_code=500)
+
+
+@app.post("/api/subscriber/switch-account")
+async def switch_subscriber_account(
+    request: Request,
+    target_sub_id: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    """التبديل السلس بين حسابات المشترك المسجلة في الفئات المختلفة"""
+    sub_id = request.session.get("sub_id")
+    if not sub_id:
+        return JSONResponse(status_code=401, content={"success": False, "message": "يرجى تسجيل الدخول أولاً"})
+
+    current_sub = db.get(db_mod.Subscriber, int(sub_id))
+    if not current_sub:
+        return JSONResponse(status_code=404, content={"success": False, "message": "الحساب الحالي غير موجود"})
+
+    linked = db_mod.get_linked_subscriber_accounts(db, current_sub)
+    allowed_ids = {a.id for a in linked}
+    if int(target_sub_id) not in allowed_ids:
+        return JSONResponse(status_code=403, content={"success": False, "message": "غير مصرح بالانتقال لهذا الحساب"})
+
+    target_sub = db.get(db_mod.Subscriber, int(target_sub_id))
+    if not target_sub:
+        return JSONResponse(status_code=404, content={"success": False, "message": "الحساب المطلوب غير موجود"})
+
+    request.session["sub_id"] = int(target_sub.id)
+    now_ts = int(time.time())
+    request.session["last_activity"] = now_ts
+    _online_subscribers[int(target_sub.id)] = float(now_ts)
+
+    redirect_url = "/pending" if (target_sub.status or "pending") == "pending" else "/million-hakbah"
+    return JSONResponse(content={
+        "success": True,
+        "redirect": redirect_url,
+        "category": target_sub.category,
+        "subscriber_number": target_sub.subscriber_number
+    })
+
+
+@app.post("/api/subscriber/join-category")
+async def subscriber_join_another_category(
+    request: Request,
+    category_id: int = Form(...),
+    number_id: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    """اشتراك المشترك الحالي في فئة إضافية أخرى من داخل حسابه (مرة واحدة فقط لكل فئة)"""
+    sub_id = request.session.get("sub_id")
+    if not sub_id:
+        return JSONResponse(status_code=401, content={"success": False, "message": "يرجى تسجيل الدخول أولاً"})
+
+    current_sub = db.get(db_mod.Subscriber, int(sub_id))
+    if not current_sub:
+        return JSONResponse(status_code=404, content={"success": False, "message": "الحساب غير موجود"})
+
+    cat_record = db.get(db_mod.Category, int(category_id))
+    if not cat_record or not cat_record.is_active:
+        return JSONResponse(status_code=400, content={"success": False, "message": "الفئة المختارة غير متاحة حالياً."})
+
+    # التحقق الصارم: لا يمكن للمشترك الاشتراك في نفس الفئة مرتين!
+    linked_accounts = db_mod.get_linked_subscriber_accounts(db, current_sub)
+    for acc in linked_accounts:
+        if (acc.category or "").strip() == (cat_record.name or "").strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": f"أنت مشترك بالفعل في ({cat_record.name}) برقم (#{acc.subscriber_number})، ولا يمكن الاشتراك في نفس الفئة أكثر من مرة واحدة."
+                }
+            )
+
+    num_record = db.query(db_mod.SubscriberNumber).filter(
+        db_mod.SubscriberNumber.id == int(number_id),
+        db_mod.SubscriberNumber.category_id == int(category_id),
+        db_mod.SubscriberNumber.is_reserved == False
+    ).first()
+
+    if not num_record:
+        return JSONResponse(status_code=400, content={"success": False, "message": "عذراً، هذا الرقم غير متاح أو تم حجزه للتو. يرجى اختيار رقم آخر."})
+
+    try:
+        new_sub = db_mod.Subscriber(
+            name=current_sub.name,
+            phone=current_sub.phone,
+            password=current_sub.password,
+            national_id=current_sub.national_id,
+            address=current_sub.address,
+            email=current_sub.email,
+            category=cat_record.name,
+            season_id=cat_record.season_id or current_sub.season_id,
+            selected_number_id=num_record.id,
+            subscriber_number=num_record.number,
+            status="accepted" if current_sub.status == "accepted" else "pending"
+        )
+        db.add(new_sub)
+        db.flush()
+
+        num_record.is_reserved = True
+        num_record.subscriber_id = new_sub.id
+
+        # توليد الأقساط المستحقة للفئة الجديدة
+        db_mod.ensure_daily_payments(db, new_sub)
+
+        admin_notif = db_mod.AdminNotification(
+            message=f"قام المشترك {current_sub.name} ({current_sub.phone}) بالاشتراك في فئة إضافية ({cat_record.name}) برقم {num_record.number}",
+            type="new_subscriber"
+        )
+        db.add(admin_notif)
+        db.commit()
+
+        # الانتقال التلقائي إلى الحساب الجديد
+        request.session["sub_id"] = int(new_sub.id)
+        _online_subscribers[int(new_sub.id)] = time.time()
+
+        return JSONResponse(content={
+            "success": True,
+            "new_sub_id": new_sub.id,
+            "message": f"تم اشتراكك في ({cat_record.name}) برقم (#{num_record.number}) بنجاح! يمكنك الآن التبديل بين حساباتك من الأعلى."
+        })
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"success": False, "message": f"حدث خطأ أثناء إتمام الاشتراك: {str(e)}"})
 
 @app.get("/pending", response_class=HTMLResponse)
 async def pending_page(request: Request, db: Session = Depends(get_db)):
@@ -1737,21 +1889,30 @@ async def update_profile(
     if not sub:
         return JSONResponse(status_code=404, content={"message": "المشترك غير موجود"})
         
+    linked_accounts = db_mod.get_linked_subscriber_accounts(db, sub)
+    linked_ids = {a.id for a in linked_accounts}
+
     # Check if the new phone is used by another subscriber
     if phone != sub.phone:
-        existing_phone = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.phone == phone).first()
+        existing_phone = db.query(db_mod.Subscriber).filter(
+            db_mod.Subscriber.phone == phone,
+            ~db_mod.Subscriber.id.in_(linked_ids)
+        ).first()
         if existing_phone:
             return JSONResponse(status_code=400, content={"message": "رقم الهاتف مسجل مسبقاً لمشترك آخر"})
-            
-    # Update allowed fields only: name, phone and password
-    if name:
-        sub.name = name
-    sub.phone = phone
-    
+
     password_changed = False
+    new_pwd_hash = None
     if password and password.strip():
-        sub.password = security.hash_password(password)
+        new_pwd_hash = security.hash_password(password)
         password_changed = True
+
+    for acc in linked_accounts:
+        if name:
+            acc.name = name
+        acc.phone = phone
+        if new_pwd_hash:
+            acc.password = new_pwd_hash
         
     try:
         db.commit()

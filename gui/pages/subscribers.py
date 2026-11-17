@@ -346,6 +346,24 @@ class SubscribersMixin:
                 self._fin_status_cache = db_mod.calculate_financial_status_batch(subs, self.db)
             except Exception:
                 self._fin_status_cache = {}
+
+            # تجميع حسابات كل مشترك في الفئات المختلفة دفعة واحدة لعرض زر التبديل بجانب الفئة
+            try:
+                phones = list({(s.phone or "").strip() for s in subs if (s.phone or "").strip()})
+                self._linked_accounts_by_phone = {}
+                if phones:
+                    all_linked = (
+                        self.db.query(db_mod.Subscriber)
+                        .filter(db_mod.Subscriber.phone.in_(phones))
+                        .order_by(db_mod.Subscriber.id.asc())
+                        .all()
+                    )
+                    for acc in all_linked:
+                        ph = (acc.phone or "").strip()
+                        if ph:
+                            self._linked_accounts_by_phone.setdefault(ph, []).append(acc)
+            except Exception:
+                self._linked_accounts_by_phone = {}
                 
             # Create actual content and replace placeholder
             content = self.create_sub_cards_view(subs)
@@ -529,6 +547,31 @@ class SubscribersMixin:
             border-radius: 10px;
         """)
         header_lay.addWidget(cat_pill)
+
+        # زر أرقام الفئات المشترك بها والتنقل بين حساباته (يظهر بجانب الفئة الحالية عند اشتراك المشترك في أكثر من فئة)
+        ph_key = (s.phone or "").strip()
+        linked_accs = getattr(self, "_linked_accounts_by_phone", {}).get(ph_key, []) if ph_key else []
+        if len(linked_accs) > 1:
+            btn_linked_cats = QPushButton(f"🔄 أرقام الفئات ({len(linked_accs)}) ▾")
+            btn_linked_cats.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_linked_cats.setFont(QFont("Tajawal", 8, QFont.Weight.Bold))
+            btn_linked_cats.setToolTip("عرض أرقام وفئات المشترك الأخرى والتنقل بين حساباته")
+            btn_linked_cats.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #f59e0b, stop:1 #d97706);
+                    color: #ffffff;
+                    padding: 4px 9px;
+                    border-radius: 10px;
+                    border: 1px solid #fde68a;
+                }
+                QPushButton:hover {
+                    background: #b45309;
+                }
+            """)
+            btn_linked_cats.clicked.connect(
+                lambda checked=False, sid=s.id, btn=btn_linked_cats: self.show_card_linked_accounts_menu(sid, btn)
+            )
+            header_lay.addWidget(btn_linked_cats)
 
         # Online Status Badge
         is_sub_online = False
@@ -769,6 +812,58 @@ class SubscribersMixin:
         card.mouseDoubleClickEvent = lambda event: self.open_account_details(s.id)
 
         return card
+    def show_card_linked_accounts_menu(self, sid, btn_widget):
+        """عرض قائمة أرقام وفئات المشترك للتنقل المباشر إلى حسابه في أي فئة."""
+        sub = self.db.get(db_mod.Subscriber, sid)
+        if not sub:
+            return
+        linked = db_mod.get_linked_subscriber_accounts(self.db, sub)
+        menu = QMenu(self)
+        menu.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 2px solid #f59e0b;
+                border-radius: 10px;
+                padding: 6px;
+                font-family: 'Tajawal';
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QMenu::item {
+                padding: 7px 14px;
+                border-radius: 6px;
+                margin: 2px 4px;
+            }
+            QMenu::item:selected {
+                background-color: #1e293b;
+                color: #fde047;
+            }
+        """)
+        for acc in linked:
+            is_curr = (acc.id == sid)
+            prefix = "✅ " if is_curr else "🏷️ "
+            suffix = " (هذه البطاقة)" if is_curr else " ⬅️ فتح كشف الحساب"
+            act = QAction(f"{prefix}{acc.category or 'بدون فئة'} — رقم المشترك: #{acc.subscriber_number or '-'}{suffix}", self)
+            act.triggered.connect(lambda checked=False, tid=acc.id: self.open_account_details(tid))
+            menu.addAction(act)
+
+        menu.addSeparator()
+        act_join = QAction("➕ إشراك المشترك في فئة أخرى...", self)
+        act_join.triggered.connect(lambda: self.join_subscriber_another_category(sid))
+        menu.addAction(act_join)
+
+        pos = btn_widget.mapToGlobal(QPoint(0, btn_widget.height() + 4))
+        menu.exec(pos)
+
+    def join_subscriber_another_category(self, sid):
+        """فتح نافذة إشراك المشترك في فئة إضافية أخرى."""
+        from gui.dialogs import JoinAnotherCategoryDialog
+        dlg = JoinAnotherCategoryDialog(self, sid, self.db)
+        if dlg.exec() and dlg.new_sub:
+            QTimer.singleShot(0, self.load_subscribers)
+
     def show_subscriber_card_context_menu(self, pos, sid):
         menu = QMenu(self)
         
@@ -777,6 +872,9 @@ class SubscribersMixin:
         
         act_details = QAction("كشف حساب", self)
         act_details.triggered.connect(lambda: self.open_account_details(sid))
+
+        act_join_other = QAction("➕ إشراك في فئة أخرى", self)
+        act_join_other.triggered.connect(lambda: self.join_subscriber_another_category(sid))
         
         act_del = QAction("حذف", self)
         act_del.triggered.connect(lambda: self.delete_subscriber(sid))
@@ -793,6 +891,7 @@ class SubscribersMixin:
 
         menu.addAction(act_edit)
         menu.addAction(act_details)
+        menu.addAction(act_join_other)
         menu.addSeparator()
         menu.addAction(act_del)
         menu.exec(QCursor.pos())
@@ -952,10 +1051,13 @@ class SubscribersMixin:
                     ModernDialog(self, "خطأ", "يرجى إدخال الاسم ورقم الهاتف وكلمة المرور.").exec()
                     return
 
-                # التأكد من عدم تكرار رقم الهاتف
-                existing_phone = self.db.query(db_mod.Subscriber).filter(db_mod.Subscriber.phone == phone).first()
-                if existing_phone:
-                    ModernDialog(self, "خطأ", "رقم الهاتف مسجل مسبقاً لمشترك آخر.").exec()
+                # التحقق من عدم اشتراك نفس رقم الهاتف في نفس الفئة مرتين
+                existing_same_cat = self.db.query(db_mod.Subscriber).filter(
+                    db_mod.Subscriber.phone == phone,
+                    db_mod.Subscriber.category == cat_name
+                ).first()
+                if existing_same_cat:
+                    ModernDialog(self, "خطأ", f"رقم الهاتف هذا مسجل مسبقاً في نفس الفئة ({cat_name})، لا يمكن الاشتراك في الفئة مرتين.").exec()
                     return
 
                 # التأكد من صحة رقم المشترك المختار

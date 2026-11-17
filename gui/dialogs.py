@@ -3301,6 +3301,153 @@ class BatchPaymentDialog(QDialog):
             btn.setEnabled(enabled)
 
 
+class JoinAnotherCategoryDialog(QDialog):
+    """نافذة إشراك مشترك حالي في فئة أخرى مع منع تكرار الاشتراك في نفس الفئة مرتين"""
+    def __init__(self, parent, sub_id, db):
+        super().__init__(parent)
+        self.db = db
+        self.sub = db.get(db_mod.Subscriber, sub_id)
+        self.new_sub = None
+        self.setWindowTitle(f"إشراك في فئة أخرى — {self.sub.name if self.sub else ''}")
+        self.setFixedWidth(460)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        title = QLabel(f"➕ إشراك المشترك ({self.sub.name if self.sub else ''}) في فئة إضافية")
+        title.setObjectName("SectionTitle")
+        title.setStyleSheet("font-size: 16px; font-weight: 800; color: #10b981;")
+        layout.addWidget(title)
+
+        linked = db_mod.get_linked_subscriber_accounts(self.db, self.sub) if self.sub else []
+        self.subscribed_cats = {(a.category or "").strip() for a in linked if a.category}
+
+        info_txt = "الفئات المشترك بها حالياً: " + (
+            " ، ".join(f"{a.category} (#{a.subscriber_number})" for a in linked) if linked else "لا يوجد"
+        )
+        lbl_info = QLabel(info_txt)
+        lbl_info.setWordWrap(True)
+        lbl_info.setStyleSheet("font-size: 12px; color: #64748b; background: #f8fafc; padding: 8px 12px; border-radius: 8px; border: 1px solid #e2e8f0;")
+        layout.addWidget(lbl_info)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.cb_cat = QComboBox()
+        self.cb_cat.addItem("اختر الفئة الجديدة...", None)
+
+        season_id = self.sub.season_id if self.sub else None
+        q = self.db.query(db_mod.Category).filter(db_mod.Category.is_active == True)
+        if season_id:
+            q = q.filter(db_mod.Category.season_id == season_id)
+        cats = q.order_by(db_mod.Category.id.asc()).all()
+        if not cats:
+            cats = self.db.query(db_mod.Category).filter(db_mod.Category.is_active == True).order_by(db_mod.Category.id.asc()).all()
+
+        for c in cats:
+            c_name = (c.name or "").strip()
+            if c_name not in self.subscribed_cats:
+                self.cb_cat.addItem(f"{c.name} — ({c.amount:,.0f} ر.ي)", c.id)
+
+        self.cb_cat.currentIndexChanged.connect(self.load_numbers)
+        form.addRow("الفئة المتاحة:", self.cb_cat)
+
+        self.cb_num = QComboBox()
+        self.cb_num.addItem("اختر الرقم...", None)
+        form.addRow("رقم المشترك في الفئة:", self.cb_num)
+
+        layout.addLayout(form)
+
+        btns = QHBoxLayout()
+        self.btn_save = QPushButton("تأكيد الاشتراك ✅")
+        self.btn_save.setObjectName("PrimaryBtn")
+        self.btn_save.setFixedHeight(40)
+        self.btn_save.clicked.connect(self.submit_join)
+
+        btn_cancel = QPushButton("إلغاء")
+        btn_cancel.setObjectName("DangerBtn")
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.clicked.connect(self.reject)
+
+        btns.addWidget(self.btn_save)
+        btns.addWidget(btn_cancel)
+        layout.addLayout(btns)
+
+    def load_numbers(self):
+        self.cb_num.clear()
+        self.cb_num.addItem("اختر الرقم...", None)
+        cat_id = self.cb_cat.currentData()
+        if cat_id:
+            nums = self.db.query(db_mod.SubscriberNumber).filter(
+                db_mod.SubscriberNumber.category_id == cat_id,
+                db_mod.SubscriberNumber.is_reserved == False
+            ).all()
+            for n in nums:
+                self.cb_num.addItem(n.number, n.id)
+
+    def submit_join(self):
+        cat_id = self.cb_cat.currentData()
+        num_id = self.cb_num.currentData()
+        if not cat_id or not num_id:
+            ModernDialog(self, "تنبيه", "يرجى اختيار الفئة والرقم المتاح.").exec()
+            return
+
+        cat_obj = self.db.get(db_mod.Category, int(cat_id))
+        if not cat_obj:
+            ModernDialog(self, "خطأ", "الفئة غير موجودة.").exec()
+            return
+
+        linked = db_mod.get_linked_subscriber_accounts(self.db, self.sub)
+        for acc in linked:
+            if (acc.category or "").strip() == (cat_obj.name or "").strip():
+                ModernDialog(
+                    self,
+                    "تنبيه",
+                    f"المشترك مسجل بالفعل في ({cat_obj.name}) برقم (#{acc.subscriber_number})، لا يمكن الاشتراك في نفس الفئة مرتين."
+                ).exec()
+                return
+
+        num_obj = self.db.get(db_mod.SubscriberNumber, int(num_id))
+        if not num_obj or num_obj.is_reserved:
+            ModernDialog(self, "تنبيه", "هذا الرقم تم حجزه مؤخراً، يرجى اختيار رقم آخر.").exec()
+            return
+
+        try:
+            new_sub = db_mod.Subscriber(
+                name=self.sub.name,
+                phone=self.sub.phone,
+                password=self.sub.password,
+                national_id=self.sub.national_id,
+                address=self.sub.address,
+                email=self.sub.email,
+                category=cat_obj.name,
+                season_id=cat_obj.season_id or self.sub.season_id,
+                selected_number_id=num_obj.id,
+                subscriber_number=num_obj.number,
+                status="accepted"
+            )
+            self.db.add(new_sub)
+            self.db.flush()
+
+            num_obj.is_reserved = True
+            num_obj.subscriber_id = new_sub.id
+
+            db_mod.ensure_daily_payments(self.db, new_sub)
+            self.db.commit()
+            self.new_sub = new_sub
+            ModernDialog(
+                self,
+                "نجاح",
+                f"تم إشراك ({self.sub.name}) في ({cat_obj.name}) برقم (#{num_obj.number}) بنجاح ✅"
+            ).exec()
+            self.accept()
+        except Exception as e:
+            self.db.rollback()
+            ModernDialog(self, "خطأ", f"فشل إتمام الاشتراك: {e}").exec()
+
+
 class AccountDetailsDialog(QDialog):
     def __init__(self, parent, sub_id, db):
         super().__init__(parent)
@@ -3309,41 +3456,95 @@ class AccountDetailsDialog(QDialog):
         self._changes_made = False
         sub = db.get(db_mod.Subscriber, sub_id)
         
-        self.setWindowTitle(f"كشف حساب - {sub.name}")
-        self.resize(850, 600)
+        self.setWindowTitle(f"كشف حساب - {sub.name if sub else ''}")
+        self.resize(960, 620)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 25, 25, 25)
-        layout.setSpacing(20)
+        layout.setSpacing(18)
         
         header = QHBoxLayout()
-        title = QLabel(f"كشف الحساب: {sub.name}")
-        title.setObjectName("SectionTitle")
-        header.addWidget(title)
+        header.setSpacing(8)
+        self.lbl_title = QLabel(f"كشف الحساب: {sub.name if sub else ''}")
+        self.lbl_title.setObjectName("SectionTitle")
+        header.addWidget(self.lbl_title)
+
+        # شارة الفئة والرقم الحالي
+        self.lbl_current_cat_badge = QLabel("")
+        self.lbl_current_cat_badge.setStyleSheet("""
+            background-color: #e0f2fe;
+            color: #0369a1;
+            font-weight: 800;
+            font-size: 12px;
+            padding: 5px 12px;
+            border-radius: 10px;
+            border: 1px solid #bae6fd;
+        """)
+        header.addWidget(self.lbl_current_cat_badge)
+
+        # زر أرقام الفئات التي اشترك فيها المشترك والتنقل بين حساباته (يظهر بجانب الفئة الحالية عند اشتراكه في أكثر من فئة)
+        self.btn_switch_cat_account = QPushButton("🔄 أرقام الفئات المشترك بها")
+        self.btn_switch_cat_account.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_switch_cat_account.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #f59e0b, stop:1 #d97706);
+                color: #ffffff;
+                font-weight: 900;
+                font-size: 12px;
+                padding: 6px 14px;
+                border-radius: 10px;
+                border: 1.5px solid #fde68a;
+            }
+            QPushButton:hover {
+                background: #b45309;
+            }
+        """)
+        self.btn_switch_cat_account.clicked.connect(self.show_linked_accounts_menu)
+        header.addWidget(self.btn_switch_cat_account)
+
+        # زر إشراك المشترك في فئة أخرى
+        self.btn_join_other_cat = QPushButton("➕ فئة أخرى")
+        self.btn_join_other_cat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_join_other_cat.setToolTip("إشراك المشترك في فئة إضافية أخرى واختيار رقم له فيها")
+        self.btn_join_other_cat.setStyleSheet("""
+            QPushButton {
+                background-color: #059669;
+                color: white;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 6px 12px;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #047857;
+            }
+        """)
+        self.btn_join_other_cat.clicked.connect(self.open_join_another_category_dialog)
+        header.addWidget(self.btn_join_other_cat)
         
         btn_add = QPushButton("قيد يدوي")
         btn_add.setObjectName("PrimaryBtn")
-        btn_add.setFixedWidth(100)
+        btn_add.setFixedWidth(95)
         btn_add.clicked.connect(self.add_payment)
         
         btn_exp_ex = QPushButton("إكسل")
-        btn_exp_ex.setFixedWidth(70)
+        btn_exp_ex.setFixedWidth(65)
         btn_exp_ex.clicked.connect(self.export_history_excel)
         
         btn_exp_pdf = QPushButton("PDF")
-        btn_exp_pdf.setFixedWidth(70)
+        btn_exp_pdf.setFixedWidth(65)
         btn_exp_pdf.setObjectName("DangerBtn")
         btn_exp_pdf.clicked.connect(self.export_history_pdf)
         
         btn_pay_multi = QPushButton("تسديد المختار")
         btn_pay_multi.setObjectName("PrimaryBtn")
-        btn_pay_multi.setFixedWidth(115)
+        btn_pay_multi.setFixedWidth(110)
         btn_pay_multi.clicked.connect(self.pay_selected_payments)
 
         btn_del_multi = QPushButton("حذف المختار")
         btn_del_multi.setObjectName("DangerBtn")
-        btn_del_multi.setFixedWidth(110)
+        btn_del_multi.setFixedWidth(105)
         btn_del_multi.clicked.connect(self.delete_selected_payments)
         
         header.addStretch()
@@ -3718,12 +3919,87 @@ class AccountDetailsDialog(QDialog):
             ModernDialog(self, "نجاح", f"تم تصدير {filename} بنجاح").exec()
         except Exception as e: ModernDialog(self, "خطأ", str(e)).exec()
 
+    def _update_account_switcher_header(self):
+        """تحديث شارة الفئة الحالية وزر أرقام الفئات المشترك بها للتنقل بين حسابات المشترك."""
+        sub = self.db.get(db_mod.Subscriber, self.sub_id)
+        if not sub:
+            return
+        self.setWindowTitle(f"كشف حساب - {sub.name or ''} ({sub.category or ''} - #{sub.subscriber_number or ''})")
+        if hasattr(self, "lbl_title"):
+            self.lbl_title.setText(f"كشف الحساب: {sub.name or ''}")
+        if hasattr(self, "lbl_current_cat_badge"):
+            self.lbl_current_cat_badge.setText(f"🏷️ {sub.category or 'بدون فئة'}  |  🔢 #{sub.subscriber_number or '-'}")
+
+        linked = db_mod.get_linked_subscriber_accounts(self.db, sub)
+        if hasattr(self, "btn_switch_cat_account"):
+            if len(linked) > 1:
+                self.btn_switch_cat_account.setText(f"🔄 أرقام فئات المشترك ({len(linked)}) ▾")
+                self.btn_switch_cat_account.show()
+            else:
+                self.btn_switch_cat_account.hide()
+
+    def show_linked_accounts_menu(self):
+        """عرض قائمة بأرقام المشترك في جميع الفئات المشترك بها للانتقال الفوري بين حساباته."""
+        sub = self.db.get(db_mod.Subscriber, self.sub_id)
+        if not sub:
+            return
+        linked = db_mod.get_linked_subscriber_accounts(self.db, sub)
+        menu = QMenu(self)
+        menu.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 2px solid #f59e0b;
+                border-radius: 10px;
+                padding: 6px;
+                font-family: 'Tajawal';
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QMenu::item {
+                padding: 8px 18px;
+                border-radius: 6px;
+                margin: 2px 4px;
+            }
+            QMenu::item:selected {
+                background-color: #1e293b;
+                color: #fde047;
+            }
+        """)
+        for acc in linked:
+            is_curr = (acc.id == self.sub_id)
+            prefix = "✅ " if is_curr else "🏷️ "
+            suffix = "  (الحساب المفتوح حالياً)" if is_curr else "  ⬅️ انتقال لهذا الحساب"
+            act = QAction(f"{prefix}{acc.category or 'بدون فئة'} — رقم المشترك: #{acc.subscriber_number or '-'}{suffix}", self)
+            act.triggered.connect(lambda checked=False, tid=acc.id: self.switch_to_account(tid))
+            menu.addAction(act)
+
+        pos = self.btn_switch_cat_account.mapToGlobal(QPoint(0, self.btn_switch_cat_account.height() + 4))
+        menu.exec(pos)
+
+    def switch_to_account(self, target_sub_id):
+        """التبديل الفوري إلى حساب المشترك في الفئة المختارة."""
+        if not target_sub_id or int(target_sub_id) == int(self.sub_id):
+            return
+        self.sub_id = int(target_sub_id)
+        self.load_payments()
+
+    def open_join_another_category_dialog(self):
+        """فتح نافذة إشراك المشترك الحالي في فئة إضافية أخرى."""
+        dlg = JoinAnotherCategoryDialog(self, self.sub_id, self.db)
+        if dlg.exec() and dlg.new_sub:
+            self._changes_made = True
+            self.sub_id = dlg.new_sub.id
+            self.load_payments()
+
     def load_payments(self):
         try:
             self.db.rollback()
         except Exception:
             pass
         self.db.expire_all() # Ensure fresh data
+        self._update_account_switcher_header()
         payments = self.db.query(db_mod.Payment).filter(db_mod.Payment.subscriber_id == self.sub_id).order_by(
             db_mod.Payment.cycle_number.desc(),
             db_mod.Payment.installment_number.desc(),

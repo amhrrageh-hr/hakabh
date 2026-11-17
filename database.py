@@ -410,6 +410,21 @@ def sync_local_to_server() -> int:
                     else:
                         upserts_by_table.setdefault(tbl, []).append(pk_val)
 
+                # إذا كان هناك مشتركين للترحيل، نتأكد من إزالة قيد التفرد القديم على الهاتف إن وجد
+                if upserts_by_table.get("subscribers"):
+                    try:
+                        has_uq = server_db.execute(text(
+                            "SELECT 1 FROM pg_indexes WHERE tablename = 'subscribers' AND indexname IN ('ix_subscribers_phone', 'subscribers_phone_key')"
+                        )).fetchone()
+                        if has_uq:
+                            server_db.execute(text("SET lock_timeout = '3s'"))
+                            server_db.execute(text("ALTER TABLE subscribers DROP CONSTRAINT IF EXISTS subscribers_phone_key"))
+                            server_db.execute(text("DROP INDEX IF EXISTS ix_subscribers_phone"))
+                            server_db.execute(text("CREATE INDEX IF NOT EXISTS idx_subscribers_phone ON subscribers (phone)"))
+                            server_db.commit()
+                    except Exception:
+                        server_db.rollback()
+
                 # 1. تطبيق عمليات الحذف أولاً بالترتيب العكسي للاعتمادية (الأبناء قبل الآباء)
                 for table_name in reversed(SYNC_TABLES_ORDER):
                     del_pks = deletes_by_table.get(table_name, [])
@@ -469,7 +484,28 @@ def sync_local_to_server() -> int:
                         srv_col_set = {r[0] for r in srv_cols_res} if srv_cols_res else set(col_names)
                         valid_cols = [c for c in col_names if c in srv_col_set]
 
+                        cols_sql = ", ".join(valid_cols)
+                        placeholders = ", ".join([f":{c}" for c in valid_cols])
+                        update_set = ", ".join([
+                            f"{c} = EXCLUDED.{c}"
+                            for c in valid_cols if c != pk_col
+                        ])
+                        upsert_sql = text(f"""
+                            INSERT INTO {table_name} ({cols_sql})
+                            VALUES ({placeholders})
+                            ON CONFLICT ({pk_col}) DO UPDATE SET {update_set}
+                        """)
+
+                        existing_srv_subs = None
+                        if table_name == "subscriber_numbers":
+                            existing_srv_subs = {
+                                r[0] for r in server_db.execute(text("SELECT id FROM subscribers")).fetchall()
+                            }
+
                         synced_in_table = 0
+                        batch_rows = []
+                        batch_pks = []
+
                         for pk_v in ups_pks:
                             cast_val = pk_v if pk_col == "key" else int(pk_v)
                             row = local_db.execute(
@@ -478,7 +514,6 @@ def sync_local_to_server() -> int:
                             ).fetchone()
 
                             if not row:
-                                # الصف لم يعد موجوداً محلياً، نزيله من قائمة الانتظار
                                 local_db.execute(
                                     text("DELETE FROM _sync_changes WHERE table_name = :t AND pk_val = :p"),
                                     {"t": table_name, "p": str(pk_v)}
@@ -494,37 +529,38 @@ def sync_local_to_server() -> int:
                             # فك الاعتمادية الدائرية بين subscriber_numbers و subscribers
                             if table_name == "subscriber_numbers" and row_dict.get("subscriber_id"):
                                 sub_id_val = row_dict["subscriber_id"]
-                                sub_exists = server_db.execute(
-                                    text("SELECT 1 FROM subscribers WHERE id = :sid"),
-                                    {"sid": sub_id_val}
-                                ).fetchone()
-                                if not sub_exists:
+                                if existing_srv_subs is not None and sub_id_val not in existing_srv_subs:
                                     deferred_sub_number_links.append((row_dict["id"], sub_id_val))
                                     row_dict["subscriber_id"] = None
 
-                            cols_sql = ", ".join(valid_cols)
-                            placeholders = ", ".join([f":{c}" for c in valid_cols])
-                            update_set = ", ".join([
-                                f"{c} = EXCLUDED.{c}"
-                                for c in valid_cols if c != pk_col
-                            ])
+                            batch_rows.append(row_dict)
+                            batch_pks.append(str(pk_v))
 
-                            upsert_sql = text(f"""
-                                INSERT INTO {table_name} ({cols_sql})
-                                VALUES ({placeholders})
-                                ON CONFLICT ({pk_col}) DO UPDATE SET {update_set}
-                            """)
-                            server_db.execute(upsert_sql, row_dict)
+                            if len(batch_rows) >= 150:
+                                server_db.execute(upsert_sql, batch_rows)
+                                server_db.commit()
+                                for b_pk in batch_pks:
+                                    local_db.execute(
+                                        text("DELETE FROM _sync_changes WHERE table_name = :t AND pk_val = :p"),
+                                        {"t": table_name, "p": b_pk}
+                                    )
+                                local_db.commit()
+                                synced_in_table += len(batch_rows)
+                                total_synced += len(batch_rows)
+                                batch_rows.clear()
+                                batch_pks.clear()
 
-                            local_db.execute(
-                                text("DELETE FROM _sync_changes WHERE table_name = :t AND pk_val = :p"),
-                                {"t": table_name, "p": str(pk_v)}
-                            )
-                            synced_in_table += 1
-                            total_synced += 1
-
-                        server_db.commit()
-                        local_db.commit()
+                        if batch_rows:
+                            server_db.execute(upsert_sql, batch_rows)
+                            server_db.commit()
+                            for b_pk in batch_pks:
+                                local_db.execute(
+                                    text("DELETE FROM _sync_changes WHERE table_name = :t AND pk_val = :p"),
+                                    {"t": table_name, "p": b_pk}
+                                )
+                            local_db.commit()
+                            synced_in_table += len(batch_rows)
+                            total_synced += len(batch_rows)
 
                         # تحديث عداد الترقيم التلقائي Sequence في PostgreSQL لمنع تعارض الـ ID مستقبلاً
                         if pk_col == "id":
@@ -1023,7 +1059,7 @@ def init_db(force_migration=False):
         # إذا تم التحقق من الجداول مسبقاً، تخطي الفحص البطيء لتسريع فتح البرنامج
         if not force_migration:
             try:
-                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v4_visits").first()
+                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v5_multi_category").first()
                 if mig_setting and mig_setting.value == "true":
                     return
             except Exception:
@@ -1211,15 +1247,55 @@ def init_db(force_migration=False):
                 pass
         db.commit()
 
+        # إزالة قيد التفرد القديم على رقم الهاتف في جدول المشتركين للسماح للمشترك بالاشتراك في أكثر من فئة
+        try:
+            if is_postgres:
+                db.execute(text("ALTER TABLE subscribers DROP CONSTRAINT IF EXISTS subscribers_phone_key"))
+                db.execute(text("DROP INDEX IF EXISTS ix_subscribers_phone"))
+                db.execute(text("CREATE INDEX IF NOT EXISTS idx_subscribers_phone ON subscribers (phone)"))
+                db.commit()
+            else:
+                db.execute(text("DROP INDEX IF EXISTS ix_subscribers_phone"))
+                db.commit()
+                # التحقق مما إذا كان جدول subscribers في SQLite يحتوي على UNIQUE مضمن على عمود phone
+                tbl_sql_row = db.execute(
+                    text("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscribers'")
+                ).fetchone()
+                tbl_sql = (tbl_sql_row[0] or "") if tbl_sql_row else ""
+                if "UNIQUE" in tbl_sql.upper():
+                    import re as _re
+                    new_tbl_sql = _re.sub(r"\bUNIQUE\b", "", tbl_sql, flags=_re.IGNORECASE)
+                    new_tbl_sql = _re.sub(
+                        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`'\[]?subscribers[\"`'\]]?",
+                        "CREATE TABLE subscribers_new",
+                        new_tbl_sql,
+                        count=1,
+                        flags=_re.IGNORECASE,
+                    )
+                    db.execute(text("PRAGMA foreign_keys=OFF"))
+                    db.execute(text("DROP TABLE IF EXISTS subscribers_new"))
+                    db.execute(text(new_tbl_sql))
+                    db.execute(text("INSERT INTO subscribers_new SELECT * FROM subscribers"))
+                    db.execute(text("DROP TABLE subscribers"))
+                    db.execute(text("ALTER TABLE subscribers_new RENAME TO subscribers"))
+                    db.execute(text("PRAGMA foreign_keys=ON"))
+                    db.commit()
+                    ensure_local_sync_tracking()
+                db.execute(text("CREATE INDEX IF NOT EXISTS idx_subscribers_phone ON subscribers (phone)"))
+                db.commit()
+        except Exception as _uq_err:
+            print(f"[DB-Migration] Phone unique index removal notice: {_uq_err}")
+            db.rollback()
+
         # Add default settings if not exists
         reg_setting = db.query(Setting).filter(Setting.key == "registration_open").first()
         if not reg_setting:
             db.add(Setting(key="registration_open", value="true"))
 
         # حفظ علامة اكتمال تهيئة الجداول لتسريع الفتح اللاحق
-        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v4_visits").first()
+        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v5_multi_category").first()
         if not mig_setting:
-            db.add(Setting(key="schema_migrated_v4_visits", value="true"))
+            db.add(Setting(key="schema_migrated_v5_multi_category", value="true"))
         else:
             mig_setting.value = "true"
 
@@ -1229,6 +1305,42 @@ def init_db(force_migration=False):
         db.rollback()
     finally:
         db.close()
+
+
+def get_linked_subscriber_accounts(db: Session, sub_or_id) -> list:
+    """
+    جلب جميع حسابات المشترك في الفئات المختلفة المرتبطة بنفس المشترك (عبر رقم الهاتف أو الاسم).
+    مرتبة حسب المعرف (الأقدم فالأحدث).
+    """
+    if not sub_or_id:
+        return []
+    sub = sub_or_id if isinstance(sub_or_id, Subscriber) else db.get(Subscriber, int(sub_or_id))
+    if not sub:
+        return []
+
+    phone_clean = (sub.phone or "").strip()
+    name_clean = (sub.name or "").strip()
+
+    if phone_clean:
+        accounts = (
+            db.query(Subscriber)
+            .filter(Subscriber.phone == phone_clean)
+            .order_by(Subscriber.id.asc())
+            .all()
+        )
+    elif name_clean:
+        accounts = (
+            db.query(Subscriber)
+            .filter(Subscriber.name == name_clean)
+            .order_by(Subscriber.id.asc())
+            .all()
+        )
+    else:
+        accounts = [sub]
+
+    if not accounts:
+        return [sub]
+    return accounts
 
 def get_db():
     db = SessionLocal()
