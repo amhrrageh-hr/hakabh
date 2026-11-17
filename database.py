@@ -53,10 +53,16 @@ def verify_and_repair_sqlite_db(db_path: str):
     try:
         conn = sqlite3.connect(db_path, timeout=5.0)
         res = conn.execute("PRAGMA integrity_check").fetchone()
+        if not res or res[0] != "ok":
+            conn.close()
+            raise sqlite3.DatabaseError(f"integrity_check failed: {res}")
+        # التحقق الفعلي من سلامة مخطط الجداول الحرجة مثل _sync_meta و settings
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        for check_tbl in ("_sync_meta", "settings", "staff"):
+            if check_tbl in tables:
+                conn.execute(f"SELECT 1 FROM {check_tbl} LIMIT 1").fetchall()
         conn.close()
-        if res and res[0] == "ok":
-            return
-        print(f"[DB-Repair] ⚠️ Database integrity check failed: {res}")
+        return
     except Exception as e:
         print(f"[DB-Repair] ⚠️ Error inspecting database integrity: {e}")
 
@@ -68,8 +74,10 @@ def verify_and_repair_sqlite_db(db_path: str):
         shutil.copy2(db_path, corrupted_backup)
         print(f"[DB-Repair] Corrupted DB backed up to: {corrupted_backup}")
 
-        # محاولة استخراج الجداول السليمة وتفريغها أو إفراغ الملف المعطوب
-        os.remove(db_path)
+        for suffix in ("", "-wal", "-shm"):
+            p = f"{db_path}{suffix}"
+            if os.path.exists(p):
+                os.remove(p)
         print("[DB-Repair] Removed corrupted DB file, will rebuild fresh schema...")
     except Exception as e:
         print(f"[DB-Repair] [ERROR] Could not replace corrupted database: {e}")

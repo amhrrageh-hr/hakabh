@@ -290,11 +290,36 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
             pw_setting = db.query(db_mod.Setting).filter(db_mod.Setting.key == "require_login_password").first()
             require_password = (pw_setting and pw_setting.value == "1")
         except Exception as e:
-            # If tables don't exist yet, assume we need to create the first admin
-            print(f"Initial DB check failed (this is normal on first run): {e}")
-            has_staff = False
-            require_password = True
-        finally:
+            print(f"Initial DB check failed: {e}")
+            db.close()
+            err_lower = str(e).lower()
+            if "malformed" in err_lower or "rootpage" in err_lower or "no such table" in err_lower:
+                try:
+                    self.db.close()
+                except Exception:
+                    pass
+                db_mod.reconnect_engine()
+                db_mod.init_db(force_migration=True)
+                self.db = db_mod.SessionLocal()
+                if db_mod.is_online_mode():
+                    try:
+                        db_mod.sync_server_to_local()
+                    except Exception:
+                        pass
+                db2 = db_mod.SessionLocal()
+                try:
+                    has_staff = db2.query(db_mod.Staff).first() is not None
+                    pw_setting = db2.query(db_mod.Setting).filter(db_mod.Setting.key == "require_login_password").first()
+                    require_password = (pw_setting and pw_setting.value == "1")
+                except Exception:
+                    has_staff = False
+                    require_password = True
+                finally:
+                    db2.close()
+            else:
+                has_staff = False
+                require_password = True
+        else:
             db.close()
 
         # إذا لم يكن هناك موظفون بعد، أنشئ حساب المدير الأول
@@ -304,20 +329,28 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
                 return False
 
             admin_data = setup_dialog.admin_data
-            new_staff = db_mod.Staff(
-                name=admin_data["name"],
-                staff_id_code=admin_data["staff_id_code"],
-                password=security.hash_password(admin_data["password"]),
-                role="مدير"
-            )
-            self.db.add(new_staff)
-            # Make sure to set the default setting for future runs just in case
-            setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "require_login_password").first()
-            if not setting:
-                self.db.add(db_mod.Setting(key="require_login_password", value="0"))
-            self.db.commit()
-            self.logged_in_staff = new_staff
-            return True
+            try:
+                new_staff = db_mod.Staff(
+                    name=admin_data["name"],
+                    staff_id_code=admin_data["staff_id_code"],
+                    password=security.hash_password(admin_data["password"]),
+                    role="مدير"
+                )
+                self.db.add(new_staff)
+                setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "require_login_password").first()
+                if not setting:
+                    self.db.add(db_mod.Setting(key="require_login_password", value="0"))
+                self.db.commit()
+                self.logged_in_staff = new_staff
+                return True
+            except Exception as save_err:
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
+                from gui.dialogs import ModernDialog
+                ModernDialog(self, "خطأ", f"تعذر إنشاء حساب المدير: {save_err}").exec()
+                return False
 
         # إذا كانت كلمة المرور مُلغاة، تجاوز واجهة تسجيل الدخول وادخل كمدير
         if not require_password:
