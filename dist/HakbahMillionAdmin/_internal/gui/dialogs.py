@@ -188,7 +188,10 @@ class LoadingDialog(QDialog):
         if title:
             self.lbl_title.setText(title)
         self.lbl_message.setText(message)
-        QCoreApplication.processEvents()
+        try:
+            self.card.repaint()
+        except Exception:
+            pass
 
 
 class BatchProgressDialog(LoadingDialog):
@@ -204,7 +207,10 @@ class BatchProgressDialog(LoadingDialog):
         self.progress_bar.setValue(min(self._total, max(0, int(current_step))))
         if message:
             self.lbl_message.setText(message)
-        QCoreApplication.processEvents()
+        try:
+            self.card.repaint()
+        except Exception:
+            pass
 
 
 class LoginDialog(QDialog):
@@ -2617,17 +2623,23 @@ class PaymentReceiptDialog(QDialog):
             ModernDialog(self, "خطأ", str(e)).exec()
 
 class PaymentDialog(QDialog):
-    def __init__(self, parent, payment=None, max_inst=24, max_cycles=10, staff_list=None):
+    def __init__(self, parent, payment=None, max_inst=24, max_cycles=10, staff_list=None, default_amount=None):
         super().__init__(parent)
         self.setWindowTitle("بيانات العملية المالية" if not payment else "تعديل العملية المالية")
         self.setFixedWidth(400)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+        max_inst = max(1, int(max_inst or 24))
+        max_cycles = max(1, int(max_cycles or 10))
         
         layout = QVBoxLayout(self)
         form = QFormLayout()
         
         self.ent_amount = QLineEdit()
-        self.ent_amount.setText(str(payment.amount) if payment else "")
+        if payment:
+            self.ent_amount.setText(str(payment.amount))
+        elif default_amount and float(default_amount) > 0:
+            self.ent_amount.setText(str(default_amount))
         form.addRow("المبلغ:", self.ent_amount)
 
         self.cb_staff = QComboBox()
@@ -2641,7 +2653,7 @@ class PaymentDialog(QDialog):
         
         self.ent_date = QDateEdit()
         self.ent_date.setCalendarPopup(True)
-        if payment:
+        if payment and payment.due_date:
             self.ent_date.setDate(QDate(payment.due_date.year, payment.due_date.month, payment.due_date.day))
         else:
             self.ent_date.setDate(QDate.currentDate())
@@ -2649,7 +2661,8 @@ class PaymentDialog(QDialog):
         
         self.cb_paid = QComboBox()
         self.cb_paid.addItems(["غير مدفوع", "مدفوع"])
-        if payment and payment.is_paid: self.cb_paid.setCurrentIndex(1)
+        if payment is None or (payment and payment.is_paid):
+            self.cb_paid.setCurrentIndex(1)
         form.addRow("الحالة:", self.cb_paid)
         
         self.cb_inst = QComboBox()
@@ -2670,8 +2683,20 @@ class PaymentDialog(QDialog):
         
         self.btn_save = QPushButton("حفظ")
         self.btn_save.setObjectName("PrimaryBtn")
-        self.btn_save.clicked.connect(self.accept)
+        self.btn_save.clicked.connect(self.validate_and_accept)
         layout.addWidget(self.btn_save)
+
+    def validate_and_accept(self):
+        amt_txt = self.ent_amount.text().strip()
+        try:
+            val = float(amt_txt)
+            if val <= 0:
+                ModernDialog(self, "تنبيه", "يرجى إدخال مبلغ أكبر من الصفر.").exec()
+                return
+        except ValueError:
+            ModernDialog(self, "تنبيه", "يرجى إدخال مبلغ رقمي صحيح.").exec()
+            return
+        self.accept()
 
 class AddSubscriberDialog(QDialog):
     def __init__(self, parent, db):
@@ -2833,12 +2858,7 @@ class _BatchPaymentWorker(QThread):
         self.staff_id     = staff_id
 
     def run(self):
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        kw = {"check_same_thread": False} if "sqlite" in self.db_url else {}
-        engine  = create_engine(self.db_url, connect_args=kw)
-        Session = sessionmaker(bind=engine)
-        db      = Session()
+        db = db_mod.SessionLocal()
         try:
             skipped = 0
             updated = 0
@@ -3040,7 +3060,6 @@ class _BatchPaymentWorker(QThread):
             self.error.emit(str(e))
         finally:
             db.close()
-            engine.dispose()
 
 
 class BatchPaymentDialog(QDialog):
@@ -3266,8 +3285,6 @@ class BatchPaymentDialog(QDialog):
         if skipped: parts.append(f"تم تجاوز {skipped} مشترك")
         ModernDialog(self, "✅ نجاح", " | ".join(parts) if parts else "تم التسجيل بنجاح").exec()
         self.load_subscribers()
-        if hasattr(self.parent(), 'load_subscribers'):
-            self.parent().load_subscribers()
 
     def _on_error(self, msg: str):
         self._cleanup()
@@ -3284,48 +3301,250 @@ class BatchPaymentDialog(QDialog):
             btn.setEnabled(enabled)
 
 
+class JoinAnotherCategoryDialog(QDialog):
+    """نافذة إشراك مشترك حالي في فئة أخرى مع منع تكرار الاشتراك في نفس الفئة مرتين"""
+    def __init__(self, parent, sub_id, db):
+        super().__init__(parent)
+        self.db = db
+        self.sub = db.get(db_mod.Subscriber, sub_id)
+        self.new_sub = None
+        self.setWindowTitle(f"إشراك في فئة أخرى — {self.sub.name if self.sub else ''}")
+        self.setFixedWidth(460)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        title = QLabel(f"➕ إشراك المشترك ({self.sub.name if self.sub else ''}) في فئة إضافية")
+        title.setObjectName("SectionTitle")
+        title.setStyleSheet("font-size: 16px; font-weight: 800; color: #10b981;")
+        layout.addWidget(title)
+
+        linked = db_mod.get_linked_subscriber_accounts(self.db, self.sub) if self.sub else []
+        self.subscribed_cats = {(a.category or "").strip() for a in linked if a.category}
+
+        info_txt = "الفئات المشترك بها حالياً: " + (
+            " ، ".join(f"{a.category} (#{a.subscriber_number})" for a in linked) if linked else "لا يوجد"
+        )
+        lbl_info = QLabel(info_txt)
+        lbl_info.setWordWrap(True)
+        lbl_info.setStyleSheet("font-size: 12px; color: #64748b; background: #f8fafc; padding: 8px 12px; border-radius: 8px; border: 1px solid #e2e8f0;")
+        layout.addWidget(lbl_info)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.cb_cat = QComboBox()
+        self.cb_cat.addItem("اختر الفئة الجديدة...", None)
+
+        season_id = self.sub.season_id if self.sub else None
+        q = self.db.query(db_mod.Category).filter(db_mod.Category.is_active == True)
+        if season_id:
+            q = q.filter(db_mod.Category.season_id == season_id)
+        cats = q.order_by(db_mod.Category.id.asc()).all()
+        if not cats:
+            cats = self.db.query(db_mod.Category).filter(db_mod.Category.is_active == True).order_by(db_mod.Category.id.asc()).all()
+
+        for c in cats:
+            c_name = (c.name or "").strip()
+            if c_name not in self.subscribed_cats:
+                self.cb_cat.addItem(f"{c.name} — ({c.amount:,.0f} ر.ي)", c.id)
+
+        self.cb_cat.currentIndexChanged.connect(self.load_numbers)
+        form.addRow("الفئة المتاحة:", self.cb_cat)
+
+        self.cb_num = QComboBox()
+        self.cb_num.addItem("اختر الرقم...", None)
+        form.addRow("رقم المشترك في الفئة:", self.cb_num)
+
+        layout.addLayout(form)
+
+        btns = QHBoxLayout()
+        self.btn_save = QPushButton("تأكيد الاشتراك ✅")
+        self.btn_save.setObjectName("PrimaryBtn")
+        self.btn_save.setFixedHeight(40)
+        self.btn_save.clicked.connect(self.submit_join)
+
+        btn_cancel = QPushButton("إلغاء")
+        btn_cancel.setObjectName("DangerBtn")
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.clicked.connect(self.reject)
+
+        btns.addWidget(self.btn_save)
+        btns.addWidget(btn_cancel)
+        layout.addLayout(btns)
+
+    def load_numbers(self):
+        self.cb_num.clear()
+        self.cb_num.addItem("اختر الرقم...", None)
+        cat_id = self.cb_cat.currentData()
+        if cat_id:
+            nums = self.db.query(db_mod.SubscriberNumber).filter(
+                db_mod.SubscriberNumber.category_id == cat_id,
+                db_mod.SubscriberNumber.is_reserved == False
+            ).all()
+            for n in nums:
+                self.cb_num.addItem(n.number, n.id)
+
+    def submit_join(self):
+        cat_id = self.cb_cat.currentData()
+        num_id = self.cb_num.currentData()
+        if not cat_id or not num_id:
+            ModernDialog(self, "تنبيه", "يرجى اختيار الفئة والرقم المتاح.").exec()
+            return
+
+        cat_obj = self.db.get(db_mod.Category, int(cat_id))
+        if not cat_obj:
+            ModernDialog(self, "خطأ", "الفئة غير موجودة.").exec()
+            return
+
+        linked = db_mod.get_linked_subscriber_accounts(self.db, self.sub)
+        for acc in linked:
+            if (acc.category or "").strip() == (cat_obj.name or "").strip():
+                ModernDialog(
+                    self,
+                    "تنبيه",
+                    f"المشترك مسجل بالفعل في ({cat_obj.name}) برقم (#{acc.subscriber_number})، لا يمكن الاشتراك في نفس الفئة مرتين."
+                ).exec()
+                return
+
+        num_obj = self.db.get(db_mod.SubscriberNumber, int(num_id))
+        if not num_obj or num_obj.is_reserved:
+            ModernDialog(self, "تنبيه", "هذا الرقم تم حجزه مؤخراً، يرجى اختيار رقم آخر.").exec()
+            return
+
+        try:
+            new_sub = db_mod.Subscriber(
+                name=self.sub.name,
+                phone=self.sub.phone,
+                password=self.sub.password,
+                national_id=self.sub.national_id,
+                address=self.sub.address,
+                email=self.sub.email,
+                category=cat_obj.name,
+                season_id=cat_obj.season_id or self.sub.season_id,
+                selected_number_id=num_obj.id,
+                subscriber_number=num_obj.number,
+                status="accepted"
+            )
+            self.db.add(new_sub)
+            self.db.flush()
+
+            num_obj.is_reserved = True
+            num_obj.subscriber_id = new_sub.id
+
+            db_mod.ensure_daily_payments(self.db, new_sub)
+            self.db.commit()
+            self.new_sub = new_sub
+            ModernDialog(
+                self,
+                "نجاح",
+                f"تم إشراك ({self.sub.name}) في ({cat_obj.name}) برقم (#{num_obj.number}) بنجاح ✅"
+            ).exec()
+            self.accept()
+        except Exception as e:
+            self.db.rollback()
+            ModernDialog(self, "خطأ", f"فشل إتمام الاشتراك: {e}").exec()
+
+
 class AccountDetailsDialog(QDialog):
     def __init__(self, parent, sub_id, db):
         super().__init__(parent)
         self.sub_id = sub_id
         self.db = db
+        self._changes_made = False
         sub = db.get(db_mod.Subscriber, sub_id)
         
-        self.setWindowTitle(f"كشف حساب - {sub.name}")
-        self.resize(850, 600)
+        self.setWindowTitle(f"كشف حساب - {sub.name if sub else ''}")
+        self.resize(960, 620)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 25, 25, 25)
-        layout.setSpacing(20)
+        layout.setSpacing(18)
         
         header = QHBoxLayout()
-        title = QLabel(f"كشف الحساب: {sub.name}")
-        title.setObjectName("SectionTitle")
-        header.addWidget(title)
+        header.setSpacing(8)
+        self.lbl_title = QLabel(f"كشف الحساب: {sub.name if sub else ''}")
+        self.lbl_title.setObjectName("SectionTitle")
+        header.addWidget(self.lbl_title)
+
+        # شارة الفئة والرقم الحالي
+        self.lbl_current_cat_badge = QLabel("")
+        self.lbl_current_cat_badge.setStyleSheet("""
+            background-color: #e0f2fe;
+            color: #0369a1;
+            font-weight: 800;
+            font-size: 12px;
+            padding: 5px 12px;
+            border-radius: 10px;
+            border: 1px solid #bae6fd;
+        """)
+        header.addWidget(self.lbl_current_cat_badge)
+
+        # زر أرقام الفئات التي اشترك فيها المشترك والتنقل بين حساباته (يظهر بجانب الفئة الحالية عند اشتراكه في أكثر من فئة)
+        self.btn_switch_cat_account = QPushButton("🔄 أرقام الفئات المشترك بها")
+        self.btn_switch_cat_account.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_switch_cat_account.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #f59e0b, stop:1 #d97706);
+                color: #ffffff;
+                font-weight: 900;
+                font-size: 12px;
+                padding: 6px 14px;
+                border-radius: 10px;
+                border: 1.5px solid #fde68a;
+            }
+            QPushButton:hover {
+                background: #b45309;
+            }
+        """)
+        self.btn_switch_cat_account.clicked.connect(self.show_linked_accounts_menu)
+        header.addWidget(self.btn_switch_cat_account)
+
+        # زر إشراك المشترك في فئة أخرى
+        self.btn_join_other_cat = QPushButton("➕ فئة أخرى")
+        self.btn_join_other_cat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_join_other_cat.setToolTip("إشراك المشترك في فئة إضافية أخرى واختيار رقم له فيها")
+        self.btn_join_other_cat.setStyleSheet("""
+            QPushButton {
+                background-color: #059669;
+                color: white;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 6px 12px;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #047857;
+            }
+        """)
+        self.btn_join_other_cat.clicked.connect(self.open_join_another_category_dialog)
+        header.addWidget(self.btn_join_other_cat)
         
         btn_add = QPushButton("قيد يدوي")
         btn_add.setObjectName("PrimaryBtn")
-        btn_add.setFixedWidth(100)
+        btn_add.setFixedWidth(95)
         btn_add.clicked.connect(self.add_payment)
         
         btn_exp_ex = QPushButton("إكسل")
-        btn_exp_ex.setFixedWidth(70)
+        btn_exp_ex.setFixedWidth(65)
         btn_exp_ex.clicked.connect(self.export_history_excel)
         
         btn_exp_pdf = QPushButton("PDF")
-        btn_exp_pdf.setFixedWidth(70)
+        btn_exp_pdf.setFixedWidth(65)
         btn_exp_pdf.setObjectName("DangerBtn")
         btn_exp_pdf.clicked.connect(self.export_history_pdf)
         
         btn_pay_multi = QPushButton("تسديد المختار")
         btn_pay_multi.setObjectName("PrimaryBtn")
-        btn_pay_multi.setFixedWidth(115)
+        btn_pay_multi.setFixedWidth(110)
         btn_pay_multi.clicked.connect(self.pay_selected_payments)
 
         btn_del_multi = QPushButton("حذف المختار")
         btn_del_multi.setObjectName("DangerBtn")
-        btn_del_multi.setFixedWidth(110)
+        btn_del_multi.setFixedWidth(105)
         btn_del_multi.clicked.connect(self.delete_selected_payments)
         
         header.addStretch()
@@ -3700,12 +3919,87 @@ class AccountDetailsDialog(QDialog):
             ModernDialog(self, "نجاح", f"تم تصدير {filename} بنجاح").exec()
         except Exception as e: ModernDialog(self, "خطأ", str(e)).exec()
 
+    def _update_account_switcher_header(self):
+        """تحديث شارة الفئة الحالية وزر أرقام الفئات المشترك بها للتنقل بين حسابات المشترك."""
+        sub = self.db.get(db_mod.Subscriber, self.sub_id)
+        if not sub:
+            return
+        self.setWindowTitle(f"كشف حساب - {sub.name or ''} ({sub.category or ''} - #{sub.subscriber_number or ''})")
+        if hasattr(self, "lbl_title"):
+            self.lbl_title.setText(f"كشف الحساب: {sub.name or ''}")
+        if hasattr(self, "lbl_current_cat_badge"):
+            self.lbl_current_cat_badge.setText(f"🏷️ {sub.category or 'بدون فئة'}  |  🔢 #{sub.subscriber_number or '-'}")
+
+        linked = db_mod.get_linked_subscriber_accounts(self.db, sub)
+        if hasattr(self, "btn_switch_cat_account"):
+            if len(linked) > 1:
+                self.btn_switch_cat_account.setText(f"🔄 أرقام فئات المشترك ({len(linked)}) ▾")
+                self.btn_switch_cat_account.show()
+            else:
+                self.btn_switch_cat_account.hide()
+
+    def show_linked_accounts_menu(self):
+        """عرض قائمة بأرقام المشترك في جميع الفئات المشترك بها للانتقال الفوري بين حساباته."""
+        sub = self.db.get(db_mod.Subscriber, self.sub_id)
+        if not sub:
+            return
+        linked = db_mod.get_linked_subscriber_accounts(self.db, sub)
+        menu = QMenu(self)
+        menu.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 2px solid #f59e0b;
+                border-radius: 10px;
+                padding: 6px;
+                font-family: 'Tajawal';
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QMenu::item {
+                padding: 8px 18px;
+                border-radius: 6px;
+                margin: 2px 4px;
+            }
+            QMenu::item:selected {
+                background-color: #1e293b;
+                color: #fde047;
+            }
+        """)
+        for acc in linked:
+            is_curr = (acc.id == self.sub_id)
+            prefix = "✅ " if is_curr else "🏷️ "
+            suffix = "  (الحساب المفتوح حالياً)" if is_curr else "  ⬅️ انتقال لهذا الحساب"
+            act = QAction(f"{prefix}{acc.category or 'بدون فئة'} — رقم المشترك: #{acc.subscriber_number or '-'}{suffix}", self)
+            act.triggered.connect(lambda checked=False, tid=acc.id: self.switch_to_account(tid))
+            menu.addAction(act)
+
+        pos = self.btn_switch_cat_account.mapToGlobal(QPoint(0, self.btn_switch_cat_account.height() + 4))
+        menu.exec(pos)
+
+    def switch_to_account(self, target_sub_id):
+        """التبديل الفوري إلى حساب المشترك في الفئة المختارة."""
+        if not target_sub_id or int(target_sub_id) == int(self.sub_id):
+            return
+        self.sub_id = int(target_sub_id)
+        self.load_payments()
+
+    def open_join_another_category_dialog(self):
+        """فتح نافذة إشراك المشترك الحالي في فئة إضافية أخرى."""
+        dlg = JoinAnotherCategoryDialog(self, self.sub_id, self.db)
+        if dlg.exec() and dlg.new_sub:
+            self._changes_made = True
+            self.sub_id = dlg.new_sub.id
+            self.load_payments()
+
     def load_payments(self):
         try:
             self.db.rollback()
         except Exception:
             pass
         self.db.expire_all() # Ensure fresh data
+        self._update_account_switcher_header()
         payments = self.db.query(db_mod.Payment).filter(db_mod.Payment.subscriber_id == self.sub_id).order_by(
             db_mod.Payment.cycle_number.desc(),
             db_mod.Payment.installment_number.desc(),
@@ -3958,28 +4252,39 @@ class AccountDetailsDialog(QDialog):
 
     def add_payment(self):
         sub = self.db.get(db_mod.Subscriber, self.sub_id)
-        cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first()
-        cat_amount = cat.amount if cat else 0
-        max_c = cat.max_cycles if cat else 10
-        max_i = cat.max_installments if cat else 24
+        cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first() if sub else None
+        cat_amount = float(cat.amount or 0) if cat else 0.0
+        max_c = max(1, int(cat.max_cycles or 10)) if cat else 10
+        max_i = max(1, int(cat.max_installments or 24)) if cat else 24
 
         staff_list = self.db.query(db_mod.Staff).all()
-        
-        dialog = PaymentDialog(self, max_cycles=max_c, max_inst=max_i, staff_list=staff_list)
+
+        dialog = PaymentDialog(
+            self,
+            max_cycles=max_c,
+            max_inst=max_i,
+            staff_list=staff_list,
+            default_amount=cat_amount if cat_amount > 0 else None,
+        )
         if dialog.exec():
             try:
-                entered_amount = float(dialog.ent_amount.text())
+                entered_amount = float(dialog.ent_amount.text().strip())
                 is_paid = (dialog.cb_paid.currentIndex() == 1)
-                cycle = int(dialog.cb_cycle.currentText())
-                inst = int(dialog.cb_inst.currentText())
+                cycle = int(dialog.cb_cycle.currentText() or 1)
+                inst = int(dialog.cb_inst.currentText() or 1)
                 date = datetime.datetime.combine(dialog.ent_date.date().toPyDate(), datetime.time.min)
-                note = dialog.ent_note.text()
+                note = dialog.ent_note.text().strip()
                 staff_id = dialog.cb_staff.currentData()
+                if not staff_id and self.parent() and getattr(self.parent(), "logged_in_staff", None):
+                    staff_id = self.parent().logged_in_staff.id
 
                 if is_paid and cat_amount > 0:
-                    self._start_smart_payment_worker(
+                    processed_count = self._execute_smart_payment_sync(
                         entered_amount, cycle, inst, date, note, cat_amount, max_c, max_i, staff_id
                     )
+                    self._changes_made = True
+                    self.load_payments()
+                    ModernDialog(self, "نجاح", f"تم تسجيل السداد ومعالجة {processed_count} قسط بنجاح").exec()
                 else:
                     new_p = db_mod.Payment(
                         subscriber_id=self.sub_id,
@@ -3991,117 +4296,234 @@ class AccountDetailsDialog(QDialog):
                         cycle_number=cycle,
                         note=note,
                         staff_id=staff_id,
-                        is_staff_settled=False if is_paid else None
+                        is_staff_settled=False if is_paid else None,
                     )
                     self.db.add(new_p)
                     self.db.commit()
+                    self._changes_made = True
                     self.load_payments()
+                    ModernDialog(self, "نجاح", "تم تسجيل القيد اليدوي بنجاح").exec()
             except Exception as e:
-                ModernDialog(self, "خطأ", f"بيانات غير صحيحة: {e}").exec()
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
+                ModernDialog(self, "خطأ", f"حدث خطأ أثناء تسجيل القيد: {e}").exec()
 
-    def _start_smart_payment_worker(self, entered_amount, cycle, inst, date, note, cat_amount, max_c, max_i, staff_id):
-        est_count = max(1, int(entered_amount // cat_amount) + (1 if entered_amount % cat_amount > 0 else 0)) if cat_amount > 0 else 1
-        db_url = get_safe_db_url(self.db)
+    def _execute_smart_payment_sync(self, total_amount, cycle, inst, date, note, cat_amount, max_c, max_i, staff_id=None):
+        """توزيع وتسديد المبلغ مباشرة على قاعدة البيانات المحلية بسرعة فورية ومع تفعيل المزامنة السحابية."""
+        sub = self.db.get(db_mod.Subscriber, self.sub_id)
+        staff_obj = self.db.get(db_mod.Staff, staff_id) if staff_id else None
+        s_name = staff_obj.name if staff_obj else None
 
-        self._pay_loading = LoadingDialog(
-            self,
-            title="⏳ جاري تسجيل السداد...",
-            message=f"جاري توزيع المبلغ على الأقساط (تقديرياً {est_count} قسط) — يرجى الانتظار"
-        )
-        self._pay_loading.progress_bar.setRange(0, max(est_count, 1))
-        self._pay_loading.progress_bar.setValue(0)
-        self._pay_loading.show()
+        cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first() if sub else None
+        cat_start = (cat.start_date.date() if hasattr(cat.start_date, 'date') else cat.start_date) if (cat and cat.start_date) else None
 
-        self._smart_worker = _SmartPaymentWorker(
-            db_url=db_url, sub_id=self.sub_id,
-            total_amount=entered_amount, cycle=cycle, inst=inst,
-            date=date, note=note, cat_amount=cat_amount,
-            max_c=max_c, max_i=max_i, staff_id=staff_id
-        )
-        self._smart_worker.progress.connect(self._on_smart_payment_progress)
-        self._smart_worker.finished.connect(self._on_smart_payment_finished)
-        self._smart_worker.error.connect(self._on_smart_payment_error)
-        self._smart_worker.start()
+        remaining = float(total_amount)
+        processed = 0
 
-    def _on_smart_payment_progress(self, current: int, total: int, msg: str):
-        if getattr(self, '_pay_loading', None):
-            self._pay_loading.progress_bar.setRange(0, max(total, current, 1))
-            self._pay_loading.progress_bar.setValue(current)
-            self._pay_loading.set_message(msg, title="⏳ جاري تسجيل السداد...")
+        all_sub_payments = self.db.query(db_mod.Payment).filter(
+            db_mod.Payment.subscriber_id == self.sub_id
+        ).order_by(
+            db_mod.Payment.cycle_number.asc(),
+            db_mod.Payment.installment_number.asc()
+        ).all()
 
-    def _on_smart_payment_finished(self, processed_count: int):
-        if getattr(self, '_pay_loading', None):
-            self._pay_loading.close()
-            self._pay_loading = None
-        try:
-            self.db.expire_all()
-        except Exception:
-            pass
-        self.load_payments()
-        if hasattr(self.parent(), 'load_subscribers'):
-            try:
-                self.parent().load_subscribers()
-            except Exception:
-                pass
-        ModernDialog(self, "نجاح", f"تم تسجيل السداد ومعالجة {processed_count} قسط بنجاح").exec()
+        targets = [p for p in all_sub_payments if not p.is_paid]
+        last_processed_c = 0
+        last_processed_i = 0
 
-    def _on_smart_payment_error(self, err_msg: str):
-        if getattr(self, '_pay_loading', None):
-            self._pay_loading.close()
-            self._pay_loading = None
-        try:
-            self.db.rollback()
-        except Exception:
-            pass
-        ModernDialog(self, "خطأ", f"حدث خطأ أثناء تسجيل السداد: {err_msg}").exec()
+        # 1. توزيع المبلغ على الأقساط غير المسددة الموجودة أولاً (FIFO)
+        for p in targets:
+            if remaining <= 0:
+                break
+
+            if remaining < p.amount:
+                balance = p.amount - remaining
+                p.amount = remaining
+                p.is_paid = True
+                p.paid_date = date
+                p.staff_id = staff_id
+                p.is_staff_settled = False
+                p.note = db_mod.build_installment_note(
+                    is_paid=True, due_date=p.due_date, paid_date=date,
+                    user_note=note, staff_name=s_name, is_partial=True
+                )
+                new_unpaid = db_mod.Payment(
+                    subscriber_id=self.sub_id,
+                    amount=balance,
+                    due_date=p.due_date,
+                    is_paid=False,
+                    cycle_number=p.cycle_number,
+                    installment_number=p.installment_number,
+                    note=db_mod.build_installment_note(is_paid=False, due_date=p.due_date, is_partial=True)
+                )
+                self.db.add(new_unpaid)
+                all_sub_payments.append(new_unpaid)
+                remaining = 0
+            else:
+                pay_now = p.amount
+                p.is_paid = True
+                p.paid_date = date
+                p.staff_id = staff_id
+                p.is_staff_settled = False
+                p.note = db_mod.build_installment_note(
+                    is_paid=True, due_date=p.due_date, paid_date=date,
+                    user_note=note, staff_name=s_name
+                )
+                remaining -= pay_now
+
+            last_processed_c = p.cycle_number
+            last_processed_i = p.installment_number
+            processed += 1
+
+        # 2. إذا بقي رصيد، نكمل للأمام باستخدام القاموس في الذاكرة
+        if remaining > 0:
+            lookup = {(p.cycle_number, p.installment_number): p for p in all_sub_payments}
+            if last_processed_c > 0:
+                curr_c, curr_i = last_processed_c, last_processed_i + 1
+                if curr_i > max_i:
+                    curr_i = 1
+                    curr_c += 1
+            else:
+                curr_c, curr_i = cycle, inst
+
+            safety_counter = 0
+            max_safety = max(1, max_c * max_i)
+
+            while remaining > 0 and curr_c <= max_c and safety_counter < max_safety:
+                safety_counter += 1
+                p = lookup.get((curr_c, curr_i))
+
+                if p and p.is_paid:
+                    curr_i += 1
+                    if curr_i > max_i:
+                        curr_i = 1
+                        curr_c += 1
+                    continue
+
+                pay_now = min(remaining, cat_amount)
+                is_partial = (pay_now < cat_amount)
+
+                if cat_start:
+                    day_offset = (curr_c - 1) * max_i + (curr_i - 1)
+                    sched_due = datetime.datetime.combine(cat_start + datetime.timedelta(days=day_offset), datetime.time.min)
+                else:
+                    sched_due = date
+
+                p_due = p.due_date if (p and p.due_date) else sched_due
+                new_note = db_mod.build_installment_note(
+                    is_paid=True, due_date=p_due, paid_date=date,
+                    user_note=note, staff_name=s_name, is_partial=is_partial
+                )
+
+                if p:
+                    if pay_now < p.amount:
+                        balance = p.amount - pay_now
+                        p.amount = pay_now
+                        p.is_paid = True
+                        p.paid_date = date
+                        p.staff_id = staff_id
+                        p.is_staff_settled = False
+                        p.note = new_note
+                        new_unpaid = db_mod.Payment(
+                            subscriber_id=self.sub_id,
+                            amount=balance,
+                            due_date=p.due_date,
+                            is_paid=False,
+                            cycle_number=curr_c,
+                            installment_number=curr_i,
+                            note=db_mod.build_installment_note(is_paid=False, due_date=p.due_date, is_partial=True)
+                        )
+                        self.db.add(new_unpaid)
+                        remaining = 0
+                    else:
+                        p.amount = pay_now
+                        p.is_paid = True
+                        p.paid_date = date
+                        p.staff_id = staff_id
+                        p.is_staff_settled = False
+                        p.note = new_note
+                        remaining -= pay_now
+                else:
+                    new_paid = db_mod.Payment(
+                        subscriber_id=self.sub_id,
+                        amount=pay_now,
+                        due_date=sched_due,
+                        paid_date=date,
+                        is_paid=True,
+                        cycle_number=curr_c,
+                        installment_number=curr_i,
+                        note=new_note,
+                        staff_id=staff_id,
+                        is_staff_settled=False
+                    )
+                    self.db.add(new_paid)
+                    lookup[(curr_c, curr_i)] = new_paid
+
+                    if pay_now < cat_amount:
+                        new_unpaid = db_mod.Payment(
+                            subscriber_id=self.sub_id,
+                            amount=cat_amount - pay_now,
+                            due_date=sched_due,
+                            is_paid=False,
+                            cycle_number=curr_c,
+                            installment_number=curr_i,
+                            note=db_mod.build_installment_note(is_paid=False, due_date=sched_due, is_partial=True)
+                        )
+                        self.db.add(new_unpaid)
+                        remaining = 0
+                    else:
+                        remaining -= pay_now
+
+                processed += 1
+                curr_i += 1
+                if curr_i > max_i:
+                    curr_i = 1
+                    curr_c += 1
+
+        self.db.commit()
+        return processed
 
     def edit_payment(self, pid):
         p = self.db.get(db_mod.Payment, pid)
         sub = self.db.get(db_mod.Subscriber, self.sub_id)
-        cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first()
-        cat_amount = cat.amount if cat else 0
-        max_c = cat.max_cycles if cat else 10
-        max_i = cat.max_installments if cat else 24
+        cat = self.db.query(db_mod.Category).filter(db_mod.Category.name == sub.category).first() if sub else None
+        cat_amount = float(cat.amount or 0) if cat else 0.0
+        max_c = max(1, int(cat.max_cycles or 10)) if cat else 10
+        max_i = max(1, int(cat.max_installments or 24)) if cat else 24
 
         staff_list = self.db.query(db_mod.Staff).all()
         
         dialog = PaymentDialog(self, p, max_cycles=max_c, max_inst=max_i, staff_list=staff_list)
         if dialog.exec():
             try:
-                entered_amount = float(dialog.ent_amount.text())
+                entered_amount = float(dialog.ent_amount.text().strip())
                 is_paid = (dialog.cb_paid.currentIndex() == 1)
-                cycle = int(dialog.cb_cycle.currentText())
-                inst = int(dialog.cb_inst.currentText())
+                cycle = int(dialog.cb_cycle.currentText() or 1)
+                inst = int(dialog.cb_inst.currentText() or 1)
                 date = datetime.datetime.combine(dialog.ent_date.date().toPyDate(), datetime.time.min)
-                note = dialog.ent_note.text()
+                note = dialog.ent_note.text().strip()
                 staff_id = dialog.cb_staff.currentData()
 
-                if is_paid and cat_amount > 0:
-                    # تعديل مباشر للقسط الموجود - لا نستخدم process_smart_payment
-                    # لأنه يُنشئ سداداً جديداً إضافياً فيتضاعف المبلغ في الإجمالي
-                    p.amount = entered_amount
-                    p.due_date = date
-                    p.is_paid = is_paid
-                    p.paid_date = date if is_paid else None
-                    p.installment_number = inst
-                    p.cycle_number = cycle
-                    p.note = note
-                    p.staff_id = staff_id
+                p.amount = entered_amount
+                p.due_date = date
+                p.is_paid = is_paid
+                p.paid_date = date if is_paid else None
+                p.installment_number = inst
+                p.cycle_number = cycle
+                p.note = note
+                p.staff_id = staff_id
+                if is_paid:
                     p.is_staff_settled = False
-                    self.db.commit()
-                else:
-                    p.amount = entered_amount
-                    p.due_date = date
-                    p.is_paid = is_paid
-                    p.paid_date = date if is_paid else None
-                    p.installment_number = inst
-                    p.cycle_number = cycle
-                    p.note = note
-                    p.staff_id = staff_id
-                    self.db.commit()
-                
+                self.db.commit()
+                self._changes_made = True
                 self.load_payments()
             except Exception as e:
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
                 ModernDialog(self, "خطأ", f"بيانات غير صحيحة: {e}").exec()
 
     def show_context_menu(self, pos):
@@ -4152,64 +4574,41 @@ class AccountDetailsDialog(QDialog):
         if not ModernDialog(self, "تأكيد التسديد", f"هل تريد تسديد {count} قسط محدد الآن؟", is_confirm=True).exec():
             return
 
-        staff = getattr(self.parent(), 'logged_in_staff', None)
-        staff_id = staff.id if staff else None
-        db_url = get_safe_db_url(self.db)
-
-        self._pay_sel_loading = LoadingDialog(
-            self,
-            title="⏳ جاري تسديد الأقساط المختارة...",
-            message=f"جاري تسديد 0 من {count} قسط — يرجى الانتظار"
-        )
-        self._pay_sel_loading.progress_bar.setRange(0, max(count, 1))
-        self._pay_sel_loading.progress_bar.setValue(0)
-        self._pay_sel_loading.show()
-
-        self._pay_sel_worker = _PaySelectedPaymentsWorker(
-            db_url=db_url, payment_ids=payment_ids, staff_id=staff_id
-        )
-        self._pay_sel_worker.progress.connect(self._on_pay_selected_progress)
-        self._pay_sel_worker.finished.connect(self._on_pay_selected_finished)
-        self._pay_sel_worker.error.connect(self._on_pay_selected_error)
-        self._pay_sel_worker.start()
-
-    def _on_pay_selected_progress(self, current: int, total: int):
-        if getattr(self, '_pay_sel_loading', None):
-            self._pay_sel_loading.progress_bar.setValue(current)
-            self._pay_sel_loading.set_message(
-                f"تم تسديد {current} من {total} قسط...",
-                title="⏳ جاري تسديد الأقساط المختارة..."
-            )
-
-    def _on_pay_selected_finished(self, paid_count: int):
-        if getattr(self, '_pay_sel_loading', None):
-            self._pay_sel_loading.close()
-            self._pay_sel_loading = None
         try:
-            self.db.expire_all()
-        except Exception:
-            pass
-        self.load_payments()
-        if hasattr(self.parent(), 'load_subscribers'):
+            staff = getattr(self.parent(), 'logged_in_staff', None)
+            staff_id = staff.id if staff else None
+            s_name = staff.name if staff else None
+            now_dt = datetime.datetime.now()
+
+            payments = self.db.query(db_mod.Payment).filter(
+                db_mod.Payment.id.in_(payment_ids)
+            ).all()
+
+            paid_count = 0
+            for p in payments:
+                p.is_paid = True
+                p.paid_date = now_dt
+                p.staff_id = staff_id
+                p.is_staff_settled = False
+                p.note = db_mod.build_installment_note(
+                    is_paid=True, due_date=p.due_date, paid_date=now_dt, staff_name=s_name
+                )
+                paid_count += 1
+
+            self.db.commit()
+            self._changes_made = True
+            self.load_payments()
+            ModernDialog(self, "نجاح", f"تم تسديد {paid_count} قسط بنجاح").exec()
+        except Exception as e:
             try:
-                self.parent().load_subscribers()
+                self.db.rollback()
             except Exception:
                 pass
-        ModernDialog(self, "نجاح", f"تم تسديد {paid_count} قسط بنجاح").exec()
-
-    def _on_pay_selected_error(self, err_msg: str):
-        if getattr(self, '_pay_sel_loading', None):
-            self._pay_sel_loading.close()
-            self._pay_sel_loading = None
-        try:
-            self.db.rollback()
-        except Exception:
-            pass
-        ModernDialog(self, "خطأ", f"حدث خطأ أثناء تسديد الأقساط: {err_msg}").exec()
+            ModernDialog(self, "خطأ", f"حدث خطأ أثناء تسديد الأقساط: {e}").exec()
 
     def delete_payment(self, pid):
         if ModernDialog(self, "تأكيد", "هل تريد حذف هذه العملية؟", is_confirm=True).exec():
-            self._start_delete_payments_worker([pid])
+            self._execute_delete_payments_sync([pid])
 
     def delete_selected_payments(self):
         selected_rows = self.table.selectionModel().selectedRows()
@@ -4231,60 +4630,26 @@ class AccountDetailsDialog(QDialog):
 
         count = len(payment_ids)
         if ModernDialog(self, "تأكيد", f"هل تريد حذف {count} عملية مختارة؟", is_confirm=True).exec():
-            self._start_delete_payments_worker(payment_ids)
+            self._execute_delete_payments_sync(payment_ids)
 
-    def _start_delete_payments_worker(self, payment_ids):
-        total = len(payment_ids)
-        db_url = get_safe_db_url(self.db)
-
-        self._del_loading = LoadingDialog(
-            self,
-            title="⏳ جاري حذف الأقساط...",
-            message=f"جاري حذف 0 من {total} عملية — يرجى الانتظار"
-        )
-        self._del_loading.progress_bar.setRange(0, max(total, 1))
-        self._del_loading.progress_bar.setValue(0)
-        self._del_loading.show()
-
-        self._del_worker = _DeletePaymentsWorker(db_url=db_url, payment_ids=payment_ids)
-        self._del_worker.progress.connect(self._on_delete_payments_progress)
-        self._del_worker.finished.connect(self._on_delete_payments_finished)
-        self._del_worker.error.connect(self._on_delete_payments_error)
-        self._del_worker.start()
-
-    def _on_delete_payments_progress(self, current: int, total: int):
-        if getattr(self, '_del_loading', None):
-            self._del_loading.progress_bar.setValue(current)
-            self._del_loading.set_message(
-                f"تم حذف {current} من {total} عملية...",
-                title="⏳ جاري حذف الأقساط..."
-            )
-
-    def _on_delete_payments_finished(self, deleted_count: int):
-        if getattr(self, '_del_loading', None):
-            self._del_loading.close()
-            self._del_loading = None
+    def _execute_delete_payments_sync(self, payment_ids):
         try:
-            self.db.expire_all()
-        except Exception:
-            pass
-        self.load_payments()
-        if hasattr(self.parent(), 'load_subscribers'):
+            objs = self.db.query(db_mod.Payment).filter(
+                db_mod.Payment.id.in_(payment_ids)
+            ).all()
+            deleted_count = len(objs)
+            for obj in objs:
+                self.db.delete(obj)
+            self.db.commit()
+            self._changes_made = True
+            self.load_payments()
+            ModernDialog(self, "نجاح", f"تم حذف {deleted_count} عملية بنجاح").exec()
+        except Exception as e:
             try:
-                self.parent().load_subscribers()
+                self.db.rollback()
             except Exception:
                 pass
-        ModernDialog(self, "نجاح", f"تم حذف {deleted_count} عملية بنجاح").exec()
-
-    def _on_delete_payments_error(self, err_msg: str):
-        if getattr(self, '_del_loading', None):
-            self._del_loading.close()
-            self._del_loading = None
-        try:
-            self.db.rollback()
-        except Exception:
-            pass
-        ModernDialog(self, "خطأ", f"حدث خطأ أثناء الحذف: {err_msg}").exec()
+            ModernDialog(self, "خطأ", f"حدث خطأ أثناء الحذف: {e}").exec()
 
 
 class _SmartPaymentWorker(QThread):
@@ -4500,7 +4865,6 @@ class _SmartPaymentWorker(QThread):
             self.error.emit(str(e))
         finally:
             db.close()
-            engine.dispose()
 
 
 class _PaySelectedPaymentsWorker(QThread):
@@ -4555,7 +4919,6 @@ class _PaySelectedPaymentsWorker(QThread):
             self.error.emit(str(e))
         finally:
             db.close()
-            engine.dispose()
 
 
 class _DeletePaymentsWorker(QThread):
@@ -4600,7 +4963,6 @@ class _DeletePaymentsWorker(QThread):
             self.error.emit(str(e))
         finally:
             db.close()
-            engine.dispose()
 
 class StaffActivityDialog(QDialog):
     def __init__(self, parent, staff_id, db):
