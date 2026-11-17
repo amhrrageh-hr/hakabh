@@ -240,8 +240,12 @@ class SubscribersMixin:
         current_idx = self.sub_tabs.currentIndex()
         if current_idx < 0:
             current_idx = 0
-            
+
+        old_tab_widgets = [self.sub_tabs.widget(i) for i in range(self.sub_tabs.count())]
         self.sub_tabs.clear()
+        for w in old_tab_widgets:
+            if w is not None:
+                w.deleteLater()
         
         curr_season_id = None
         if hasattr(self, 'combo_header_season'):
@@ -347,12 +351,18 @@ class SubscribersMixin:
             content = self.create_sub_cards_view(subs)
             
             old_lay = widget.layout()
-            if old_lay:
-                QWidget().setLayout(old_lay) # Delete old layout and contents
-                
-            new_lay = QVBoxLayout(widget)
-            new_lay.setContentsMargins(0, 0, 0, 0)
-            new_lay.addWidget(content)
+            if old_lay is not None:
+                while old_lay.count():
+                    item = old_lay.takeAt(0)
+                    w = item.widget()
+                    if w is not None:
+                        w.deleteLater()
+                old_lay.setContentsMargins(0, 0, 0, 0)
+                old_lay.addWidget(content)
+            else:
+                new_lay = QVBoxLayout(widget)
+                new_lay.setContentsMargins(0, 0, 0, 0)
+                new_lay.addWidget(content)
             
             widget.setProperty("loaded", True)
         finally:
@@ -1020,11 +1030,33 @@ class SubscribersMixin:
                 self.db.rollback()
                 ModernDialog(self, "خطأ", f"فشل الإضافة: {e}").exec()
     def open_account_details(self, sid):
-        AccountDetailsDialog(self, sid, self.db).exec()
+        dlg = AccountDetailsDialog(self, sid, self.db)
+        dlg.exec()
+        if getattr(dlg, '_changes_made', False):
+            QTimer.singleShot(0, self._refresh_after_account_details)
+
+    def _refresh_after_account_details(self):
+        try:
+            current_page = self.content_stack.currentWidget() if hasattr(self, 'content_stack') else None
+            if current_page == getattr(self, 'page_subscribers', None):
+                self.load_subscribers()
+            elif current_page == getattr(self, 'page_capital', None):
+                self.refresh_capital_stats()
+                self.refresh_current_capital_tab()
+            elif current_page == getattr(self, 'page_draw', None):
+                self.refresh_draw_stats()
+                if hasattr(self, 'draw_tabs') and self.draw_tabs.currentIndex() == 1:
+                    self.load_draw_excluded()
+            elif current_page == getattr(self, 'page_cycles', None):
+                if hasattr(self, 'refresh_cycles_cat_list'):
+                    self.refresh_cycles_cat_list()
+        except Exception:
+            pass
+
     def open_batch_payment(self):
         dialog = BatchPaymentDialog(self, self.db)
         dialog.exec()
-        self.load_subscribers()
+        QTimer.singleShot(0, self.load_subscribers)
     def show_sub_context_menu(self, pos, table):
         row = table.rowAt(pos.y())
         if row < 0: return
