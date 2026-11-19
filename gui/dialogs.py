@@ -1440,27 +1440,62 @@ class DrawAnimationDialog(QDialog):
         target_cycle, q_entries, p_entries, x_entries = self._get_category_report_lists(cat_name)
         self._current_target_cycle = target_cycle
 
+        # حساب كثافة التقرير وحجم الشاشة لضبط حجم الخط وعدد الأعمدة تلقائياً حتى تظهر كافة البيانات دون الحاجة للتمرير
+        avail = get_available_screen_geometry(self)
+        avail_w = avail.width() if avail else 1280
+        avail_h = avail.height() if avail else 760
+        total_items = len(q_entries) + len(p_entries) + len(x_entries)
+        is_small_screen = (avail_h < 760) or (avail_w < 1200)
+
+        if total_items > 90:
+            chip_font, detail_font, hdr_font = 9, 8, 11
+            chip_pad, grid_spacing, card_pad = "1px 4px", 3, 6
+            cols_cnt = 10 if avail_w < 1200 else 12
+            compact_label = True
+            top_title_font, sum_val_font, sum_lbl_font = 15, 14, 10
+        elif total_items > 45:
+            chip_font, detail_font, hdr_font = 10, 9, 12
+            chip_pad, grid_spacing, card_pad = "2px 5px", 4, 7
+            cols_cnt = 8 if avail_w < 1200 else 10
+            compact_label = True
+            top_title_font, sum_val_font, sum_lbl_font = 16, 15, 10
+        elif total_items > 20 or is_small_screen:
+            chip_font, detail_font, hdr_font = 11, 10, 12
+            chip_pad, grid_spacing, card_pad = "3px 6px", 5, 8
+            cols_cnt = 6 if avail_w < 1200 else 8
+            compact_label = True
+            top_title_font, sum_val_font, sum_lbl_font = 17, 16, 11
+        else:
+            chip_font, detail_font, hdr_font = 13, 11, 14
+            chip_pad, grid_spacing, card_pad = "4px 8px", 6, 10
+            cols_cnt = 5 if avail_w < 1200 else 6
+            compact_label = False
+            top_title_font, sum_val_font, sum_lbl_font = 19, 18, 11
+
         # 1. الشريط العلوي لتقرير الفئة
         top_card = QFrame()
-        top_card.setStyleSheet("""
-            QFrame {
+        top_card.setStyleSheet(f"""
+            QFrame {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #064e3b, stop:0.5 #047857, stop:1 #064e3b);
                 border: 2px solid #eab308;
-                border-radius: 14px;
-                padding: 10px 18px;
-            }
+                border-radius: 12px;
+                padding: {6 if compact_label else 8}px 12px;
+            }}
         """)
         top_lay = QHBoxLayout(top_card)
-        top_lay.setSpacing(15)
+        top_lay.setSpacing(10)
+        top_lay.setContentsMargins(6, 4, 6, 4)
 
         title_vbox = QVBoxLayout()
+        title_vbox.setSpacing(2)
         step_lbl = QLabel(
             f"📌 الفئة ({self.current_cat_index + 1} من {len(self.categories)}) — {self.draw_name}"
         )
-        step_lbl.setStyleSheet("font-size: 13px; color: #a7f3d0; font-weight: bold; border: none; background: transparent;")
+        step_lbl.setStyleSheet(f"font-size: {11 if compact_label else 12}px; color: #a7f3d0; font-weight: bold; border: none; background: transparent;")
         main_title = QLabel(f"📋 تقرير فئة: {cat_name}  |  الدورة التي سوف تُقرع: (الدورة رقم {target_cycle})")
-        main_title.setStyleSheet("font-size: 21px; color: #fde047; font-weight: 900; border: none; background: transparent;")
+        main_title.setWordWrap(True)
+        main_title.setStyleSheet(f"font-size: {top_title_font}px; color: #fde047; font-weight: 900; border: none; background: transparent;")
         title_vbox.addWidget(step_lbl)
         title_vbox.addWidget(main_title)
         top_lay.addLayout(title_vbox, 1)
@@ -1469,17 +1504,18 @@ class DrawAnimationDialog(QDialog):
         if info:
             cycle_box_lay = QHBoxLayout()
             lbl_ch = QLabel("تغيير الدورة:")
-            lbl_ch.setStyleSheet("font-size: 13px; color: #fef08a; font-weight: bold; border: none; background: transparent;")
+            lbl_ch.setStyleSheet("font-size: 12px; color: #fef08a; font-weight: bold; border: none; background: transparent;")
             combo_c = QComboBox()
-            combo_c.setMinimumWidth(190)
-            combo_c.setFixedHeight(36)
+            combo_c.setMinimumWidth(145)
+            combo_c.setFixedHeight(32)
             combo_c.setStyleSheet("""
                 QComboBox {
                     background-color: #022c22;
                     color: #fef08a;
                     border: 1px solid #eab308;
                     border-radius: 8px;
-                    padding: 4px 10px;
+                    padding: 3px 8px;
+                    font-size: 12px;
                     font-weight: bold;
                 }
             """)
@@ -1511,7 +1547,7 @@ class DrawAnimationDialog(QDialog):
 
         # 2. بطاقات الملخص الرقمية الأربع
         summary_row = QHBoxLayout()
-        summary_row.setSpacing(12)
+        summary_row.setSpacing(8)
         summary_items = [
             ("🎯 رقم الدورة المقررة", f"الدورة {target_cycle}", "#38bdf8", "#0c4a6e"),
             ("🟢 المؤهلون في هذه الدورة", f"{len(q_entries)} مشترك", "#4ade80", "#064e3b"),
@@ -1524,19 +1560,20 @@ class DrawAnimationDialog(QDialog):
                 QFrame {{
                     background-color: {bg_col};
                     border: 1px solid {fg_col};
-                    border-radius: 10px;
-                    padding: 8px 12px;
+                    border-radius: 9px;
+                    padding: {4 if compact_label else 6}px 8px;
                 }}
             """)
             s_v = QVBoxLayout(s_card)
-            s_v.setSpacing(2)
-            s_v.setContentsMargins(6, 6, 6, 6)
+            s_v.setSpacing(1)
+            s_v.setContentsMargins(4, 3, 4, 3)
             l1 = QLabel(s_title)
+            l1.setWordWrap(True)
             l1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            l1.setStyleSheet("font-size: 12px; color: #e2e8f0; font-weight: bold; border: none; background: transparent;")
+            l1.setStyleSheet(f"font-size: {sum_lbl_font}px; color: #e2e8f0; font-weight: bold; border: none; background: transparent;")
             l2 = QLabel(s_val)
             l2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            l2.setStyleSheet(f"font-size: 20px; color: {fg_col}; font-weight: 900; border: none; background: transparent;")
+            l2.setStyleSheet(f"font-size: {sum_val_font}px; color: {fg_col}; font-weight: 900; border: none; background: transparent;")
             s_v.addWidget(l1)
             s_v.addWidget(l2)
             summary_row.addWidget(s_card)
@@ -1546,74 +1583,75 @@ class DrawAnimationDialog(QDialog):
         # 3. منطقة التفاصيل للأقسام الثلاثة (المؤهلون | الفائزون سابقاً | الذين خرجوا من القرعة)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         scroll_con = QWidget()
         scroll_con.setStyleSheet("background: transparent;")
         sections_lay = QVBoxLayout(scroll_con)
         sections_lay.setContentsMargins(0, 0, 0, 0)
-        sections_lay.setSpacing(12)
+        sections_lay.setSpacing(6 if compact_label else 10)
 
         def _build_section_card(sec_title, sec_subtitle, border_col, header_bg, badge_bg, badge_fg, items_text_list, empty_msg):
             frame = QFrame()
             frame.setStyleSheet(f"""
                 QFrame {{
                     background-color: rgba(15, 23, 42, 0.85);
-                    border: 2px solid {border_col};
-                    border-radius: 12px;
+                    border: 1.5px solid {border_col};
+                    border-radius: 10px;
                 }}
             """)
             flay = QVBoxLayout(frame)
-            flay.setContentsMargins(14, 12, 14, 12)
-            flay.setSpacing(8)
+            flay.setContentsMargins(card_pad, card_pad, card_pad, card_pad)
+            flay.setSpacing(4 if compact_label else 6)
 
             hdr = QFrame()
-            hdr.setStyleSheet(f"background-color: {header_bg}; border-radius: 8px; border: none; padding: 6px 12px;")
+            hdr.setStyleSheet(f"background-color: {header_bg}; border-radius: 7px; border: none; padding: 3px 8px;")
             h_l = QHBoxLayout(hdr)
-            h_l.setContentsMargins(8, 4, 8, 4)
+            h_l.setContentsMargins(6, 2, 6, 2)
             t_lbl = QLabel(sec_title)
-            t_lbl.setStyleSheet(f"font-size: 15px; font-weight: 900; color: {badge_fg}; border: none; background: transparent;")
-            sub_lbl = QLabel(sec_subtitle)
-            sub_lbl.setStyleSheet("font-size: 12px; color: #cbd5e1; border: none; background: transparent;")
-            h_l.addWidget(t_lbl)
-            h_l.addStretch()
-            h_l.addWidget(sub_lbl)
+            t_lbl.setWordWrap(True)
+            t_lbl.setStyleSheet(f"font-size: {hdr_font}px; font-weight: 900; color: {badge_fg}; border: none; background: transparent;")
+            h_l.addWidget(t_lbl, 1)
             flay.addWidget(hdr)
 
             if not items_text_list:
                 emp = QLabel(empty_msg)
-                emp.setStyleSheet("font-size: 13px; color: #94a3b8; padding: 6px 10px; border: none; background: transparent;")
+                emp.setWordWrap(True)
+                emp.setStyleSheet(f"font-size: {chip_font}px; color: #94a3b8; padding: 3px 8px; border: none; background: transparent;")
                 flay.addWidget(emp)
             else:
-                # عرض أرقام المشتركين فقط في شبكة شارات واضحة ومقروءة بدون أسماء أو هواتف
+                # عرض أرقام المشتركين في شبكة متجاوبة تتقلص خطوطها تلقائياً مع زيادة العدد لإظهار كافة البيانات بوضوح
                 grid_w = QWidget()
                 grid_w.setStyleSheet("background: transparent; border: none;")
                 g_lay = QGridLayout(grid_w)
-                g_lay.setContentsMargins(4, 4, 4, 4)
-                g_lay.setSpacing(8)
-                cols_cnt = 5
+                g_lay.setContentsMargins(2, 2, 2, 2)
+                g_lay.setSpacing(grid_spacing)
                 for idx_item, (num_txt, detail_txt) in enumerate(items_text_list):
                     chip = QFrame()
                     chip.setStyleSheet(f"""
                         QFrame {{
                             background-color: {badge_bg};
                             border: 1px solid {border_col};
-                            border-radius: 8px;
-                            padding: 5px 10px;
+                            border-radius: 6px;
+                            padding: {chip_pad};
                         }}
                     """)
                     c_lay = QHBoxLayout(chip)
-                    c_lay.setContentsMargins(8, 4, 8, 4)
-                    c_lay.setSpacing(6)
+                    c_lay.setContentsMargins(4, 2, 4, 2)
+                    c_lay.setSpacing(4)
 
-                    n_lbl = QLabel(f"رقم المشترك: {num_txt}")
-                    n_lbl.setStyleSheet(f"font-size: 14px; font-weight: 900; color: {badge_fg}; border: none; background: transparent;")
+                    lbl_str = f"#{num_txt}" if compact_label else f"رقم: {num_txt}"
+                    n_lbl = QLabel(lbl_str)
+                    n_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    n_lbl.setStyleSheet(f"font-size: {chip_font}px; font-weight: 900; color: {badge_fg}; border: none; background: transparent;")
                     c_lay.addWidget(n_lbl)
                     if detail_txt:
                         d_lbl = QLabel(detail_txt)
-                        d_lbl.setStyleSheet("font-size: 12px; color: #e2e8f0; font-weight: bold; border: none; background: transparent;")
+                        d_lbl.setStyleSheet(f"font-size: {detail_font}px; color: #e2e8f0; font-weight: bold; border: none; background: transparent;")
                         c_lay.addWidget(d_lbl)
-                    c_lay.addStretch()
                     g_lay.addWidget(chip, idx_item // cols_cnt, idx_item % cols_cnt)
+                for c_k in range(cols_cnt):
+                    g_lay.setColumnStretch(c_k, 1)
                 flay.addWidget(grid_w)
 
             return frame
@@ -1911,28 +1949,38 @@ class DrawAnimationDialog(QDialog):
         """عرض التقرير النهائي الشامل للفائزين من كل فئة (رقم الدورة ورقم المشترك فقط بدون الأسماء أو الهواتف)."""
         self._clear_layout(self.final_report_layout)
 
+        avail = get_available_screen_geometry(self)
+        avail_h = avail.height() if avail else 760
+        is_compact = (len(self.winners) > 5) or (avail_h < 760)
+        title_sz = 20 if is_compact else 25
+        card_font = 14 if is_compact else 17
+        win_num_font = 16 if is_compact else 20
+        card_pad = "8px 14px" if is_compact else "12px 20px"
+
         title = QLabel(f"🏆 التقرير النهائي للفائزين — {self.draw_name}")
-        title.setStyleSheet("font-size: 28px; color: #fde047; font-weight: 900; background: transparent;")
+        title.setWordWrap(True)
+        title.setStyleSheet(f"font-size: {title_sz}px; color: #fde047; font-weight: 900; background: transparent;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.final_report_layout.addWidget(title)
 
         sub_title = QLabel("بيان الفائزين من كل فئة (رقم الدورة ورقم المشترك فقط)")
-        sub_title.setStyleSheet("font-size: 14px; color: #a7f3d0; font-weight: bold; margin-bottom: 6px; background: transparent;")
+        sub_title.setStyleSheet("font-size: 13px; color: #a7f3d0; font-weight: bold; margin-bottom: 4px; background: transparent;")
         sub_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.final_report_layout.addWidget(sub_title)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(12)
+        scroll_layout.setSpacing(8 if is_compact else 12)
 
         if not self.winners:
             empty_lbl = QLabel("لم يتم تسجيل أي فائز في هذه الجولة.")
             empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_lbl.setStyleSheet("font-size: 18px; color: #cbd5e1; padding: 30px;")
+            empty_lbl.setStyleSheet("font-size: 16px; color: #cbd5e1; padding: 24px;")
             scroll_layout.addWidget(empty_lbl)
         else:
             for idx_w, item_w in enumerate(self.winners, start=1):
@@ -1943,27 +1991,30 @@ class DrawAnimationDialog(QDialog):
                     cycle_num = 1
 
                 card = QFrame()
-                card.setStyleSheet("""
-                    QFrame {
+                card.setStyleSheet(f"""
+                    QFrame {{
                         background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                             stop:0 #064e3b, stop:0.5 #022c22, stop:1 #0f172a);
-                        border-radius: 14px;
+                        border-radius: 12px;
                         border: 2px solid #eab308;
-                        margin: 4px 16px;
-                        padding: 16px 26px;
-                    }
+                        margin: 2px 8px;
+                        padding: {card_pad};
+                    }}
                 """)
                 card_lay = QHBoxLayout(card)
-                card_lay.setSpacing(24)
+                card_lay.setSpacing(14)
 
                 cat_lbl = QLabel(f"📊 الفئة ({idx_w}): {cat}")
-                cat_lbl.setStyleSheet("font-size: 18px; color: #fde047; font-weight: 900; border: none; background: transparent;")
+                cat_lbl.setWordWrap(True)
+                cat_lbl.setStyleSheet(f"font-size: {card_font}px; color: #fde047; font-weight: 900; border: none; background: transparent;")
 
-                cycle_lbl = QLabel(f"🔄 رقم الدورة: الدورة رقم ({cycle_num})")
-                cycle_lbl.setStyleSheet("font-size: 18px; color: #38bdf8; font-weight: 900; border: none; background: transparent;")
+                cycle_lbl = QLabel(f"🔄 الدورة رقم ({cycle_num})")
+                cycle_lbl.setWordWrap(True)
+                cycle_lbl.setStyleSheet(f"font-size: {card_font}px; color: #38bdf8; font-weight: 900; border: none; background: transparent;")
 
-                sub_num_lbl = QLabel(f"🏆 رقم المشترك الفائز: {sub.subscriber_number}")
-                sub_num_lbl.setStyleSheet("font-size: 22px; color: #4ade80; font-weight: 900; border: none; background: transparent;")
+                sub_num_lbl = QLabel(f"🏆 الفائز: #{sub.subscriber_number}")
+                sub_num_lbl.setWordWrap(True)
+                sub_num_lbl.setStyleSheet(f"font-size: {win_num_font}px; color: #4ade80; font-weight: 900; border: none; background: transparent;")
 
                 card_lay.addWidget(cat_lbl, 1)
                 card_lay.addWidget(cycle_lbl, 1)
@@ -3466,18 +3517,21 @@ class AccountDetailsDialog(QDialog):
         sub = db.get(db_mod.Subscriber, sub_id)
         
         self.setWindowTitle(f"كشف حساب - {sub.name if sub else ''}")
-        fit_dialog_to_screen(self, 960, 620)
+        fit_dialog_to_screen(self, 900, 600)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(25, 25, 25, 25)
-        layout.setSpacing(18)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
         
-        header = QHBoxLayout()
-        header.setSpacing(8)
+        # الصف الأول من الرأس: اسم المشترك والفئة الحالية وأزرار التبديل بين الفئات
+        header_top = QHBoxLayout()
+        header_top.setSpacing(8)
         self.lbl_title = QLabel(f"كشف الحساب: {sub.name if sub else ''}")
         self.lbl_title.setObjectName("SectionTitle")
-        header.addWidget(self.lbl_title)
+        self.lbl_title.setWordWrap(True)
+        self.lbl_title.setStyleSheet("font-size: 16px; font-weight: 800;")
+        header_top.addWidget(self.lbl_title)
 
         # شارة الفئة والرقم الحالي
         self.lbl_current_cat_badge = QLabel("")
@@ -3485,14 +3539,15 @@ class AccountDetailsDialog(QDialog):
             background-color: #e0f2fe;
             color: #0369a1;
             font-weight: 800;
-            font-size: 12px;
-            padding: 5px 12px;
-            border-radius: 10px;
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 8px;
             border: 1px solid #bae6fd;
         """)
-        header.addWidget(self.lbl_current_cat_badge)
+        header_top.addWidget(self.lbl_current_cat_badge)
+        header_top.addStretch()
 
-        # زر أرقام الفئات التي اشترك فيها المشترك والتنقل بين حساباته (يظهر بجانب الفئة الحالية عند اشتراكه في أكثر من فئة)
+        # زر أرقام الفئات التي اشترك فيها المشترك والتنقل بين حساباته
         self.btn_switch_cat_account = QPushButton("🔄 أرقام الفئات المشترك بها")
         self.btn_switch_cat_account.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_switch_cat_account.setStyleSheet("""
@@ -3500,9 +3555,9 @@ class AccountDetailsDialog(QDialog):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #f59e0b, stop:1 #d97706);
                 color: #ffffff;
                 font-weight: 900;
-                font-size: 12px;
-                padding: 6px 14px;
-                border-radius: 10px;
+                font-size: 11px;
+                padding: 5px 10px;
+                border-radius: 8px;
                 border: 1.5px solid #fde68a;
             }
             QPushButton:hover {
@@ -3510,7 +3565,7 @@ class AccountDetailsDialog(QDialog):
             }
         """)
         self.btn_switch_cat_account.clicked.connect(self.show_linked_accounts_menu)
-        header.addWidget(self.btn_switch_cat_account)
+        header_top.addWidget(self.btn_switch_cat_account)
 
         # زر إشراك المشترك في فئة أخرى
         self.btn_join_other_cat = QPushButton("➕ فئة أخرى")
@@ -3521,8 +3576,8 @@ class AccountDetailsDialog(QDialog):
                 background-color: #059669;
                 color: white;
                 font-weight: bold;
-                font-size: 12px;
-                padding: 6px 12px;
+                font-size: 11px;
+                padding: 5px 10px;
                 border-radius: 8px;
             }
             QPushButton:hover {
@@ -3530,43 +3585,43 @@ class AccountDetailsDialog(QDialog):
             }
         """)
         self.btn_join_other_cat.clicked.connect(self.open_join_another_category_dialog)
-        header.addWidget(self.btn_join_other_cat)
+        header_top.addWidget(self.btn_join_other_cat)
+        layout.addLayout(header_top)
+
+        # الصف الثاني من الرأس: أزرار الإجراءات المالية والتصدير (موزعة بشكل متجاوب لا يتجاوز عرض الشاشة)
+        header_actions = QHBoxLayout()
+        header_actions.setSpacing(6)
         
         btn_add = QPushButton("قيد يدوي")
         btn_add.setObjectName("PrimaryBtn")
-        btn_add.setFixedWidth(95)
         btn_add.clicked.connect(self.add_payment)
-        
-        btn_exp_ex = QPushButton("إكسل")
-        btn_exp_ex.setFixedWidth(65)
-        btn_exp_ex.clicked.connect(self.export_history_excel)
-        
-        btn_exp_pdf = QPushButton("PDF")
-        btn_exp_pdf.setFixedWidth(65)
-        btn_exp_pdf.setObjectName("DangerBtn")
-        btn_exp_pdf.clicked.connect(self.export_history_pdf)
         
         btn_pay_multi = QPushButton("تسديد المختار")
         btn_pay_multi.setObjectName("PrimaryBtn")
-        btn_pay_multi.setFixedWidth(110)
         btn_pay_multi.clicked.connect(self.pay_selected_payments)
 
         btn_del_multi = QPushButton("حذف المختار")
         btn_del_multi.setObjectName("DangerBtn")
-        btn_del_multi.setFixedWidth(105)
         btn_del_multi.clicked.connect(self.delete_selected_payments)
+
+        btn_exp_ex = QPushButton("إكسل")
+        btn_exp_ex.clicked.connect(self.export_history_excel)
         
-        header.addStretch()
-        header.addWidget(btn_exp_ex)
-        header.addWidget(btn_exp_pdf)
-        header.addWidget(btn_add)
-        header.addWidget(btn_pay_multi)
-        header.addWidget(btn_del_multi)
-        layout.addLayout(header)
+        btn_exp_pdf = QPushButton("PDF")
+        btn_exp_pdf.setObjectName("DangerBtn")
+        btn_exp_pdf.clicked.connect(self.export_history_pdf)
+        
+        header_actions.addWidget(btn_add)
+        header_actions.addWidget(btn_pay_multi)
+        header_actions.addWidget(btn_del_multi)
+        header_actions.addStretch()
+        header_actions.addWidget(btn_exp_ex)
+        header_actions.addWidget(btn_exp_pdf)
+        layout.addLayout(header_actions)
 
         # شريط ملخص الحساب العلوي
         summary_lay = QHBoxLayout()
-        summary_lay.setSpacing(15)
+        summary_lay.setSpacing(10)
         
         self.lbl_total_paid = self.create_summary_card(summary_lay, "إجمالي المسدد", "#10b981")
         self.lbl_total_remaining = self.create_summary_card(summary_lay, "المبالغ المتبقية", "#ef4444")
@@ -3576,8 +3631,8 @@ class AccountDetailsDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
-            "تاريخ تسديد القسط المستحق",
-            "تاريخ تسديد القسط الفعلي",
+            "تاريخ الاستحقاق",
+            "تاريخ السداد الفعلي",
             "المبلغ",
             "القسط",
             "الدورة",
@@ -3585,6 +3640,13 @@ class AccountDetailsDialog(QDialog):
             "الملاحظة"
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setMinimumSectionSize(48)
+        self.table.setWordWrap(True)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.setStyleSheet(
+            "QTableWidget { font-size: 11px; } "
+            "QHeaderView::section { font-size: 11px; padding: 4px 3px; }"
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -3598,18 +3660,18 @@ class AccountDetailsDialog(QDialog):
     def create_summary_card(self, layout, title, color):
         card = QFrame()
         card.setObjectName("StatCard")
-        card.setFixedHeight(85)
+        card.setFixedHeight(70)
         vbox = QVBoxLayout(card)
-        vbox.setContentsMargins(15, 10, 15, 10)
-        vbox.setSpacing(5)
+        vbox.setContentsMargins(10, 6, 10, 6)
+        vbox.setSpacing(2)
         
         t_lbl = QLabel(title)
-        t_lbl.setStyleSheet("color: #64748b; font-size: 12px; font-weight: bold;")
+        t_lbl.setStyleSheet("color: #64748b; font-size: 11px; font-weight: bold;")
         t_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vbox.addWidget(t_lbl)
         
         v_lbl = QLabel("0.00 ر.ي")
-        v_lbl.setStyleSheet(f"color: {color}; font-size: 20px; font-weight: 800;")
+        v_lbl.setStyleSheet(f"color: {color}; font-size: 16px; font-weight: 800;")
         v_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vbox.addWidget(v_lbl)
         
