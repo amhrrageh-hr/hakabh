@@ -368,8 +368,9 @@ class LuxuryPrizeWheelWidget(QWidget):
     """
     def __init__(self, parent=None, size=540, db=None, hub_config=None):
         super().__init__(parent)
-        self.wheel_size = size
-        self.setFixedSize(size, size)
+        self.display_size = int(size)
+        self.wheel_size = 540
+        self.setFixedSize(self.display_size, self.display_size)
         self.db = db
 
         # 50 قطاعاً: الرقم 49 يظهر مرتين في القمة، تليه الأرقام من 1 إلى 48
@@ -1086,6 +1087,10 @@ class LuxuryPrizeWheelWidget(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
+        scale = self.display_size / float(self.wheel_size)
+        if abs(scale - 1.0) > 1e-4:
+            p.scale(scale, scale)
+
         cx = self.wheel_size / 2.0
         cy = self.wheel_size / 2.0
 
@@ -1145,7 +1150,7 @@ class WheelPreviewDialog(QDialog):
         avail = get_available_screen_geometry(self)
         avail_h = avail.height() if avail else 768
         avail_w = avail.width() if avail else 1024
-        wheel_sz = min(520, max(250, min(avail_h - 200, avail_w - 100)))
+        wheel_sz = min(520, max(240, min(int(avail_h * 0.90) - 140, int(avail_w * 0.90) - 80)))
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet("""
             QDialog {
@@ -1273,58 +1278,61 @@ class DrawAnimationDialog(QDialog):
         self.page_wheel = QWidget()
         self.wheel_page_layout = QVBoxLayout(self.page_wheel)
         self.wheel_page_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.wheel_page_layout.setContentsMargins(10, 6, 10, 6)
-        self.wheel_page_layout.setSpacing(8)
+        is_compact_wheel = avail_h < 760
+        self.wheel_page_layout.setContentsMargins(8, 4, 8, 4)
+        self.wheel_page_layout.setSpacing(5 if is_compact_wheel else 8)
 
         self.cat_label = QLabel("")
         self.cat_label.setStyleSheet(
-            "font-size: 25px; color: #fde047; font-weight: 900; background: transparent;"
+            f"font-size: {19 if is_compact_wheel else 24}px; color: #fde047; font-weight: 900; background: transparent;"
         )
         self.cat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.wheel_page_layout.addWidget(self.cat_label)
 
-        wheel_sz = min(500, max(240, min(avail_h - 270, avail_w - 140)))
+        max_wheel_h = int(avail_h * 0.92) - (205 if is_compact_wheel else 240)
+        max_wheel_w = int(avail_w * 0.92) - 80
+        wheel_sz = min(500, max(240, min(max_wheel_h, max_wheel_w)))
         self.wheel_widget = LuxuryPrizeWheelWidget(self, size=wheel_sz, db=self.db)
         self.wheel_page_layout.addWidget(self.wheel_widget, 0, Qt.AlignmentFlag.AlignCenter)
 
         self.wheel_label = QLabel("---")
-        self.wheel_label.setFixedHeight(44)
-        self.wheel_label.setMinimumWidth(min(440, max(260, avail_w - 120)))
-        self.wheel_label.setStyleSheet("""
-            font-size: 26px;
+        self.wheel_label.setFixedHeight(36 if is_compact_wheel else 44)
+        self.wheel_label.setMinimumWidth(min(420, max(240, avail_w - 120)))
+        self.wheel_label.setStyleSheet(f"""
+            font-size: {20 if is_compact_wheel else 25}px;
             font-weight: 900;
             color: #fef08a;
             background-color: rgba(4, 47, 29, 0.85);
             border: 2px solid #eab308;
-            border-radius: 14px;
-            padding: 4px 20px;
+            border-radius: 12px;
+            padding: 3px 16px;
         """)
         self.wheel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.wheel_page_layout.addWidget(self.wheel_label, 0, Qt.AlignmentFlag.AlignCenter)
 
         self.status_label = QLabel("استعد للسحب...")
-        self.status_label.setStyleSheet("font-size: 18px; color: #a7f3d0; font-weight: bold; background: transparent;")
+        self.status_label.setStyleSheet(f"font-size: {14 if is_compact_wheel else 18}px; color: #a7f3d0; font-weight: bold; background: transparent;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.wheel_page_layout.addWidget(self.status_label)
 
         self.btn_next_after_wheel = QPushButton("الانتقال للفئة التالية ⬅️")
         self.btn_next_after_wheel.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_next_after_wheel.setFixedHeight(44)
-        self.btn_next_after_wheel.setMinimumWidth(min(360, max(240, avail_w - 140)))
-        self.btn_next_after_wheel.setStyleSheet("""
-            QPushButton {
+        self.btn_next_after_wheel.setFixedHeight(38 if is_compact_wheel else 44)
+        self.btn_next_after_wheel.setMinimumWidth(min(340, max(220, avail_w - 140)))
+        self.btn_next_after_wheel.setStyleSheet(f"""
+            QPushButton {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #eab308, stop:0.5 #facc15, stop:1 #ca8a04);
                 color: #052e16;
-                font-size: 16px;
+                font-size: {14 if is_compact_wheel else 16}px;
                 font-weight: 900;
                 border-radius: 12px;
                 border: 2px solid #fef08a;
-                padding: 8px 24px;
-            }
-            QPushButton:hover {
+                padding: 6px 20px;
+            }}
+            QPushButton:hover {{
                 background: #fde047;
-            }
+            }}
         """)
         self.btn_next_after_wheel.clicked.connect(self.next_category)
         self.btn_next_after_wheel.hide()
