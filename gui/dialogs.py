@@ -118,7 +118,7 @@ class LoadingDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setModal(True)
-        self.setFixedSize(400, 160)
+        fit_dialog_to_screen(self, 400, 160, fixed_size=True)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 12, 12, 12)
@@ -283,7 +283,7 @@ class SetupAdminDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("إنشاء حساب المدير الأول")
-        self.setFixedWidth(420)
+        fit_dialog_to_screen(self, 420, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         self.admin_data = None
@@ -2074,7 +2074,7 @@ class SubscriberEditDialog(QDialog):
     def __init__(self, parent, sub):
         super().__init__(parent)
         self.setWindowTitle("تعديل بيانات المشترك")
-        self.setFixedWidth(450)
+        fit_dialog_to_screen(self, 450, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         self.sub = sub
@@ -2115,7 +2115,7 @@ class SeasonDialog(QDialog):
     def __init__(self, parent=None, season=None):
         super().__init__(parent)
         self.setWindowTitle("تعديل الموسم" if season else "إضافة موسم جديد")
-        self.setFixedWidth(460)
+        fit_dialog_to_screen(self, 460, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.season = season
 
@@ -2208,7 +2208,7 @@ class CategoryEditDialog(QDialog):
     def __init__(self, parent, cat):
         super().__init__(parent)
         self.setWindowTitle("تعديل بيانات الفئة")
-        self.setFixedWidth(400)
+        fit_dialog_to_screen(self, 400, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         self.cat = cat
@@ -2257,7 +2257,7 @@ class CreateGroupBatchDialog(QDialog):
     def __init__(self, parent, cat=None):
         super().__init__(parent)
         self.setWindowTitle("فتح مجموعة / دفعة جديدة للفئة")
-        self.setFixedWidth(460)
+        fit_dialog_to_screen(self, 460, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         self.cat = cat
@@ -2359,7 +2359,7 @@ class ExcludeSubscriberDialog(QDialog):
     def __init__(self, parent, subscriber):
         super().__init__(parent)
         self.setWindowTitle("استبعاد مشترك")
-        self.setFixedWidth(440)
+        fit_dialog_to_screen(self, 440, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         self.subscriber = subscriber
@@ -2430,7 +2430,7 @@ class PaymentReceiptDialog(QDialog):
         sub = db.get(db_mod.Subscriber, p.subscriber_id) if p else None
 
         self.setWindowTitle("سند القسط")
-        self.setFixedWidth(450)
+        fit_dialog_to_screen(self, 450, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet("background-color: #f1f5f9;")
 
@@ -2635,7 +2635,7 @@ class PaymentDialog(QDialog):
     def __init__(self, parent, payment=None, max_inst=24, max_cycles=10, staff_list=None, default_amount=None):
         super().__init__(parent)
         self.setWindowTitle("بيانات العملية المالية" if not payment else "تعديل العملية المالية")
-        self.setFixedWidth(400)
+        fit_dialog_to_screen(self, 400, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         max_inst = max(1, int(max_inst or 24))
@@ -2712,7 +2712,7 @@ class AddSubscriberDialog(QDialog):
         super().__init__(parent)
         self.db = db
         self.setWindowTitle("إضافة مشترك جديد")
-        self.resize(500, 450)
+        fit_dialog_to_screen(self, 500, 450)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
@@ -2806,7 +2806,7 @@ class AddStaffDialog(QDialog):
         super().__init__(parent)
         self.is_edit = is_edit
         self.setWindowTitle("تعديل بيانات الموظف" if is_edit else "إنشاء حساب موظف جديد")
-        self.setFixedWidth(400)
+        fit_dialog_to_screen(self, 400, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
@@ -3078,7 +3078,7 @@ class BatchPaymentDialog(QDialog):
         self._worker  = None
         self._loading = None
         self.setWindowTitle("القيد المتعدد - إضافة دفعة لمجموعة")
-        self.resize(600, 700)
+        fit_dialog_to_screen(self, 600, 700)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         layout = QVBoxLayout(self)
@@ -3318,7 +3318,7 @@ class JoinAnotherCategoryDialog(QDialog):
         self.sub = db.get(db_mod.Subscriber, sub_id)
         self.new_sub = None
         self.setWindowTitle(f"إشراك في فئة أخرى — {self.sub.name if self.sub else ''}")
-        self.setFixedWidth(460)
+        fit_dialog_to_screen(self, 460, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         layout = QVBoxLayout(self)
@@ -3466,7 +3466,7 @@ class AccountDetailsDialog(QDialog):
         sub = db.get(db_mod.Subscriber, sub_id)
         
         self.setWindowTitle(f"كشف حساب - {sub.name if sub else ''}")
-        self.resize(960, 620)
+        fit_dialog_to_screen(self, 960, 620)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
@@ -4981,7 +4981,7 @@ class StaffActivityDialog(QDialog):
         staff = db.get(db_mod.Staff, staff_id)
         
         self.setWindowTitle(f"سجل تحصيلات الموظف - {staff.name}")
-        self.resize(800, 550)
+        fit_dialog_to_screen(self, 800, 550)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)

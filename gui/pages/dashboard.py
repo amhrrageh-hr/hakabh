@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 import database as db_mod
-from gui.utils import reshape_text, ServerWorker
+from gui.utils import reshape_text, ServerWorker, fit_dialog_to_screen
 from gui.dialogs import *
 
 class DashboardMixin:
@@ -248,7 +248,7 @@ class DashboardMixin:
 
         dlg = QDialog(self)
         dlg.setWindowTitle("المشتركون المتصلون بالموقع حالياً 🟢")
-        dlg.resize(720, 480)
+        fit_dialog_to_screen(dlg, 720, 480)
         dlg.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         layout = QVBoxLayout(dlg)
         layout.setContentsMargins(25, 25, 25, 25)

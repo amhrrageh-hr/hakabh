@@ -14,14 +14,14 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 import database as db_mod
-from gui.utils import reshape_text, ServerWorker
+from gui.utils import reshape_text, ServerWorker, fit_dialog_to_screen
 from gui.dialogs import *
 
 class GrandPrizePeriodDialog(QDialog):
     def __init__(self, parent, periods_count, weeks_per_period):
         super().__init__(parent)
         self.setWindowTitle("تحديد فترة الجائزة الكبرى")
-        self.setFixedWidth(440)
+        fit_dialog_to_screen(self, 440, fixed_width=True)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
