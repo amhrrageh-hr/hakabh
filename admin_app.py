@@ -64,17 +64,19 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         screen = QApplication.primaryScreen()
         if screen:
             avail = screen.availableGeometry()
-            target_w = min(1300, max(950, int(avail.width() * 0.95)))
-            target_h = min(850, max(600, int(avail.height() * 0.90)))
+            target_w = min(1300, max(360, int(avail.width() * 0.95)))
+            target_h = min(850, max(320, int(avail.height() * 0.92)))
+            min_w = min(720, max(360, avail.width() - 40))
+            min_h = min(500, max(300, avail.height() - 40))
+            self.setMinimumSize(min_w, min_h)
             self.resize(target_w, target_h)
-            self.setMinimumSize(950, 580)
             # توسيط النافذة على الشاشة المتاحة
-            pos_x = avail.x() + (avail.width() - target_w) // 2
-            pos_y = avail.y() + (avail.height() - target_h) // 2
-            self.move(max(avail.x(), pos_x), max(avail.y(), pos_y))
+            pos_x = avail.x() + max(0, (avail.width() - target_w) // 2)
+            pos_y = avail.y() + max(0, (avail.height() - target_h) // 2)
+            self.move(pos_x, pos_y)
         else:
             self.resize(1150, 720)
-            self.setMinimumSize(950, 580)
+            self.setMinimumSize(720, 500)
         
         # تعيين أيقونة البرنامج وتحميلها مرة واحدة بشكل آمن
         if getattr(sys, 'frozen', False):
@@ -880,7 +882,8 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
 
         # Settings Sidebar
         self.settings_sidebar = QListWidget()
-        self.settings_sidebar.setFixedWidth(250)
+        self.settings_sidebar.setMinimumWidth(160)
+        self.settings_sidebar.setMaximumWidth(220)
         self.settings_sidebar.setStyleSheet("""
             QListWidget {
                 background-color: #f8fafc;

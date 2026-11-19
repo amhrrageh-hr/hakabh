@@ -22,13 +22,13 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 import database as db_mod
 import security
-from gui.utils import reshape_text, get_safe_db_url, register_arabic_font
+from gui.utils import reshape_text, get_safe_db_url, register_arabic_font, fit_dialog_to_screen, get_available_screen_geometry
 
 class ModernDialog(QDialog):
     def __init__(self, parent, title, message, is_confirm=False, is_input=False, initial_value=""):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedWidth(400)
+        fit_dialog_to_screen(self, 400)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
@@ -217,7 +217,7 @@ class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("تسجيل دخول الإدارة")
-        self.setFixedWidth(420)
+        fit_dialog_to_screen(self, 420)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         self.staff = None
@@ -1142,7 +1142,10 @@ class WheelPreviewDialog(QDialog):
     def __init__(self, parent=None, db=None, hub_config=None):
         super().__init__(parent)
         self.setWindowTitle("معاينة عجلة القرعة والقرص المركزي الذهبي")
-        self.setFixedSize(640, 680)
+        avail = get_available_screen_geometry(self)
+        avail_h = avail.height() if avail else 768
+        avail_w = avail.width() if avail else 1024
+        wheel_sz = min(520, max(250, min(avail_h - 200, avail_w - 100)))
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet("""
             QDialog {
@@ -1152,15 +1155,15 @@ class WheelPreviewDialog(QDialog):
             }
         """)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 16, 20, 16)
-        lay.setSpacing(12)
+        lay.setContentsMargins(20, 14, 20, 14)
+        lay.setSpacing(10)
 
         title = QLabel("🎡 معاينة عجلة القرعة والقرص الذهبي المركزي")
-        title.setStyleSheet("font-size: 20px; font-weight: 900; color: #fde047; background: transparent;")
+        title.setStyleSheet("font-size: 18px; font-weight: 900; color: #fde047; background: transparent;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(title)
 
-        self.wheel = LuxuryPrizeWheelWidget(self, size=540, db=db, hub_config=hub_config)
+        self.wheel = LuxuryPrizeWheelWidget(self, size=wheel_sz, db=db, hub_config=hub_config)
         lay.addWidget(self.wheel, 0, Qt.AlignmentFlag.AlignCenter)
 
         btn_row = QHBoxLayout()
@@ -1177,6 +1180,8 @@ class WheelPreviewDialog(QDialog):
         btn_row.addWidget(btn_spin)
         btn_row.addWidget(btn_close)
         lay.addLayout(btn_row)
+
+        fit_dialog_to_screen(self, wheel_sz + 100, wheel_sz + 145)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._step_demo)
@@ -1224,8 +1229,11 @@ class DrawAnimationDialog(QDialog):
     def __init__(self, parent, qualified_by_category, draw_name, db, category_reports=None):
         super().__init__(parent)
         self.setWindowTitle(f"{draw_name} — تقارير الفئات والقرعة")
-        self.setMinimumSize(980, 780)
-        self.resize(1020, 800)
+        avail = get_available_screen_geometry(self)
+        avail_w = avail.width() if avail else 1024
+        avail_h = avail.height() if avail else 768
+        self.setMinimumSize(min(680, max(360, avail_w - 40)), min(520, max(320, avail_h - 40)))
+        fit_dialog_to_screen(self, 1020, 800)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setStyleSheet("""
             QDialog {
@@ -1275,12 +1283,13 @@ class DrawAnimationDialog(QDialog):
         self.cat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.wheel_page_layout.addWidget(self.cat_label)
 
-        self.wheel_widget = LuxuryPrizeWheelWidget(self, size=500, db=self.db)
+        wheel_sz = min(500, max(240, min(avail_h - 270, avail_w - 140)))
+        self.wheel_widget = LuxuryPrizeWheelWidget(self, size=wheel_sz, db=self.db)
         self.wheel_page_layout.addWidget(self.wheel_widget, 0, Qt.AlignmentFlag.AlignCenter)
 
         self.wheel_label = QLabel("---")
-        self.wheel_label.setFixedHeight(46)
-        self.wheel_label.setMinimumWidth(460)
+        self.wheel_label.setFixedHeight(44)
+        self.wheel_label.setMinimumWidth(min(440, max(260, avail_w - 120)))
         self.wheel_label.setStyleSheet("""
             font-size: 26px;
             font-weight: 900;
@@ -1300,8 +1309,8 @@ class DrawAnimationDialog(QDialog):
 
         self.btn_next_after_wheel = QPushButton("الانتقال للفئة التالية ⬅️")
         self.btn_next_after_wheel.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_next_after_wheel.setFixedHeight(46)
-        self.btn_next_after_wheel.setMinimumWidth(360)
+        self.btn_next_after_wheel.setFixedHeight(44)
+        self.btn_next_after_wheel.setMinimumWidth(min(360, max(240, avail_w - 140)))
         self.btn_next_after_wheel.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,

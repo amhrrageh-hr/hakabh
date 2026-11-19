@@ -234,3 +234,56 @@ class ServerWorker(QObject):
         self.running = False
         if self.process:
             self.process.terminate()
+
+
+def get_available_screen_geometry(widget=None):
+    """إرجاع أبعاد الشاشة المتاحة (بدون شريط المهام) لأي جهاز أو شاشة."""
+    from PyQt6.QtWidgets import QApplication
+    screen = None
+    if widget is not None:
+        try:
+            screen = widget.screen()
+        except Exception:
+            screen = None
+        if screen is None and widget.parent() is not None:
+            try:
+                screen = widget.parent().screen()
+            except Exception:
+                screen = None
+    if screen is None:
+        screen = QApplication.primaryScreen()
+    return screen.availableGeometry() if screen else None
+
+
+def fit_dialog_to_screen(dialog, preferred_w=None, preferred_h=None, fixed_width=False, fixed_size=False):
+    """ضبط حجم أي نافذة حوار وتوسيطها تلقائياً لتتلاءم مع الشاشات الصغيرة والكبيرة دون تجاوز حدود الشاشة."""
+    avail = get_available_screen_geometry(dialog)
+    if not avail:
+        if preferred_w and preferred_h:
+            dialog.resize(preferred_w, preferred_h)
+        elif preferred_w:
+            dialog.resize(preferred_w, dialog.sizeHint().height())
+        return
+
+    max_w = max(320, int(avail.width() * 0.94))
+    max_h = max(280, int(avail.height() * 0.92))
+    dialog.setMaximumSize(max_w, max_h)
+
+    target_w = min(int(preferred_w), max_w) if preferred_w else min(max(360, dialog.sizeHint().width()), max_w)
+    if preferred_h:
+        target_h = min(int(preferred_h), max_h)
+    else:
+        hint_h = dialog.sizeHint().height()
+        target_h = min(max(160, hint_h), max_h)
+
+    if fixed_size:
+        dialog.setFixedSize(target_w, target_h)
+    elif fixed_width:
+        dialog.setFixedWidth(target_w)
+        dialog.resize(target_w, target_h)
+    else:
+        dialog.resize(target_w, target_h)
+
+    pos_x = avail.x() + max(0, (avail.width() - target_w) // 2)
+    pos_y = avail.y() + max(0, (avail.height() - target_h) // 2)
+    dialog.move(pos_x, pos_y)
