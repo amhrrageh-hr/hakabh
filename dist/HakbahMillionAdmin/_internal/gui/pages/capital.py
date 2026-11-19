@@ -22,10 +22,11 @@ class CapitalMixin:
     def init_capital_page(self):
         page = QScrollArea()
         page.setWidgetResizable(True)
+        page.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         container = QWidget()
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(40, 40, 40, 40)
-        layout.setSpacing(30)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(14)
         
         title = QLabel("إدارة رأس المال والتدفق المالي")
         title.setObjectName("PageTitle")
@@ -45,20 +46,34 @@ class CapitalMixin:
         header_layout.addStretch()
         layout.addLayout(header_layout)
         
-        # Stats Grid
-        self.capital_stats_layout = QHBoxLayout()
-        self.capital_stats_layout.setSpacing(20)
+        # Stats Grid (شبكة متجاوبة 3 أعمدة × صفين لتتكيف مع الشاشات الصغيرة والكبيرة دون تمرير أفقي)
+        self.capital_stats_layout = QGridLayout()
+        self.capital_stats_layout.setSpacing(10)
         layout.addLayout(self.capital_stats_layout)
         
         # Tabs
         self.capital_tabs = QTabWidget()
+        self.capital_tabs.tabBar().setUsesScrollButtons(True)
+        self.capital_tabs.tabBar().setExpanding(False)
         layout.addWidget(self.capital_tabs)
+
+        def _make_responsive_table(tbl):
+            tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            tbl.horizontalHeader().setMinimumSectionSize(42)
+            tbl.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+            tbl.setWordWrap(True)
+            tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            tbl.setStyleSheet(
+                "QTableWidget { font-size: 11px; } "
+                "QHeaderView::section { font-size: 11px; padding: 4px 3px; }"
+            )
+            tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         
         # Tab 1: Categories summary
         self.tab_cap_categories = QWidget()
         t1_layout = QVBoxLayout(self.tab_cap_categories)
-        t1_layout.setContentsMargins(20, 20, 20, 20)
-        t1_layout.setSpacing(20)
+        t1_layout.setContentsMargins(10, 10, 10, 10)
+        t1_layout.setSpacing(10)
         
         t1_header = QHBoxLayout()
         t1_header.addWidget(QLabel("تحليل السيولة ورأس المال حسب الفئات"))
@@ -72,18 +87,18 @@ class CapitalMixin:
         self.table_cap_categories = QTableWidget()
         self.table_cap_categories.setColumnCount(9)
         self.table_cap_categories.setHorizontalHeaderLabels([
-            "اسم الفئة",
-            "قيمة القسط / الدورة",
-            "عدد المشتركين",
-            "رأس المال المستهدف للموسم",
-            "المستحق حتى اليوم",
-            "رأس المال المحصل",
-            "المتأخرات المستحقة",
-            "المتبقي لنهاية الموسم",
-            "نسبة تحصيل المستحق",
+            "الفئة",
+            "القسط / الدورة",
+            "المشتركين",
+            "المستهدف للموسم",
+            "المستحق لليوم",
+            "المحصل",
+            "المتأخرات",
+            "المتبقي للموسم",
+            "نسبة التحصيل",
         ])
-        self.table_cap_categories.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table_cap_categories.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        _make_responsive_table(self.table_cap_categories)
+        self.table_cap_categories.setMinimumHeight(240)
         t1_layout.addWidget(self.table_cap_categories)
         
         self.capital_tabs.addTab(self.tab_cap_categories, "تحليل الفئات والسيولة")
@@ -91,8 +106,8 @@ class CapitalMixin:
         # Tab 2: Defaulters / Unpaid
         self.tab_cap_defaulters = QWidget()
         t2_layout = QVBoxLayout(self.tab_cap_defaulters)
-        t2_layout.setContentsMargins(20, 20, 20, 20)
-        t2_layout.setSpacing(20)
+        t2_layout.setContentsMargins(10, 10, 10, 10)
+        t2_layout.setSpacing(10)
         
         t2_header = QHBoxLayout()
         t2_header.addWidget(QLabel("بحث:"))
@@ -107,7 +122,7 @@ class CapitalMixin:
         t2_header.addWidget(self.cap_search_def, 1)
         
         btn_pay_all = QPushButton("⚡ سداد المتأخرات دفعة واحدة")
-        btn_pay_all.setStyleSheet("background-color: #22c55e; color: white; border-radius: 4px; padding: 5px 15px; font-weight: bold;")
+        btn_pay_all.setStyleSheet("background-color: #22c55e; color: white; border-radius: 4px; padding: 5px 12px; font-weight: bold;")
         btn_pay_all.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_pay_all.clicked.connect(self.quick_pay_all_defaulters)
         t2_header.addWidget(btn_pay_all)
@@ -121,10 +136,10 @@ class CapitalMixin:
         self.table_cap_defaulters = QTableWidget()
         self.table_cap_defaulters.setColumnCount(7)
         self.table_cap_defaulters.setHorizontalHeaderLabels([
-            "المشترك", "الهاتف", "الفئة", "الدورة/القسط", "تاريخ الاستحقاق", "المبلغ المستحق", "إجراء سريع"
+            "المشترك", "الهاتف", "الفئة", "الدورة/القسط", "الاستحقاق", "المبلغ المستحق", "إجراء سريع"
         ])
-        self.table_cap_defaulters.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table_cap_defaulters.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        _make_responsive_table(self.table_cap_defaulters)
+        self.table_cap_defaulters.setMinimumHeight(240)
         # تفعيل النقر المزدوج لفتح كشف الحساب من جدول المتأخرات
         self.table_cap_defaulters.cellDoubleClicked.connect(lambda r, c: self.open_account_details(self.table_cap_defaulters.item(r, 0).data(Qt.ItemDataRole.UserRole)))
         t2_layout.addWidget(self.table_cap_defaulters)
@@ -134,11 +149,11 @@ class CapitalMixin:
         # Tab 3: General financial standing
         self.tab_cap_standing = QWidget()
         t3_layout = QVBoxLayout(self.tab_cap_standing)
-        t3_layout.setContentsMargins(20, 20, 20, 20)
-        t3_layout.setSpacing(20)
+        t3_layout.setContentsMargins(10, 10, 10, 10)
+        t3_layout.setSpacing(10)
         
         t3_header = QHBoxLayout()
-        t3_header.addWidget(QLabel("الموقف المالي للمشتركين:"))
+        t3_header.addWidget(QLabel("الموقف المالي:"))
         self.cap_search_standing = QLineEdit()
         self.cap_search_standing.setPlaceholderText("ابحث باسم المشترك أو الهاتف أو رقم الحساب...")
         self._cap_search_standing_timer = QTimer(page)
@@ -149,7 +164,7 @@ class CapitalMixin:
         self.cap_search_standing.returnPressed.connect(lambda: (self._cap_search_standing_timer.stop(), self.refresh_capital_standing()))
         t3_header.addWidget(self.cap_search_standing, 1)
 
-        btn_standing_excel = QPushButton("تصدير المواقف المالية Excel")
+        btn_standing_excel = QPushButton("تصدير Excel")
         btn_standing_excel.setObjectName("PrimaryBtn")
         btn_standing_excel.clicked.connect(self.export_standing_excel)
         t3_header.addWidget(btn_standing_excel)
@@ -159,10 +174,10 @@ class CapitalMixin:
         self.table_cap_standing = QTableWidget()
         self.table_cap_standing.setColumnCount(7)
         self.table_cap_standing.setHorizontalHeaderLabels([
-            "اسم المشترك", "الفئة", "رقم الحساب", "المستحق حتى اليوم", "إجمالي المسدد", "المتأخرات المستحقة", "الحالة المالية"
+            "اسم المشترك", "الفئة", "رقم الحساب", "المستحق لليوم", "إجمالي المسدد", "المتأخرات", "الحالة المالية"
         ])
-        self.table_cap_standing.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table_cap_standing.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        _make_responsive_table(self.table_cap_standing)
+        self.table_cap_standing.setMinimumHeight(240)
         self.table_cap_standing.cellDoubleClicked.connect(lambda r, c: self.open_account_details(self.table_cap_standing.item(r, 0).data(Qt.ItemDataRole.UserRole)))
         t3_layout.addWidget(self.table_cap_standing)
         
@@ -171,8 +186,8 @@ class CapitalMixin:
         # Tab 4: Operational Expenses
         self.tab_cap_expenses = QWidget()
         t4_layout = QVBoxLayout(self.tab_cap_expenses)
-        t4_layout.setContentsMargins(20, 20, 20, 20)
-        t4_layout.setSpacing(20)
+        t4_layout.setContentsMargins(10, 10, 10, 10)
+        t4_layout.setSpacing(10)
         
         t4_upper = QHBoxLayout()
         t4_upper.setSpacing(15)
@@ -270,9 +285,8 @@ class CapitalMixin:
         self.table_cap_expenses.setHorizontalHeaderLabels([
             "البيان / الوصف", "المبلغ (ر.ي)", "التصنيف", "الفئة المالية", "التاريخ والوقت", "الملاحظات", "إجراء"
         ])
-        self.table_cap_expenses.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table_cap_expenses.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table_cap_expenses.setMinimumHeight(250)
+        _make_responsive_table(self.table_cap_expenses)
+        self.table_cap_expenses.setMinimumHeight(230)
         t4_layout.addWidget(self.table_cap_expenses)
         
         self.capital_tabs.addTab(self.tab_cap_expenses, "النفقات التشغيلية")
@@ -280,8 +294,8 @@ class CapitalMixin:
         # Tab 5: Winner Payouts (مستحقات الفائزين بالقرعة)
         self.tab_cap_winners = QWidget()
         t5_layout = QVBoxLayout(self.tab_cap_winners)
-        t5_layout.setContentsMargins(20, 20, 20, 20)
-        t5_layout.setSpacing(20)
+        t5_layout.setContentsMargins(10, 10, 10, 10)
+        t5_layout.setSpacing(10)
         
         t5_header = QHBoxLayout()
         t5_header.addWidget(QLabel("تصفية بالحالة:"))
@@ -303,7 +317,7 @@ class CapitalMixin:
         self.cap_search_winners.returnPressed.connect(lambda: (self._cap_search_win_timer.stop(), self.refresh_capital_winners()))
         t5_header.addWidget(self.cap_search_winners, 1)
         
-        btn_win_excel = QPushButton("تصدير كشف مستحقات الفائزين")
+        btn_win_excel = QPushButton("تصدير Excel")
         btn_win_excel.setObjectName("PrimaryBtn")
         btn_win_excel.clicked.connect(self.export_capital_winners_excel)
         t5_header.addWidget(btn_win_excel)
@@ -312,12 +326,11 @@ class CapitalMixin:
         self.table_cap_winners = QTableWidget()
         self.table_cap_winners.setColumnCount(10)
         self.table_cap_winners.setHorizontalHeaderLabels([
-            "اسم المشترك", "الهاتف", "الفئة", "نوع القرعة", "الدورة", 
-            "تاريخ الفوز", "المبلغ المستحق (ر.ي)", "حالة الاستلام", "تاريخ الاستلام", "إجراء"
+            "المشترك", "الهاتف", "الفئة", "نوع القرعة", "الدورة", 
+            "تاريخ الفوز", "المستحق", "الحالة", "تاريخ الاستلام", "إجراء"
         ])
-        self.table_cap_winners.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table_cap_winners.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table_cap_winners.setMinimumHeight(250)
+        _make_responsive_table(self.table_cap_winners)
+        self.table_cap_winners.setMinimumHeight(230)
         t5_layout.addWidget(self.table_cap_winners)
         
         self.capital_tabs.addTab(self.tab_cap_winners, "مستحقات الفائزين بالقرعة")
@@ -558,31 +571,41 @@ class CapitalMixin:
             ),
         ]
 
-        for title, value, sub_txt, color in stats:
+        for idx_card, (title, value, sub_txt, color) in enumerate(stats):
             card = QFrame()
             card.setObjectName("StatCard")
-            card.setMinimumHeight(125)
+            card.setMinimumHeight(92)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             vbox = QVBoxLayout(card)
+            vbox.setContentsMargins(10, 8, 10, 8)
             vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            vbox.setSpacing(4)
+            vbox.setSpacing(3)
 
             t_lbl = QLabel(title)
             t_lbl.setObjectName("StatTitle")
+            t_lbl.setWordWrap(True)
+            t_lbl.setStyleSheet("font-size: 12px; font-weight: bold;")
             t_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vbox.addWidget(t_lbl)
 
             v_lbl = QLabel(value)
             v_lbl.setObjectName("StatValue")
-            v_lbl.setStyleSheet(f"color: {color}; font-size: 19px; font-weight: bold;")
+            v_lbl.setWordWrap(True)
+            v_lbl.setStyleSheet(f"color: {color}; font-size: 16px; font-weight: bold;")
             v_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vbox.addWidget(v_lbl)
 
             s_lbl = QLabel(sub_txt)
-            s_lbl.setStyleSheet("color: #64748b; font-size: 11px;")
+            s_lbl.setWordWrap(True)
+            s_lbl.setStyleSheet("color: #64748b; font-size: 10px;")
             s_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vbox.addWidget(s_lbl)
 
-            self.capital_stats_layout.addWidget(card)
+            row_i = idx_card // 3
+            col_i = idx_card % 3
+            self.capital_stats_layout.addWidget(card, row_i, col_i)
+        for c_i in range(3):
+            self.capital_stats_layout.setColumnStretch(c_i, 1)
 
     def _get_categories_financial_summary_rows(self):
         """حساب ملخص السيولة ورأس المال لكل فئة بدقة عالية واستعلام تجميعي واحد."""

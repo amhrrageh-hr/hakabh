@@ -784,9 +784,16 @@ class DrawMixin:
         self.table_recent_winners = QTableWidget()
         self.table_recent_winners.setColumnCount(8)
         self.table_recent_winners.setHorizontalHeaderLabels([
-            "اسم المشترك", "رقم الحساب / المشترك", "الفئة المالية", "رقم الهاتف", "رقم الدورة", "نوع الجائزة", "تاريخ السحب", "حالة الاستلام"
+            "المشترك", "رقم الحساب", "الفئة", "الهاتف", "الدورة", "نوع الجائزة", "تاريخ السحب", "الاستلام"
         ])
         self.table_recent_winners.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_recent_winners.horizontalHeader().setMinimumSectionSize(45)
+        self.table_recent_winners.setWordWrap(True)
+        self.table_recent_winners.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table_recent_winners.setStyleSheet(
+            "QTableWidget { font-size: 11px; } "
+            "QHeaderView::section { font-size: 11px; padding: 4px 3px; }"
+        )
         self.table_recent_winners.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table_recent_winners.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_recent_winners.customContextMenuRequested.connect(self.show_winner_context_menu)
@@ -832,9 +839,16 @@ class DrawMixin:
         self.table_draw_excluded = QTableWidget()
         self.table_draw_excluded.setColumnCount(7)
         self.table_draw_excluded.setHorizontalHeaderLabels([
-            "اسم المشترك", "رقم الحساب", "الفئة المالية", "رقم الهاتف", "سبب الاستبعاد / عدم التأهل", "حالة الانضباط", "إجراء"
+            "المشترك", "رقم الحساب", "الفئة", "الهاتف", "سبب الاستبعاد", "الانضباط", "إجراء"
         ])
         self.table_draw_excluded.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_draw_excluded.horizontalHeader().setMinimumSectionSize(45)
+        self.table_draw_excluded.setWordWrap(True)
+        self.table_draw_excluded.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table_draw_excluded.setStyleSheet(
+            "QTableWidget { font-size: 11px; } "
+            "QHeaderView::section { font-size: 11px; padding: 4px 3px; }"
+        )
         self.table_draw_excluded.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         ex_card_lay.addWidget(self.table_draw_excluded)
         
