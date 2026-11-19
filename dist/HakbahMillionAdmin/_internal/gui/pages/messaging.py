@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt, QDateTime, QDate, QTime
 from PyQt6.QtGui import QColor, QFont
 import database as db_mod
 from gui.dialogs import ModernDialog
+from gui.utils import fit_dialog_to_screen
 
 class SubscriberMessageEditDialog(QDialog):
     def __init__(self, parent=None, message=None, categories=None):
@@ -20,7 +21,7 @@ class SubscriberMessageEditDialog(QDialog):
         self.message = message
         self.categories = categories or []
         self.setWindowTitle("تعديل الرسالة" if message else "إضافة رسالة جديدة للمشتركين")
-        self.setMinimumWidth(550)
+        fit_dialog_to_screen(self, 550)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setup_ui()
 
