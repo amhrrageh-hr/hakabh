@@ -929,14 +929,59 @@ class SubscribersMixin:
 
     def edit_subscriber(self, sid):
         sub = self.db.get(db_mod.Subscriber, sid)
+        if not sub:
+            return
         dialog = SubscriberEditDialog(self, sub)
         if dialog.exec():
             try:
-                sub.name = dialog.ent_name.text(); sub.phone = dialog.ent_phone.text(); sub.subscriber_number = dialog.ent_acc.text()
-                if dialog.ent_pwd.text(): sub.password = security.hash_password(dialog.ent_pwd.text())
-                self.db.commit(); self.load_subscribers()
-                ModernDialog(self, "نجاح", "تم التعديل").exec()
-            except Exception as e: self.db.rollback(); ModernDialog(self, "خطأ", str(e)).exec()
+                new_name = (dialog.ent_name.text() or "").strip()
+                new_phone = (dialog.ent_phone.text() or "").strip()
+                new_acc = (dialog.ent_acc.text() or "").strip()
+                new_pwd = (dialog.ent_pwd.text() or "").strip()
+
+                linked_accounts = db_mod.get_linked_subscriber_accounts(self.db, sub)
+                linked_ids = {a.id for a in linked_accounts}
+
+                # التحقق من عدم استخدام رقم الهاتف الجديد لمشترك آخر مختلف
+                if new_phone and new_phone != (sub.phone or "").strip():
+                    existing_phone = self.db.query(db_mod.Subscriber).filter(
+                        db_mod.Subscriber.phone == new_phone,
+                        ~db_mod.Subscriber.id.in_(linked_ids)
+                    ).first()
+                    if existing_phone:
+                        ModernDialog(
+                            self,
+                            "تنبيه",
+                            f"رقم الهاتف ({new_phone}) مسجل مسبقاً لمشترك آخر ({existing_phone.name})."
+                        ).exec()
+                        return
+
+                new_pwd_hash = security.hash_password(new_pwd) if new_pwd else None
+
+                # رقم الحساب خاص بالفئة الحالية فقط
+                sub.subscriber_number = new_acc
+
+                # تعميم الاسم ورقم الهاتف وكلمة المرور على جميع الفئات المرتبطة بنفس المشترك
+                for acc in linked_accounts:
+                    if new_name:
+                        acc.name = new_name
+                    acc.phone = new_phone
+                    if new_pwd_hash:
+                        acc.password = new_pwd_hash
+
+                self.db.commit()
+                self.load_subscribers()
+                if len(linked_accounts) > 1:
+                    ModernDialog(
+                        self,
+                        "نجاح",
+                        f"تم التعديل بنجاح وتحديث بيانات المشترك تلقائياً في جميع فئاته المرتبطة ({len(linked_accounts)} فئات)."
+                    ).exec()
+                else:
+                    ModernDialog(self, "نجاح", "تم التعديل").exec()
+            except Exception as e:
+                self.db.rollback()
+                ModernDialog(self, "خطأ", str(e)).exec()
     def delete_subscriber(self, sid):
         if ModernDialog(self, "تأكيد", "حذف المشترك؟\nسيتم حذف جميع بياناته وأقساطه نهائياً.", is_confirm=True).exec():
             try:
