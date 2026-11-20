@@ -160,11 +160,23 @@ class SettingsMixin:
         lay2.addStretch()
         tab2.setWidget(con2)
         self.settings_tabs.addTab(tab2, "إدارة الأرقام")
+
+        # --- TAB 3: Cycles & Installments Management ---
+        self.page_cycles = self.init_cycles_page()
+        self.settings_tabs.addTab(self.page_cycles, "إدارة الدورات والأقساط")
+
+        self.settings_tabs.currentChanged.connect(self._on_category_settings_subtab_changed)
         
         layout.addWidget(self.settings_tabs)
         self.refresh_seasons_list()
         self.refresh_cat_list()
+        if hasattr(self, 'refresh_cycles_cat_list'):
+            self.refresh_cycles_cat_list()
         return page
+
+    def _on_category_settings_subtab_changed(self, idx):
+        if idx == 3 and hasattr(self, 'refresh_cycles_cat_list'):
+            self.refresh_cycles_cat_list()
 
     def init_company_settings_page(self):
         page = QWidget()

@@ -406,7 +406,6 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         nav_items = [
             ("الإحصائيات", self.show_dashboard), 
             ("المشتركين", self.show_subscribers), 
-            ("إدارة الدورات والأقساط", self.show_cycles),
             ("إدارة رأس المال", self.show_capital_management),
             ("إدارة السحوبات", self.show_draw_management),
             ("إدارة الرسائل والتوعية", self.show_messaging_management),
@@ -560,7 +559,6 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         # Initialize Pages - immediate lightweight pages
         self.page_dashboard = self.init_dashboard_page()
         self.page_subscribers = self.init_subscribers_page()
-        self.page_cycles = self.init_cycles_page()
         self.page_company_settings = self.init_company_settings_page()
         self.page_settings = self.init_settings_page()
         self.page_main_settings = self.init_main_settings_page()
@@ -574,7 +572,6 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
 
         self.content_stack.addWidget(self.page_dashboard)
         self.content_stack.addWidget(self.page_subscribers)
-        self.content_stack.addWidget(self.page_cycles)
         self.content_stack.addWidget(self.page_messaging)
         self.content_stack.addWidget(self.page_staff)
         self.content_stack.addWidget(self.page_main_settings)
@@ -805,8 +802,11 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
             self.hide_loading()
 
     def show_cycles(self):
-        self.content_stack.setCurrentWidget(self.page_cycles)
-        self._update_nav_style("إدارة الدورات والأقساط")
+        self.content_stack.setCurrentWidget(self.page_main_settings)
+        self._update_nav_style("الإعدادات")
+        self.settings_sidebar.setCurrentRow(1)
+        if hasattr(self, 'settings_tabs'):
+            self.settings_tabs.setCurrentIndex(3)
         self.show_loading("جاري تحميل الدورات والأقساط", "يرجى الانتظار، جاري قراءة بيانات الفئات والدورات...")
         try:
             self.refresh_cycles_cat_list()
@@ -1174,6 +1174,8 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
             self.load_company_settings()
         elif index == 1:
             self.refresh_cat_list()
+            if hasattr(self, 'refresh_cycles_cat_list'):
+                self.refresh_cycles_cat_list()
         elif index == 2:
             self.load_security_settings()
         elif index == 3:
