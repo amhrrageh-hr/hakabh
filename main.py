@@ -557,10 +557,11 @@ def _ensure_daily_payments(db: Session, sub) -> None:
     بالاعتماد على الدالة المركزية الموحدة في database.py.
     """
     try:
-        db_mod.ensure_daily_payments(db, sub)
+        added = db_mod.ensure_daily_payments(db, sub)
+        if added:
+            print(f"[Dashboard] تم توليد {added} قسط مفقود للمشترك {sub.id} ({sub.name})", flush=True)
     except Exception as e:
         logger.warning(f"Error ensuring daily payments for sub {getattr(sub, 'id', '?')}: {e}")
-        print(f"[Dashboard] تم توليد {added} قسط مفقود للمشترك {sub.id} ({sub.name})", flush=True)
 
 
 @app.get("/million-hakbah", response_class=HTMLResponse)
