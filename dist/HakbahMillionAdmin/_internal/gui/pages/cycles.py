@@ -110,8 +110,8 @@ class _CycleScheduleWorker(QThread):
 
 class CyclesMixin:
     def init_cycles_page(self):
-        page = QScrollArea(); page.setWidgetResizable(True); container = QWidget(); layout = QVBoxLayout(container); layout.setContentsMargins(40, 40, 40, 40); layout.setSpacing(30)
-        title = QLabel("إدارة الدورات والأقساط"); title.setObjectName("PageTitle"); layout.addWidget(title)
+        page = QScrollArea(); page.setWidgetResizable(True); container = QWidget(); layout = QVBoxLayout(container); layout.setContentsMargins(20, 20, 20, 20); layout.setSpacing(18)
+        title = QLabel("إدارة الدورات والأقساط"); title.setObjectName("SectionTitle"); layout.addWidget(title)
         
         f1 = QFrame(); f1.setObjectName("StatCard"); form = QFormLayout(f1); form.setSpacing(15)
         

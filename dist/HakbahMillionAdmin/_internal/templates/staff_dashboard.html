@@ -52,12 +52,19 @@
             </div>
         </div>
 
-        {% if staff.role == 'مدير' %}
-        <!-- ── Navigation Tabs (Manager Only) ── -->
+        <!-- ── Navigation Tabs (All Staff + Manager Tabs) ── -->
         <div class="nav-tabs">
             <button class="tab-btn active" onclick="switchMainTab('payments-tab', this)">
                 <span>💳</span> تسجيل السداد
             </button>
+            <button class="tab-btn" onclick="switchMainTab('my-payments-tab', this)">
+                {% if staff.role == 'مدير' %}
+                <span>📊</span> سجل تسديدات الموظفين
+                {% else %}
+                <span>📋</span> سجل تسديداتي
+                {% endif %}
+            </button>
+            {% if staff.role == 'مدير' %}
             <button class="tab-btn" onclick="switchMainTab('draw-tab', this)">
                 <span>🏆</span> إدارة القرعة والجوائز
             </button>
@@ -67,8 +74,8 @@
             <button class="tab-btn" onclick="switchMainTab('messaging-tab', this); loadMessagesTab();">
                 <span>📣</span> إدارة الرسائل والتوعية
             </button>
+            {% endif %}
         </div>
-        {% endif %}
 
 
         {% if staff.role == 'مدير' %}
@@ -206,6 +213,171 @@
                             <span><strong>دعم العمل بدون إنترنت:</strong> في حال انقطاع الشبكة، يمكنك مواصلة تسجيل الدفعات وسيتم حفظها ومزامنتها تلقائياً عند عودة الاتصال.</span>
                         </li>
                     </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Tab: My Payments & Daily Reconciliation (All Staff) ── -->
+        <div id="my-payments-tab" class="tab-pane">
+            <!-- KPI Cards -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:20px;">
+                <div style="background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:1.5px solid #a7f3d0;border-radius:14px;padding:16px 18px;">
+                    <div style="font-size:0.82rem;color:#065f46;font-weight:700;margin-bottom:4px;">📅 تحصيل اليوم</div>
+                    <div id="mp-today-amount" style="font-size:1.55rem;font-weight:900;color:#059669;line-height:1.2;">0 ر.ي</div>
+                    <div id="mp-today-meta" style="font-size:0.78rem;color:#047857;margin-top:4px;font-weight:600;">0 مشترك • 0 عملية</div>
+                </div>
+                <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1.5px solid #bfdbfe;border-radius:14px;padding:16px 18px;">
+                    <div style="font-size:0.82rem;color:#1e40af;font-weight:700;margin-bottom:4px;">💰 إجمالي المبالغ (حسب الفلتر)</div>
+                    <div id="mp-total-amount" style="font-size:1.55rem;font-weight:900;color:#2563eb;line-height:1.2;">0 ر.ي</div>
+                    <div style="font-size:0.78rem;color:#1d4ed8;margin-top:4px;font-weight:600;">صافي المبالغ المسددة</div>
+                </div>
+                <div style="background:linear-gradient(135deg,#ede9fe,#ddd6fe);border:1.5px solid #c4b5fd;border-radius:14px;padding:16px 18px;">
+                    <div style="font-size:0.82rem;color:#5b21b6;font-weight:700;margin-bottom:4px;">👥 عدد المشتركين المسدد لهم</div>
+                    <div id="mp-unique-subs" style="font-size:1.55rem;font-weight:900;color:#7c3aed;line-height:1.2;">0</div>
+                    <div style="font-size:0.78rem;color:#6d28d9;margin-top:4px;font-weight:600;">مشترك خلال الفترة المحددة</div>
+                </div>
+                <div style="background:linear-gradient(135deg,#fff7ed,#fed7aa);border:1.5px solid #fdba74;border-radius:14px;padding:16px 18px;">
+                    <div style="font-size:0.82rem;color:#92400e;font-weight:700;margin-bottom:4px;">🧾 عدد الأقساط المسددة</div>
+                    <div id="mp-payments-count" style="font-size:1.55rem;font-weight:900;color:#d97706;line-height:1.2;">0</div>
+                    <div style="font-size:0.78rem;color:#b45309;margin-top:4px;font-weight:600;">عملية سداد مسجلة باسمك</div>
+                </div>
+            </div>
+
+            <!-- Filter Bar -->
+            <div class="admin-card" style="margin-bottom:18px;padding:18px 20px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+                    <div>
+                        <h3 class="admin-card-title" style="margin:0;"><span>🔍</span> فلترة ومراجعة تسديداتي</h3>
+                        <p class="admin-card-desc" style="margin:3px 0 0;">اختر فترة زمنية سريعة أو حدد التاريخ لمراجعة حساباتك اليومية والشهرية</p>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;" id="mp-quick-presets">
+                        <button type="button" class="btn-compact btn-primary mp-preset-btn" data-preset="today" onclick="applyMyPaymentsPreset('today', this)">اليوم</button>
+                        <button type="button" class="btn-compact btn-outline mp-preset-btn" data-preset="yesterday" onclick="applyMyPaymentsPreset('yesterday', this)">أمس</button>
+                        <button type="button" class="btn-compact btn-outline mp-preset-btn" data-preset="week" onclick="applyMyPaymentsPreset('week', this)">آخر 7 أيام</button>
+                        <button type="button" class="btn-compact btn-outline mp-preset-btn" data-preset="month" onclick="applyMyPaymentsPreset('month', this)">هذا الشهر</button>
+                        <button type="button" class="btn-compact btn-outline mp-preset-btn" data-preset="all" onclick="applyMyPaymentsPreset('all', this)">الكل</button>
+                    </div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">
+                    {% if staff.role == 'مدير' %}
+                    <div class="form-group" style="margin:0;">
+                        <label for="mp-staff-filter" style="font-size:0.84rem;font-weight:700;">الموظف:</label>
+                        <select id="mp-staff-filter" class="compact-select" style="width:100%;" onchange="loadMyPayments();">
+                            <option value="all">كل الموظفين</option>
+                        </select>
+                    </div>
+                    {% endif %}
+                    <div class="form-group" style="margin:0;">
+                        <label for="mp-date-from" style="font-size:0.84rem;font-weight:700;">من تاريخ:</label>
+                        <input type="date" id="mp-date-from" class="compact-input" style="width:100%;" onchange="clearMyPaymentsPresetActive(); loadMyPayments();">
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label for="mp-date-to" style="font-size:0.84rem;font-weight:700;">إلى تاريخ:</label>
+                        <input type="date" id="mp-date-to" class="compact-input" style="width:100%;" onchange="clearMyPaymentsPresetActive(); loadMyPayments();">
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label for="mp-category" style="font-size:0.84rem;font-weight:700;">الفئة:</label>
+                        <select id="mp-category" class="compact-select" style="width:100%;" onchange="loadMyPayments();">
+                            <option value="الكل">كل الفئات</option>
+                            {% for category in categories %}
+                                <option value="{{ category.name }}">{{ category.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label for="mp-search" style="font-size:0.84rem;font-weight:700;">بحث سريع:</label>
+                        <input type="text" id="mp-search" class="compact-input" style="width:100%;" placeholder="اسم، رقم حساب، هاتف..." oninput="debounceMyPaymentsSearch()">
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button type="button" class="btn-compact btn-primary" onclick="loadMyPayments()" style="flex:1;min-width:90px;">🔄 تحديث</button>
+                        <button type="button" class="btn-compact btn-excel" onclick="exportMyPaymentsCSV()" style="flex:1;min-width:110px;">📊 تصدير Excel</button>
+                    </div>
+                </div>
+            </div>
+
+            {% if staff.role == 'مدير' %}
+            <!-- Staff Breakdown Card (Manager Only) -->
+            <div class="admin-card" id="mp-staff-summary-card" style="margin-bottom:18px;padding:16px 20px;border-right:5px solid #2563eb;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                    <h4 style="margin:0;font-size:1rem;font-weight:800;color:#1e3a8a;">👥 ملخص تحصيلات كل موظف (اضغط على أي موظف لعرض تفاصيله)</h4>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span id="mp-staff-count-badge" style="font-size:0.8rem;color:var(--text-muted);font-weight:700;"></span>
+                        <button type="button" class="btn-compact btn-outline" style="height:28px;font-size:0.78rem;padding:0 10px;" onclick="filterMyPaymentsByStaff('all')">عرض الكل</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>الموظف</th>
+                                <th>تحصيل اليوم</th>
+                                <th>عدد المشتركين (الفترة)</th>
+                                <th>عدد الأقساط (الفترة)</th>
+                                <th>إجمالي المبلغ المحصل (الفترة)</th>
+                                <th>إجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mp-staff-summary-tbody">
+                            <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:18px;">جاري تحميل إحصائيات الموظفين...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Daily Summary Card (Collapsible / Always visible when multiple days) -->
+            <div class="admin-card" id="mp-daily-summary-card" style="margin-bottom:18px;padding:16px 20px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                    <h4 style="margin:0;font-size:1rem;font-weight:800;color:var(--text-main);">📆 ملخص التحصيل اليومي (اضغط على أي يوم لعرض تفاصيله)</h4>
+                    <span id="mp-days-count-badge" style="font-size:0.8rem;color:var(--text-muted);font-weight:700;"></span>
+                </div>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>التاريخ</th>
+                                <th>عدد المشتركين</th>
+                                <th>عدد الأقساط المسددة</th>
+                                <th>إجمالي المبلغ المحصل</th>
+                                <th>إجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mp-daily-tbody">
+                            <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:18px;">جاري التحميل...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Detailed Payments Table -->
+            <div class="admin-card" style="padding:16px 20px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                    <h4 style="margin:0;font-size:1rem;font-weight:800;color:var(--text-main);">📋 تفاصيل عمليات التسديد</h4>
+                    <span id="mp-rows-count-badge" style="font-size:0.82rem;color:var(--text-muted);font-weight:700;"></span>
+                </div>
+                <div class="table-responsive">
+                    <div class="table-scroll-hint">👈 مرّر الجدول أفقياً لرؤية كافة التفاصيل 👉</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>اسم المشترك</th>
+                                <th>رقم الحساب</th>
+                                <th>الفئة</th>
+                                <th>القسط / الدورة</th>
+                                <th>المبلغ (ر.ي)</th>
+                                {% if staff.role == 'مدير' %}
+                                <th>الموظف المحصل</th>
+                                {% endif %}
+                                <th>تاريخ ووقت التسديد</th>
+                                <th>الملاحظة</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mp-payments-tbody">
+                            <tr><td colspan="{% if staff.role == 'مدير' %}9{% else %}8{% endif %}" style="text-align:center;color:var(--text-muted);padding:24px;">جاري تحميل سجل التسديدات...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -856,7 +1028,7 @@
         {% endif %}
     </div>
 
-    <script src="/static/js/staff_core.js?v=2.2"></script>
+    <script src="/static/js/staff_core.js?v=2.4"></script>
 
     {% if staff.role == 'مدير' %}
     <script id="categories-cycles-data" type="application/json">{{ categories_json | safe if categories_json else '[]' }}</script>
