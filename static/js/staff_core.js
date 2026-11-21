@@ -6,6 +6,9 @@
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.getElementById(tabId).classList.add('active');
             btn.classList.add('active');
+            if (tabId === 'my-payments-tab' && typeof onMyPaymentsTabOpened === 'function') {
+                onMyPaymentsTabOpened();
+            }
             if (tabId === 'draw-tab' && typeof loadAllDrawStats === 'function') {
                 loadAllDrawStats(false);
             }
@@ -286,3 +289,217 @@
         window.addEventListener('load', () => {
             if (navigator.onLine) syncPendingPayments();
         });
+
+        // --- My Payments Reconciliation Tab Logic ---
+        let _mpInitialized = false;
+        let _mpSearchTimer = null;
+        let _mpLastRows = [];
+
+        function _mpEscapeHtml(str) {
+            return String(str ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function _mpFormatMoney(num) {
+            const val = Number(num || 0);
+            return val.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ر.ي';
+        }
+
+        function _mpIsoDate(d) {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        }
+
+        function onMyPaymentsTabOpened() {
+            if (!_mpInitialized) {
+                _mpInitialized = true;
+                const todayBtn = document.querySelector('#mp-quick-presets .mp-preset-btn[data-preset="today"]');
+                applyMyPaymentsPreset('today', todayBtn);
+            } else {
+                loadMyPayments();
+            }
+        }
+
+        function clearMyPaymentsPresetActive() {
+            document.querySelectorAll('#mp-quick-presets .mp-preset-btn').forEach(b => {
+                b.classList.remove('btn-primary');
+                b.classList.add('btn-outline');
+            });
+        }
+
+        function applyMyPaymentsPreset(preset, btn) {
+            clearMyPaymentsPresetActive();
+            if (btn) {
+                btn.classList.remove('btn-outline');
+                btn.classList.add('btn-primary');
+            }
+            const fromEl = document.getElementById('mp-date-from');
+            const toEl = document.getElementById('mp-date-to');
+            const now = new Date();
+            const todayStr = _mpIsoDate(now);
+
+            if (preset === 'today') {
+                if (fromEl) fromEl.value = todayStr;
+                if (toEl) toEl.value = todayStr;
+            } else if (preset === 'yesterday') {
+                const y = new Date(now);
+                y.setDate(y.getDate() - 1);
+                const yStr = _mpIsoDate(y);
+                if (fromEl) fromEl.value = yStr;
+                if (toEl) toEl.value = yStr;
+            } else if (preset === 'week') {
+                const w = new Date(now);
+                w.setDate(w.getDate() - 6);
+                if (fromEl) fromEl.value = _mpIsoDate(w);
+                if (toEl) toEl.value = todayStr;
+            } else if (preset === 'month') {
+                const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+                if (fromEl) fromEl.value = _mpIsoDate(firstDay);
+                if (toEl) toEl.value = todayStr;
+            } else {
+                if (fromEl) fromEl.value = '';
+                if (toEl) toEl.value = '';
+            }
+            loadMyPayments();
+        }
+
+        function filterMyPaymentsByDay(dateStr) {
+            if (!dateStr || dateStr === 'غير محدد') return;
+            clearMyPaymentsPresetActive();
+            const fromEl = document.getElementById('mp-date-from');
+            const toEl = document.getElementById('mp-date-to');
+            if (fromEl) fromEl.value = dateStr;
+            if (toEl) toEl.value = dateStr;
+            loadMyPayments();
+        }
+
+        function debounceMyPaymentsSearch() {
+            clearTimeout(_mpSearchTimer);
+            _mpSearchTimer = setTimeout(() => loadMyPayments(), 300);
+        }
+
+        async function loadMyPayments() {
+            const tbody = document.getElementById('mp-payments-tbody');
+            const dailyTbody = document.getElementById('mp-daily-tbody');
+            if (!tbody) return;
+
+            const dateFrom = document.getElementById('mp-date-from')?.value || '';
+            const dateTo = document.getElementById('mp-date-to')?.value || '';
+            const category = document.getElementById('mp-category')?.value || 'الكل';
+            const search = document.getElementById('mp-search')?.value || '';
+
+            const params = new URLSearchParams();
+            if (dateFrom) params.set('date_from', dateFrom);
+            if (dateTo) params.set('date_to', dateTo);
+            if (category && category !== 'الكل') params.set('category', category);
+            if (search.trim()) params.set('search', search.trim());
+
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:24px;">جاري تحميل سجل التسديدات...</td></tr>';
+
+            try {
+                const res = await fetch(`/api/staff/my-payments?${params.toString()}`);
+                if (!res.ok) throw new Error('فشل جلب سجل التسديدات');
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'تعذر تحميل البيانات');
+
+                const s = data.summary || {};
+                const elTodayAmt = document.getElementById('mp-today-amount');
+                const elTodayMeta = document.getElementById('mp-today-meta');
+                const elTotalAmt = document.getElementById('mp-total-amount');
+                const elUniqueSubs = document.getElementById('mp-unique-subs');
+                const elPayCount = document.getElementById('mp-payments-count');
+
+                if (elTodayAmt) elTodayAmt.textContent = _mpFormatMoney(s.today_amount || 0);
+                if (elTodayMeta) elTodayMeta.textContent = `${s.today_subscribers || 0} مشترك • ${s.today_payments || 0} عملية`;
+                if (elTotalAmt) elTotalAmt.textContent = _mpFormatMoney(s.total_amount || 0);
+                if (elUniqueSubs) elUniqueSubs.textContent = String(s.unique_subscribers || 0);
+                if (elPayCount) elPayCount.textContent = String(s.payments_count || 0);
+
+                // ملخص التحصيل اليومي
+                const daily = data.daily_summary || [];
+                const daysBadge = document.getElementById('mp-days-count-badge');
+                if (daysBadge) daysBadge.textContent = `${daily.length} يوم`;
+
+                if (dailyTbody) {
+                    if (daily.length === 0) {
+                        dailyTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">لا توجد تسديدات في الفترة المحددة.</td></tr>';
+                    } else {
+                        dailyTbody.innerHTML = daily.map(d => `
+                            <tr style="cursor:pointer;" onclick="filterMyPaymentsByDay('${_mpEscapeHtml(d.date)}')">
+                                <td style="font-weight:800;color:#0f172a;">📅 ${_mpEscapeHtml(d.date)}</td>
+                                <td><span style="background:#ede9fe;color:#5b21b6;padding:3px 10px;border-radius:999px;font-weight:700;font-size:0.82rem;">${d.unique_subscribers} مشترك</span></td>
+                                <td style="font-weight:700;">${d.payments_count} قسط</td>
+                                <td style="font-weight:900;color:#059669;">${_mpFormatMoney(d.total_amount)}</td>
+                                <td><button type="button" class="btn-compact btn-outline" style="height:28px;font-size:0.78rem;padding:0 10px;" onclick="event.stopPropagation(); filterMyPaymentsByDay('${_mpEscapeHtml(d.date)}')">عرض هذا اليوم</button></td>
+                            </tr>
+                        `).join('');
+                    }
+                }
+
+                // جدول تفاصيل التسديدات
+                const rows = data.payments || [];
+                _mpLastRows = rows;
+                const rowsBadge = document.getElementById('mp-rows-count-badge');
+                if (rowsBadge) rowsBadge.textContent = `إجمالي السجلات: ${rows.length}`;
+
+                if (rows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:26px;">لا توجد عمليات تسديد مطابقة للفلتر المحدد.</td></tr>';
+                } else {
+                    tbody.innerHTML = rows.map((r, idx) => `
+                        <tr>
+                            <td style="font-weight:700;color:var(--text-muted);">${idx + 1}</td>
+                            <td style="font-weight:800;color:#0f172a;">${_mpEscapeHtml(r.subscriber_name)}</td>
+                            <td><span style="background:#f1f5f9;color:#1e293b;padding:2px 8px;border-radius:6px;font-weight:800;">#${_mpEscapeHtml(r.subscriber_number)}</span></td>
+                            <td>${_mpEscapeHtml(r.category)}</td>
+                            <td style="font-weight:700;">قسط ${r.installment_number} / دورة ${r.cycle_number}</td>
+                            <td style="font-weight:900;color:#059669;">${_mpFormatMoney(r.amount)}</td>
+                            <td style="direction:ltr;text-align:center;font-weight:600;color:#334155;">${_mpEscapeHtml(r.paid_datetime_str)}</td>
+                            <td style="color:var(--text-muted);font-size:0.84rem;">${_mpEscapeHtml(r.note)}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:#dc2626;padding:20px;">${_mpEscapeHtml(err.message || 'حدث خطأ أثناء تحميل السجل')}</td></tr>`;
+            }
+        }
+
+        function exportMyPaymentsCSV() {
+            if (!_mpLastRows || _mpLastRows.length === 0) {
+                alert('لا توجد بيانات لتصديرها حالياً.');
+                return;
+            }
+            const headers = ['#', 'اسم المشترك', 'رقم الحساب', 'رقم الهاتف', 'الفئة', 'القسط', 'الدورة', 'المبلغ', 'تاريخ ووقت التسديد', 'الملاحظة'];
+            const lines = [headers.join(',')];
+            _mpLastRows.forEach((r, idx) => {
+                const vals = [
+                    idx + 1,
+                    r.subscriber_name,
+                    r.subscriber_number,
+                    r.subscriber_phone,
+                    r.category,
+                    r.installment_number,
+                    r.cycle_number,
+                    r.amount,
+                    r.paid_datetime_str,
+                    r.note,
+                ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`);
+                lines.push(vals.join(','));
+            });
+            const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const dFrom = document.getElementById('mp-date-from')?.value || 'all';
+            const dTo = document.getElementById('mp-date-to')?.value || 'all';
+            a.href = url;
+            a.download = `my_payments_${dFrom}_${dTo}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }

@@ -1427,6 +1427,153 @@ async def staff_sync_payments(request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=500, content={"message": "حدث خطأ أثناء مزامنة المدفوعات"})
 
 
+@app.get("/api/staff/my-payments")
+async def get_staff_my_payments(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    category: str = "",
+    search: str = "",
+    db: Session = Depends(get_db),
+):
+    """جلب سجل تسديدات الموظف المسجل دخوله مع ملخص يومي وفلاتر التاريخ والفئة والبحث."""
+    try:
+        staff_id = _get_staff_id(request)
+    except ValueError as e:
+        return JSONResponse(status_code=401, content={"success": False, "message": str(e)})
+
+    try:
+        rows = (
+            db.query(db_mod.Payment, db_mod.Subscriber)
+            .join(db_mod.Subscriber, db_mod.Payment.subscriber_id == db_mod.Subscriber.id)
+            .filter(
+                db_mod.Payment.staff_id == staff_id,
+                db_mod.Payment.is_paid == True,
+            )
+            .order_by(db_mod.Payment.paid_date.desc(), db_mod.Payment.id.desc())
+            .all()
+        )
+
+        parsed_from = None
+        parsed_to = None
+        if date_from and date_from.strip():
+            try:
+                parsed_from = datetime.date.fromisoformat(date_from.strip())
+            except ValueError:
+                parsed_from = None
+        if date_to and date_to.strip():
+            try:
+                parsed_to = datetime.date.fromisoformat(date_to.strip())
+            except ValueError:
+                parsed_to = None
+
+        cat_filter = (category or "").strip()
+        if cat_filter in ("الكل", "all", "ALL"):
+            cat_filter = ""
+        search_q = (search or "").strip().lower()
+
+        today_date = datetime.date.today()
+        today_amount = 0.0
+        today_payments = 0
+        today_sub_ids = set()
+
+        all_categories = set()
+        filtered_payments = []
+        daily_map = {}
+        filtered_sub_ids = set()
+        total_amount = 0.0
+
+        for p, sub in rows:
+            eff_dt = p.paid_date or p.due_date
+            eff_date = eff_dt.date() if eff_dt else None
+            amt = float(p.amount or 0.0)
+            cat_name = (sub.category or "").strip()
+            if cat_name:
+                all_categories.add(cat_name)
+
+            # إحصائيات اليوم دائماً للمراجعة السريعة
+            if eff_date == today_date:
+                today_amount += amt
+                today_payments += 1
+                today_sub_ids.add(sub.id)
+
+            # تطبيق فلاتر التاريخ
+            if parsed_from and (eff_date is None or eff_date < parsed_from):
+                continue
+            if parsed_to and (eff_date is None or eff_date > parsed_to):
+                continue
+
+            # فلتر الفئة
+            if cat_filter and cat_name != cat_filter:
+                continue
+
+            # فلتر البحث
+            clean_note = (p.note or "").split("|")[0].strip()
+            if search_q:
+                haystack = f"{sub.name or ''} {sub.subscriber_number or ''} {sub.phone or ''} {clean_note}".lower()
+                if search_q not in haystack:
+                    continue
+
+            total_amount += amt
+            filtered_sub_ids.add(sub.id)
+
+            day_key = eff_date.isoformat() if eff_date else "غير محدد"
+            if day_key not in daily_map:
+                daily_map[day_key] = {
+                    "date": day_key,
+                    "total_amount": 0.0,
+                    "payments_count": 0,
+                    "sub_ids": set(),
+                }
+            daily_map[day_key]["total_amount"] += amt
+            daily_map[day_key]["payments_count"] += 1
+            daily_map[day_key]["sub_ids"].add(sub.id)
+
+            filtered_payments.append({
+                "id": p.id,
+                "subscriber_id": sub.id,
+                "subscriber_name": sub.name or "-",
+                "subscriber_number": sub.subscriber_number or "-",
+                "subscriber_phone": sub.phone or "-",
+                "category": cat_name or "-",
+                "amount": amt,
+                "installment_number": p.installment_number or 0,
+                "cycle_number": p.cycle_number or 0,
+                "paid_date_str": eff_dt.strftime("%Y-%m-%d") if eff_dt else "-",
+                "paid_time_str": eff_dt.strftime("%H:%M") if eff_dt else "-",
+                "paid_datetime_str": eff_dt.strftime("%Y-%m-%d %H:%M") if eff_dt else "-",
+                "note": clean_note or "-",
+            })
+
+        daily_summary = []
+        for day_key in sorted(daily_map.keys(), reverse=True):
+            d_obj = daily_map[day_key]
+            daily_summary.append({
+                "date": d_obj["date"],
+                "total_amount": round(d_obj["total_amount"], 2),
+                "payments_count": d_obj["payments_count"],
+                "unique_subscribers": len(d_obj["sub_ids"]),
+            })
+
+        return JSONResponse(content={
+            "success": True,
+            "summary": {
+                "total_amount": round(total_amount, 2),
+                "payments_count": len(filtered_payments),
+                "unique_subscribers": len(filtered_sub_ids),
+                "today_amount": round(today_amount, 2),
+                "today_payments": today_payments,
+                "today_subscribers": len(today_sub_ids),
+            },
+            "daily_summary": daily_summary,
+            "payments": filtered_payments,
+            "categories": sorted(all_categories),
+        })
+    except Exception as e:
+        print(f"[Staff My Payments Error]: {str(e)}")
+        return JSONResponse(status_code=500, content={"success": False, "message": "حدث خطأ أثناء جلب سجل التسديدات"})
+
+
 # ─── إدارة الدورات والأقساط للفئات (نفس منطق تطبيق سطح المكتب) ───
 @app.post("/api/cycles/save-settings")
 async def save_cycle_settings_api(request: Request, db: Session = Depends(get_db)):
