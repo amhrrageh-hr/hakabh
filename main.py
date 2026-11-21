@@ -1435,25 +1435,37 @@ async def get_staff_my_payments(
     date_to: str = "",
     category: str = "",
     search: str = "",
+    filter_staff_id: str = "",
     db: Session = Depends(get_db),
 ):
-    """جلب سجل تسديدات الموظف المسجل دخوله مع ملخص يومي وفلاتر التاريخ والفئة والبحث."""
+    """
+    جلب سجل تسديدات الموظف:
+    - الموظف العادي: تظهر له تسديداته هو فقط بشكل صارم.
+    - المدير: يظهر له ملخص كم سدد كل موظف للمشتركين مع إمكانية الفلترة حسب الموظف والتاريخ والفئة.
+    """
     try:
         staff_id = _get_staff_id(request)
     except ValueError as e:
         return JSONResponse(status_code=401, content={"success": False, "message": str(e)})
 
     try:
-        rows = (
-            db.query(db_mod.Payment, db_mod.Subscriber)
+        current_staff = db.get(db_mod.Staff, staff_id)
+        if not current_staff:
+            return JSONResponse(status_code=401, content={"success": False, "message": "الحساب غير موجود"})
+
+        is_manager = (current_staff.role == "مدير")
+
+        q = (
+            db.query(db_mod.Payment, db_mod.Subscriber, db_mod.Staff)
             .join(db_mod.Subscriber, db_mod.Payment.subscriber_id == db_mod.Subscriber.id)
-            .filter(
-                db_mod.Payment.staff_id == staff_id,
-                db_mod.Payment.is_paid == True,
-            )
-            .order_by(db_mod.Payment.paid_date.desc(), db_mod.Payment.id.desc())
-            .all()
+            .outerjoin(db_mod.Staff, db_mod.Payment.staff_id == db_mod.Staff.id)
+            .filter(db_mod.Payment.is_paid == True)
         )
+        if not is_manager:
+            # الموظف العادي يرى تسديداته فقط لا غير
+            q = q.filter(db_mod.Payment.staff_id == staff_id)
+
+        rows = q.order_by(db_mod.Payment.paid_date.desc(), db_mod.Payment.id.desc()).all()
 
         parsed_from = None
         parsed_to = None
@@ -1473,6 +1485,11 @@ async def get_staff_my_payments(
             cat_filter = ""
         search_q = (search or "").strip().lower()
 
+        # فلتر الموظف (يعمل للمدير فقط)
+        target_staff_filter = (filter_staff_id or "").strip() if is_manager else ""
+        if target_staff_filter in ("all", "الكل"):
+            target_staff_filter = ""
+
         today_date = datetime.date.today()
         today_amount = 0.0
         today_payments = 0
@@ -1484,7 +1501,24 @@ async def get_staff_my_payments(
         filtered_sub_ids = set()
         total_amount = 0.0
 
-        for p, sub in rows:
+        # تجميع إحصائيات كل موظف (للمدير فقط)
+        staff_summary_map = {}
+        if is_manager:
+            all_staff_members = db.query(db_mod.Staff).order_by(db_mod.Staff.id.asc()).all()
+            for st in all_staff_members:
+                staff_summary_map[str(st.id)] = {
+                    "staff_key": str(st.id),
+                    "staff_name": st.name or st.staff_id_code or f"موظف #{st.id}",
+                    "staff_role": st.role or "موظف",
+                    "total_amount": 0.0,
+                    "payments_count": 0,
+                    "sub_ids": set(),
+                    "today_amount": 0.0,
+                    "today_sub_ids": set(),
+                    "today_payments": 0,
+                }
+
+        for p, sub, st in rows:
             eff_dt = p.paid_date or p.due_date
             eff_date = eff_dt.date() if eff_dt else None
             amt = float(p.amount or 0.0)
@@ -1492,28 +1526,60 @@ async def get_staff_my_payments(
             if cat_name:
                 all_categories.add(cat_name)
 
-            # إحصائيات اليوم دائماً للمراجعة السريعة
-            if eff_date == today_date:
+            p_staff_key = str(p.staff_id) if p.staff_id is not None else "unassigned"
+            p_staff_name = (st.name if st else ("الإدارة / سداد مباشر" if p.staff_id is None else f"موظف #{p.staff_id}"))
+            p_staff_role = (st.role if st else "إدارة")
+
+            if is_manager and p_staff_key not in staff_summary_map:
+                staff_summary_map[p_staff_key] = {
+                    "staff_key": p_staff_key,
+                    "staff_name": p_staff_name,
+                    "staff_role": p_staff_role,
+                    "total_amount": 0.0,
+                    "payments_count": 0,
+                    "sub_ids": set(),
+                    "today_amount": 0.0,
+                    "today_sub_ids": set(),
+                    "today_payments": 0,
+                }
+
+            # تحصيل اليوم لكل موظف (للمدير)
+            if is_manager and eff_date == today_date:
+                sm_entry = staff_summary_map[p_staff_key]
+                sm_entry["today_amount"] += amt
+                sm_entry["today_payments"] += 1
+                sm_entry["today_sub_ids"].add(sub.id)
+
+            # تحصيل اليوم للبطاقة العلوية (مع مراعاة فلتر الموظف إن اختاره المدير)
+            matches_staff_filter = (not target_staff_filter) or (p_staff_key == target_staff_filter)
+            if eff_date == today_date and matches_staff_filter:
                 today_amount += amt
                 today_payments += 1
                 today_sub_ids.add(sub.id)
 
-            # تطبيق فلاتر التاريخ
+            # تطبيق فلاتر التاريخ والفئة والبحث
             if parsed_from and (eff_date is None or eff_date < parsed_from):
                 continue
             if parsed_to and (eff_date is None or eff_date > parsed_to):
                 continue
-
-            # فلتر الفئة
             if cat_filter and cat_name != cat_filter:
                 continue
 
-            # فلتر البحث
             clean_note = (p.note or "").split("|")[0].strip()
             if search_q:
-                haystack = f"{sub.name or ''} {sub.subscriber_number or ''} {sub.phone or ''} {clean_note}".lower()
+                haystack = f"{sub.name or ''} {sub.subscriber_number or ''} {sub.phone or ''} {clean_note} {p_staff_name}".lower()
                 if search_q not in haystack:
                     continue
+
+            # تحديث ملخص كل موظف ضمن الفترة المفلترة (قبل تطبيق فلتر الموظف الفردي ليبقى جدول المقارنة كاملاً للمدير)
+            if is_manager:
+                sm_entry = staff_summary_map[p_staff_key]
+                sm_entry["total_amount"] += amt
+                sm_entry["payments_count"] += 1
+                sm_entry["sub_ids"].add(sub.id)
+
+            if not matches_staff_filter:
+                continue
 
             total_amount += amt
             filtered_sub_ids.add(sub.id)
@@ -1544,6 +1610,7 @@ async def get_staff_my_payments(
                 "paid_time_str": eff_dt.strftime("%H:%M") if eff_dt else "-",
                 "paid_datetime_str": eff_dt.strftime("%Y-%m-%d %H:%M") if eff_dt else "-",
                 "note": clean_note or "-",
+                "staff_name": p_staff_name,
             })
 
         daily_summary = []
@@ -1556,8 +1623,32 @@ async def get_staff_my_payments(
                 "unique_subscribers": len(d_obj["sub_ids"]),
             })
 
+        staff_summary = []
+        staff_list = []
+        if is_manager:
+            for item in staff_summary_map.values():
+                staff_summary.append({
+                    "staff_key": item["staff_key"],
+                    "staff_name": item["staff_name"],
+                    "staff_role": item["staff_role"],
+                    "total_amount": round(item["total_amount"], 2),
+                    "payments_count": item["payments_count"],
+                    "unique_subscribers": len(item["sub_ids"]),
+                    "today_amount": round(item["today_amount"], 2),
+                    "today_subscribers": len(item["today_sub_ids"]),
+                    "today_payments": item["today_payments"],
+                })
+                staff_list.append({
+                    "key": item["staff_key"],
+                    "name": item["staff_name"],
+                    "role": item["staff_role"],
+                })
+            # ترتيب الموظفين حسب الأعلى تحصيلاً خلال الفترة المحددة
+            staff_summary.sort(key=lambda x: (-x["total_amount"], -x["payments_count"], x["staff_name"]))
+
         return JSONResponse(content={
             "success": True,
+            "is_manager": is_manager,
             "summary": {
                 "total_amount": round(total_amount, 2),
                 "payments_count": len(filtered_payments),
@@ -1566,6 +1657,8 @@ async def get_staff_my_payments(
                 "today_payments": today_payments,
                 "today_subscribers": len(today_sub_ids),
             },
+            "staff_summary": staff_summary,
+            "staff_list": staff_list,
             "daily_summary": daily_summary,
             "payments": filtered_payments,
             "categories": sorted(all_categories),
