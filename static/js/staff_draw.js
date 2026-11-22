@@ -348,9 +348,9 @@
             ctx.stroke();
             ctx.restore();
 
-            // 3. Wide Metallic Gold Frame with Classical Geometric Lattice & Filigree
+            // 3. Slim Metallic Gold Frame with Classical Geometric Lattice & Filigree
             const rFrameOuter = 196;
-            const rFrameInner = 152;
+            const rFrameInner = 176;
             const frameGrad = ctx.createLinearGradient(cx - rFrameOuter, cy - rFrameOuter, cx + rFrameOuter, cy + rFrameOuter);
             frameGrad.addColorStop(0, '#fef9c3');
             frameGrad.addColorStop(0.22, '#eab308');
@@ -363,13 +363,13 @@
             ctx.arc(cx, cy, rFrameOuter, 0, Math.PI * 2);
             ctx.fillStyle = frameGrad;
             ctx.fill();
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 1.6;
             ctx.strokeStyle = '#fef08a';
             ctx.stroke();
 
-            // Filigree & Classical Geometric Band
-            const rBandOut = 189;
-            const rBandIn = 161;
+            // Slim Filigree & Classical Geometric Band
+            const rBandOut = 192;
+            const rBandIn = 181;
             const rBandMid = (rBandOut + rBandIn) / 2;
             ctx.beginPath();
             ctx.arc(cx, cy, rBandOut, 0, Math.PI * 2);
@@ -383,19 +383,19 @@
                 const a2 = ((i + 1) * 2 * Math.PI) / motifs;
                 const amid = (a1 + a2) / 2;
                 ctx.beginPath();
-                ctx.moveTo(cx + (rBandOut - 2) * Math.cos(amid), cy + (rBandOut - 2) * Math.sin(amid));
+                ctx.moveTo(cx + (rBandOut - 1) * Math.cos(amid), cy + (rBandOut - 1) * Math.sin(amid));
                 ctx.lineTo(cx + rBandMid * Math.cos(a2), cy + rBandMid * Math.sin(a2));
-                ctx.lineTo(cx + (rBandIn + 2) * Math.cos(amid), cy + (rBandIn + 2) * Math.sin(amid));
+                ctx.lineTo(cx + (rBandIn + 1) * Math.cos(amid), cy + (rBandIn + 1) * Math.sin(amid));
                 ctx.lineTo(cx + rBandMid * Math.cos(a1), cy + rBandMid * Math.sin(a1));
                 ctx.closePath();
                 ctx.strokeStyle = '#fde047';
-                ctx.lineWidth = 1;
+                ctx.lineWidth = 0.85;
                 ctx.fillStyle = 'rgba(234, 179, 8, 0.28)';
                 ctx.fill();
                 ctx.stroke();
 
                 ctx.beginPath();
-                ctx.arc(cx + rBandMid * Math.cos(amid), cy + rBandMid * Math.sin(amid), 1.8, 0, Math.PI * 2);
+                ctx.arc(cx + rBandMid * Math.cos(amid), cy + rBandMid * Math.sin(amid), 1.3, 0, Math.PI * 2);
                 ctx.fillStyle = '#fef08a';
                 ctx.fill();
             }
@@ -406,7 +406,7 @@
             for (let i = 0; i < numStuds; i++) {
                 const sa = (i * (Math.PI * 2) / numStuds) - Math.PI / 2;
                 ctx.beginPath();
-                ctx.arc(cx + rStuds * Math.cos(sa), cy + rStuds * Math.sin(sa), 2.1, 0, Math.PI * 2);
+                ctx.arc(cx + rStuds * Math.cos(sa), cy + rStuds * Math.sin(sa), 1.5, 0, Math.PI * 2);
                 ctx.fillStyle = '#fef9c3';
                 ctx.fill();
             }
@@ -417,8 +417,8 @@
             ctx.rotate((angleDeg * Math.PI) / 180);
 
             const nSegs = Math.max(1, WHEEL_SEGMENTS.length);
-            const segFontPx = nSegs <= 6 ? 18 : nSegs <= 12 ? 15 : nSegs <= 24 ? 12 : 9.5;
-            const segTextOffset = nSegs <= 6 ? 30 : nSegs <= 12 ? 24 : nSegs <= 24 ? 18 : 13;
+            const segFontPx = nSegs <= 6 ? 21 : nSegs <= 12 ? 17 : nSegs <= 24 ? 14 : 11;
+            const segTextOffset = nSegs <= 6 ? 36 : nSegs <= 12 ? 28 : nSegs <= 24 ? 22 : 16;
 
             for (let i = 0; i < nSegs; i++) {
                 const startRad = -Math.PI / 2 + (i - 1) * WHEEL_SEG_ANGLE;

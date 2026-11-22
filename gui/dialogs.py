@@ -579,36 +579,36 @@ class LuxuryPrizeWheelWidget(QWidget):
         p.setBrush(QBrush(self._make_gold_conical(cx, cy, 25.0)))
         p.drawPath(gear_path)
 
-        # د) الإطار المعدني الذهبي العريض المصقول (Wide Polished Deep Gold Frame: R=230 -> R=178)
+        # د) الإطار المعدني الذهبي المصقول المقلّص (Slim Polished Gold Frame: R=230 -> R=208 لإعطاء مساحة أكبر للأرقام)
         r_frame_outer = 230.0
-        r_frame_inner = 178.0
+        r_frame_inner = 208.0
 
-        # الطبقة الأساسية للإطار العريض
+        # الطبقة الأساسية للإطار الذهبي
         p.setPen(QPen(QColor("#fef08a"), 1.6))
         p.setBrush(QBrush(self._make_gold_conical(cx, cy, 70.0)))
         p.drawEllipse(QPointF(cx, cy), r_frame_outer, r_frame_outer)
 
-        # تدرج دائري لإبراز انحناء المعدن ثلاثي الأبعاد على عرض الإطار
+        # تدرج دائري لإبراز انحناء المعدن ثلاثي الأبعاد
         bevel_grad = QRadialGradient(QPointF(cx, cy), r_frame_outer)
-        bevel_grad.setColorAt(0.75, QColor(69, 26, 3, 180))
-        bevel_grad.setColorAt(0.80, QColor(254, 240, 138, 120))
-        bevel_grad.setColorAt(0.86, QColor(146, 64, 14, 70))
-        bevel_grad.setColorAt(0.93, QColor(254, 249, 195, 135))
-        bevel_grad.setColorAt(0.98, QColor(120, 53, 15, 160))
+        bevel_grad.setColorAt(0.89, QColor(69, 26, 3, 180))
+        bevel_grad.setColorAt(0.92, QColor(254, 240, 138, 120))
+        bevel_grad.setColorAt(0.95, QColor(146, 64, 14, 70))
+        bevel_grad.setColorAt(0.97, QColor(254, 249, 195, 135))
+        bevel_grad.setColorAt(0.99, QColor(120, 53, 15, 160))
         bevel_grad.setColorAt(1.00, QColor(69, 26, 3, 210))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(bevel_grad))
         p.drawEllipse(QPointF(cx, cy), r_frame_outer, r_frame_outer)
 
-        # شريط الزخارف الهندسية الكلاسيكية والفيلجري الذهبي داخل الإطار العريض (R=222 -> R=188)
-        r_band_out = 221.0
-        r_band_in = 189.0
+        # شريط الزخارف الهندسية الكلاسيكية والفيلجري الذهبي النحيف داخل الإطار (R=225 -> R=213)
+        r_band_out = 225.0
+        r_band_in = 213.0
         r_band_mid = (r_band_out + r_band_in) / 2.0
 
         # خلفية غائرة داكنة قليلاً لإبراز نقوش الفيلجري الذهبية البارزة
         recess_grad = QRadialGradient(QPointF(cx, cy), r_band_out)
-        recess_grad.setColorAt(0.84, QColor("#3b1704"))
-        recess_grad.setColorAt(0.92, QColor("#5c2808"))
+        recess_grad.setColorAt(0.93, QColor("#3b1704"))
+        recess_grad.setColorAt(0.97, QColor("#5c2808"))
         recess_grad.setColorAt(1.00, QColor("#2e1002"))
         band_path = QPainterPath()
         band_path.addEllipse(QPointF(cx, cy), r_band_out, r_band_out)
@@ -616,10 +616,10 @@ class LuxuryPrizeWheelWidget(QWidget):
         inner_cut.addEllipse(QPointF(cx, cy), r_band_in, r_band_in)
         band_path = band_path.subtracted(inner_cut)
         p.setBrush(QBrush(recess_grad))
-        p.setPen(QPen(QColor("#facc15"), 1.2))
+        p.setPen(QPen(QColor("#facc15"), 1.0))
         p.drawPath(band_path)
 
-        # رسم الزخارف الهندسية الكلاسيكية والفيلجري (Classical Geometric Lattice & Gold Filigree)
+        # رسم الزخارف الهندسية الكلاسيكية النحيفة (Slim Geometric Lattice & Gold Filigree)
         num_motifs = 48
         p.save()
         for i in range(num_motifs):
@@ -628,36 +628,24 @@ class LuxuryPrizeWheelWidget(QWidget):
             next_rad = math.radians((i + 1) * (360.0 / num_motifs))
             mid_rad = (ang_rad + next_rad) / 2.0
 
-            # معين هندسي كلاسيكي متشابك (Geometric Diamond Lattice)
-            p_out = QPointF(cx + (r_band_out - 2.0) * math.cos(mid_rad), cy + (r_band_out - 2.0) * math.sin(mid_rad))
-            p_in = QPointF(cx + (r_band_in + 2.0) * math.cos(mid_rad), cy + (r_band_in + 2.0) * math.sin(mid_rad))
+            p_out = QPointF(cx + (r_band_out - 1.2) * math.cos(mid_rad), cy + (r_band_out - 1.2) * math.sin(mid_rad))
+            p_in = QPointF(cx + (r_band_in + 1.2) * math.cos(mid_rad), cy + (r_band_in + 1.2) * math.sin(mid_rad))
             p_left = QPointF(cx + r_band_mid * math.cos(ang_rad), cy + r_band_mid * math.sin(ang_rad))
             p_right = QPointF(cx + r_band_mid * math.cos(next_rad), cy + r_band_mid * math.sin(next_rad))
 
             motif_poly = QPolygonF([p_out, p_right, p_in, p_left])
-            p.setPen(QPen(QColor("#fde047"), 1.15))
+            p.setPen(QPen(QColor("#fde047"), 0.9))
             p.setBrush(QBrush(QColor(234, 179, 8, 65)))
             p.drawPolygon(motif_poly)
 
-            # أقواس فيلجري ذهبية دقيقة (Filigree Scrollwork)
             filigree_pt = QPointF(cx + r_band_mid * math.cos(mid_rad), cy + r_band_mid * math.sin(mid_rad))
-            p.setPen(QPen(QColor("#fef08a"), 0.9))
+            p.setPen(QPen(QColor("#fef08a"), 0.7))
             p.setBrush(QBrush(QColor("#facc15")))
-            p.drawEllipse(filigree_pt, 2.2, 2.2)
-
-            # تروس داخلية مصغرة محفورة في الإطار عند كل زاوية
-            if i % 2 == 0:
-                g_cx = cx + (r_band_out - 6.0) * math.cos(ang_rad)
-                g_cy = cy + (r_band_out - 6.0) * math.sin(ang_rad)
-                p.setPen(QPen(QColor("#fef9c3"), 0.8))
-                p.setBrush(QBrush(QColor("#ca8a04")))
-                p.drawEllipse(QPointF(g_cx, g_cy), 3.2, 3.2)
-                p.setBrush(QBrush(QColor("#451a03")))
-                p.drawEllipse(QPointF(g_cx, g_cy), 1.3, 1.3)
+            p.drawEllipse(filigree_pt, 1.5, 1.5)
         p.restore()
 
-        # الحلقات الذهبية الداخلية المحيطة بقرص العجلة مع مسامير ألماسية/ذهبية (50 مسماراً)
-        p.setPen(QPen(QColor("#fef08a"), 2.0))
+        # الحلقات الذهبية الداخلية المحيطة بقرص العجلة مع مسامير ذهبية ناعمة
+        p.setPen(QPen(QColor("#fef08a"), 1.6))
         p.setBrush(QBrush(self._make_gold_conical(cx, cy, 140.0)))
         inner_rim_path = QPainterPath()
         inner_rim_path.addEllipse(QPointF(cx, cy), r_band_in, r_band_in)
@@ -665,20 +653,19 @@ class LuxuryPrizeWheelWidget(QWidget):
         wheel_cut.addEllipse(QPointF(cx, cy), r_frame_inner, r_frame_inner)
         p.drawPath(inner_rim_path.subtracted(wheel_cut))
 
-        # 50 جوهرة/مسمار ذهبي مضيء على الحافة الداخلية للإطار
+        # 50 مسماراً ذهبياً ناعماً على الحافة الداخلية للإطار
         r_studs = (r_band_in + r_frame_inner) / 2.0
-        for i in range(self.num_segments):
-            s_rad = math.radians(i * self.seg_angle - 90.0)
+        for i in range(50):
+            s_rad = math.radians(i * (360.0 / 50.0) - 90.0)
             sx = cx + r_studs * math.cos(s_rad)
             sy = cy + r_studs * math.sin(s_rad)
-            stud_grad = QRadialGradient(QPointF(sx - 0.8, sy - 0.8), 3.0)
+            stud_grad = QRadialGradient(QPointF(sx - 0.5, sy - 0.5), 2.2)
             stud_grad.setColorAt(0.0, QColor("#ffffff"))
-            stud_grad.setColorAt(0.45, QColor("#fef08a"))
-            stud_grad.setColorAt(0.85, QColor("#b45309"))
-            stud_grad.setColorAt(1.0, QColor("#451a03"))
+            stud_grad.setColorAt(0.5, QColor("#fef08a"))
+            stud_grad.setColorAt(1.0, QColor("#78350f"))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(stud_grad))
-            p.drawEllipse(QPointF(sx, sy), 2.6, 2.6)
+            p.drawEllipse(QPointF(sx, sy), 1.8, 1.8)
 
         p.end()
         self._static_bg_frame_pixmap = bg_pm
@@ -698,7 +685,7 @@ class LuxuryPrizeWheelWidget(QWidget):
         px_size = int(self.wheel_size * dpr)
         cx = self.wheel_size / 2.0
         cy = self.wheel_size / 2.0
-        r_wheel = 178.0
+        r_wheel = 208.0
         r_hub_outer = 74.0
 
         disc_pm = QPixmap(px_size, px_size)
@@ -711,20 +698,20 @@ class LuxuryPrizeWheelWidget(QWidget):
 
         n_segs = max(1, len(self.segments))
         if n_segs <= 6:
+            font_pt = 22
+            text_offset = 36.0
+        elif n_segs <= 12:
             font_pt = 18
             text_offset = 28.0
-        elif n_segs <= 12:
-            font_pt = 15
-            text_offset = 22.0
         elif n_segs <= 24:
-            font_pt = 12
-            text_offset = 16.0
+            font_pt = 14
+            text_offset = 20.0
         elif n_segs <= 36:
-            font_pt = 10
-            text_offset = 11.0
+            font_pt = 11
+            text_offset = 14.0
         else:
-            font_pt = 8
-            text_offset = 7.0
+            font_pt = 9
+            text_offset = 9.0
 
         for i, label_num in enumerate(self.segments):
             # زاوية بداية القطاع بالدرجات في نظام الرياضيات (حيث -90 هي الأعلى)
@@ -989,10 +976,11 @@ class LuxuryPrizeWheelWidget(QWidget):
         في أعلى منتصف الإطار المعدني تماماً.
         """
         p.save()
-        # نقطة ارتكاز المؤشر في أعلى الإطار الذهبي العريض
+        # نقطة ارتكاز المؤشر في أعلى الإطار الذهبي المقلّص
         pivot_x = cx
-        pivot_y = cy - 216.0
+        pivot_y = cy - 230.0
         p.translate(pivot_x, pivot_y)
+        p.scale(0.82, 0.82)
         p.rotate(self.pointer_deflection)
 
         # ظل المؤشر
