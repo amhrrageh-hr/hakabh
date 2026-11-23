@@ -811,8 +811,14 @@ class DrawMixin:
         ex_filter_layout.addWidget(QLabel("الفئة المالية:"))
         self.combo_draw_ex_cat_filter = QComboBox()
         self.combo_draw_ex_cat_filter.addItem("كل الفئات", None)
-        self.combo_draw_ex_cat_filter.currentIndexChanged.connect(self.load_draw_excluded)
+        self.combo_draw_ex_cat_filter.currentIndexChanged.connect(self._on_draw_ex_cat_changed)
         ex_filter_layout.addWidget(self.combo_draw_ex_cat_filter)
+
+        ex_filter_layout.addWidget(QLabel("الدورة:"))
+        self.combo_draw_ex_cycle_filter = QComboBox()
+        self.combo_draw_ex_cycle_filter.addItem("كل الدورات", None)
+        self.combo_draw_ex_cycle_filter.currentIndexChanged.connect(self.load_draw_excluded)
+        ex_filter_layout.addWidget(self.combo_draw_ex_cycle_filter)
 
         ex_filter_layout.addWidget(QLabel("بحث سريع:"))
         self.draw_ex_search = QLineEdit()
@@ -1607,6 +1613,41 @@ class DrawMixin:
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
             combo.blockSignals(False)
+        self._refresh_draw_ex_cycles_filter()
+
+    def _refresh_draw_ex_cycles_filter(self):
+        if not hasattr(self, 'combo_draw_ex_cycle_filter'):
+            return
+        cat_filter = self.combo_draw_ex_cat_filter.currentData() if hasattr(self, 'combo_draw_ex_cat_filter') else None
+        q_cat = self.db.query(db_mod.Category)
+        if cat_filter:
+            q_cat = q_cat.filter(db_mod.Category.name == cat_filter)
+        cats = q_cat.all()
+        max_cycles = max([int(getattr(c, 'max_cycles', 1) or 1) for c in cats], default=1)
+        # التحقق أيضاً من أقصى رقم دورة مسجل فعلياً في جدول الأقساط
+        try:
+            max_p_cycle = self.db.query(func.max(db_mod.Payment.cycle_number)).scalar()
+            if max_p_cycle and int(max_p_cycle) > max_cycles:
+                max_cycles = int(max_p_cycle)
+        except Exception:
+            pass
+
+        combo = self.combo_draw_ex_cycle_filter
+        curr = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("كل الدورات", None)
+        for c_num in range(1, max_cycles + 1):
+            combo.addItem(f"الدورة {c_num}", c_num)
+        if curr is not None:
+            idx = combo.findData(curr)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
+    def _on_draw_ex_cat_changed(self):
+        self._refresh_draw_ex_cycles_filter()
+        self.load_draw_excluded()
 
     def load_recent_winners(self):
         try:
@@ -1740,23 +1781,37 @@ class DrawMixin:
         except Exception as e:
             ModernDialog(self, "خطأ", f"حدث خطأ أثناء التصدير: {e}").exec()
 
-    def load_draw_excluded(self):
-        try:
-            self.db.rollback()
-        except Exception:
-            pass
-        self.db.expire_all()
-
-        if not hasattr(self, 'table_draw_excluded'):
-            return
-
+    def _get_draw_excluded_items(self):
+        """جلب قائمة المستبعدين من السحب حسب الفئة المالية ورقم الدورة والبحث السريع."""
         cat_filter = self.combo_draw_ex_cat_filter.currentData() if hasattr(self, 'combo_draw_ex_cat_filter') else None
+        cycle_filter = self.combo_draw_ex_cycle_filter.currentData() if hasattr(self, 'combo_draw_ex_cycle_filter') else None
         search_txt = self.draw_ex_search.text().strip().lower() if hasattr(self, 'draw_ex_search') else ""
 
         all_subs = self.db.query(db_mod.Subscriber).all()
         fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db)
-        excluded_list = []
 
+        cat_map = {c.name: c for c in self.db.query(db_mod.Category).all()}
+        cycle_payments_by_sub = {}
+        if cycle_filter is not None:
+            raw_p = (
+                self.db.query(
+                    db_mod.Payment.subscriber_id,
+                    db_mod.Payment.cycle_number,
+                    db_mod.Payment.installment_number,
+                    db_mod.Payment.amount,
+                    db_mod.Payment.due_date,
+                    db_mod.Payment.paid_date,
+                    db_mod.Payment.is_paid,
+                )
+                .filter(db_mod.Payment.cycle_number == int(cycle_filter))
+                .all()
+            )
+            for p in raw_p:
+                cycle_payments_by_sub.setdefault(p[0], []).append(p)
+            for sid, plist in list(cycle_payments_by_sub.items()):
+                cycle_payments_by_sub[sid] = _dedupe_cycle_payments(plist)
+
+        excluded_list = []
         for sub in all_subs:
             sub_cat = sub.category or "-"
             if cat_filter and sub_cat != cat_filter:
@@ -1775,23 +1830,53 @@ class DrawMixin:
             is_excluded = False
             reason = ""
             status_badge = ""
+            status_plain = ""
 
             if sub.status == "excluded":
                 is_excluded = True
                 reason = sub.exclusion_reason or "استبعاد إداري مباشر"
                 status_badge = "مستبعد 🚫"
-            elif fin_status == "suspended":
-                is_excluded = True
-                reason = "إيقاف آلي بسبب تراكم الأقساط المتأخرة"
-                status_badge = "موقوف ⚫"
-            elif fin_status == "late":
-                is_excluded = True
-                reason = "تأخر وتعثر عن سداد الأقساط المستحقة"
-                status_badge = "متأخر 🔴"
+                status_plain = "مستبعد"
             elif sub.status == "pending":
                 is_excluded = True
                 reason = "طلب اشتراك معلق لم يتم اعتماده بعد"
                 status_badge = "معلق 🟡"
+                status_plain = "معلق"
+            elif cycle_filter is not None:
+                cat_obj = cat_map.get(sub.category)
+                max_inst = max(1, int(getattr(cat_obj, 'max_installments', 1) or 1)) if cat_obj else 1
+                expected_amount = float(getattr(cat_obj, 'amount', 0.0) or 0.0) * max_inst if cat_obj else 0.0
+                s_payments = cycle_payments_by_sub.get(sub.id, [])
+                if not s_payments:
+                    is_excluded = True
+                    reason = f"لا توجد أقساط مسجلة في الدورة {cycle_filter}"
+                    status_badge = "غير مؤهل ⚪"
+                    status_plain = "غير مؤهل"
+                else:
+                    paid_rows = [p for p in s_payments if p[6]]
+                    paid_count = len(paid_rows)
+                    total_paid = sum(float(p[3] or 0.0) for p in paid_rows)
+                    is_finished = (total_paid >= expected_amount - 0.01) and (paid_count >= max_inst)
+                    if not is_finished:
+                        is_excluded = True
+                        reason = f"لم يُتم أقساط الدورة {cycle_filter} (سدد {paid_count}/{max_inst})"
+                        if fin_status == "suspended":
+                            status_badge = "موقوف ⚫"
+                            status_plain = "موقوف"
+                        else:
+                            status_badge = "متأخر 🔴"
+                            status_plain = "متأخر"
+            else:
+                if fin_status == "suspended":
+                    is_excluded = True
+                    reason = "إيقاف آلي بسبب تراكم الأقساط المتأخرة"
+                    status_badge = "موقوف ⚫"
+                    status_plain = "موقوف"
+                elif fin_status == "late":
+                    is_excluded = True
+                    reason = "تأخر وتعثر عن سداد الأقساط المستحقة"
+                    status_badge = "متأخر 🔴"
+                    status_plain = "متأخر"
 
             if is_excluded:
                 excluded_list.append({
@@ -1802,8 +1887,22 @@ class DrawMixin:
                     "phone": sub_phone,
                     "reason": reason,
                     "status_badge": status_badge,
-                    "status": sub.status
+                    "status_plain": status_plain,
+                    "status": sub.status,
                 })
+        return excluded_list
+
+    def load_draw_excluded(self):
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
+        self.db.expire_all()
+
+        if not hasattr(self, 'table_draw_excluded'):
+            return
+
+        excluded_list = self._get_draw_excluded_items()
 
         self.table_draw_excluded.setRowCount(len(excluded_list))
         for i, item in enumerate(excluded_list):
@@ -1827,58 +1926,15 @@ class DrawMixin:
 
     def export_draw_excluded_excel(self):
         try:
-            cat_filter = self.combo_draw_ex_cat_filter.currentData() if hasattr(self, 'combo_draw_ex_cat_filter') else None
-            search_txt = self.draw_ex_search.text().strip().lower() if hasattr(self, 'draw_ex_search') else ""
-
-            all_subs = self.db.query(db_mod.Subscriber).all()
-            fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db)
-            items = []
-
-            for sub in all_subs:
-                sub_cat = sub.category or "-"
-                if cat_filter and sub_cat != cat_filter:
-                    continue
-
-                sub_name = sub.name or ""
-                sub_acc = sub.subscriber_number or ""
-                sub_phone = sub.phone or ""
-
-                if search_txt:
-                    match = (search_txt in sub_name.lower()) or (search_txt in sub_acc.lower()) or (search_txt in sub_phone.lower())
-                    if not match:
-                        continue
-
-                fin_status = fin_status_map.get(sub.id, "pending")
-                is_excluded = False
-                reason = ""
-                status_badge = ""
-
-                if sub.status == "excluded":
-                    is_excluded = True
-                    reason = sub.exclusion_reason or "استبعاد إداري مباشر"
-                    status_badge = "مستبعد"
-                elif fin_status == "suspended":
-                    is_excluded = True
-                    reason = "إيقاف آلي بسبب تراكم الأقساط المتأخرة"
-                    status_badge = "موقوف"
-                elif fin_status == "late":
-                    is_excluded = True
-                    reason = "تأخر وتعثر عن سداد الأقساط المستحقة"
-                    status_badge = "متأخر"
-                elif sub.status == "pending":
-                    is_excluded = True
-                    reason = "طلب اشتراك معلق لم يتم اعتماده بعد"
-                    status_badge = "معلق"
-
-                if is_excluded:
-                    items.append({
-                        "اسم المشترك": sub_name,
-                        "رقم الحساب": sub_acc,
-                        "الفئة المالية": sub_cat,
-                        "رقم الهاتف": sub_phone,
-                        "سبب الاستبعاد": reason,
-                        "حالة الانضباط": status_badge
-                    })
+            excluded_list = self._get_draw_excluded_items()
+            items = [{
+                "اسم المشترك": it["name"],
+                "رقم الحساب": it["acc"],
+                "الفئة المالية": it["cat"],
+                "رقم الهاتف": it["phone"],
+                "سبب الاستبعاد": it["reason"],
+                "حالة الانضباط": it["status_plain"],
+            } for it in excluded_list]
 
             if not items:
                 ModernDialog(self, "تنبيه", "لا توجد بيانات مستبعدين لتصديرها.").exec()

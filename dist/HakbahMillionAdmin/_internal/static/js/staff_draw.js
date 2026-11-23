@@ -250,16 +250,25 @@
             startDrawAnimation('الجائزة الكبرى', period);
         }
 
-        // --- Luxury Prize Wheel Renderer (Emerald & Gold Filigree 1..49 Wheel) ---
-        const WHEEL_SEGMENTS = ['49', '49', ...Array.from({ length: 48 }, (_, i) => String(i + 1))];
-        const WHEEL_SEG_ANGLE = (Math.PI * 2) / WHEEL_SEGMENTS.length;
+        // --- Luxury Prize Wheel Renderer (Dynamic Qualified Numbers Wheel) ---
+        let WHEEL_SEGMENTS = ['49', '49', ...Array.from({ length: 48 }, (_, i) => String(i + 1))];
+        let WHEEL_SEG_ANGLE = (Math.PI * 2) / WHEEL_SEGMENTS.length;
         let currentWheelRotationDeg = 0;
 
+        function setWheelSegments(labels) {
+            const clean = (labels || []).map(x => String(x || '').trim()).filter(Boolean);
+            WHEEL_SEGMENTS = clean.length > 0 ? clean : ['---'];
+            WHEEL_SEG_ANGLE = (Math.PI * 2) / WHEEL_SEGMENTS.length;
+        }
+
         function getSegmentIndexForSubNumber(subNum) {
-            const digits = String(subNum || '').replace(/\D/g, '');
-            const numVal = digits ? (((parseInt(digits, 10) - 1) % 49) + 1) : 49;
-            if (numVal === 49) return Math.random() < 0.5 ? 0 : 1;
-            return numVal + 1;
+            const target = String(subNum || '').trim();
+            const exactIdx = WHEEL_SEGMENTS.indexOf(target);
+            if (exactIdx !== -1) return exactIdx;
+            const digits = target.replace(/\D/g, '');
+            const digitIdx = digits ? WHEEL_SEGMENTS.indexOf(digits) : -1;
+            if (digitIdx !== -1) return digitIdx;
+            return 0;
         }
 
         function drawLuxuryPrizeWheel(angleDeg, ptrDeflectDeg = 0, winningSegIdx = -1) {
@@ -339,9 +348,9 @@
             ctx.stroke();
             ctx.restore();
 
-            // 3. Wide Metallic Gold Frame with Classical Geometric Lattice & Filigree
+            // 3. Slim Metallic Gold Frame with Classical Geometric Lattice & Filigree
             const rFrameOuter = 196;
-            const rFrameInner = 152;
+            const rFrameInner = 176;
             const frameGrad = ctx.createLinearGradient(cx - rFrameOuter, cy - rFrameOuter, cx + rFrameOuter, cy + rFrameOuter);
             frameGrad.addColorStop(0, '#fef9c3');
             frameGrad.addColorStop(0.22, '#eab308');
@@ -354,13 +363,13 @@
             ctx.arc(cx, cy, rFrameOuter, 0, Math.PI * 2);
             ctx.fillStyle = frameGrad;
             ctx.fill();
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 1.6;
             ctx.strokeStyle = '#fef08a';
             ctx.stroke();
 
-            // Filigree & Classical Geometric Band
-            const rBandOut = 189;
-            const rBandIn = 161;
+            // Slim Filigree & Classical Geometric Band
+            const rBandOut = 192;
+            const rBandIn = 181;
             const rBandMid = (rBandOut + rBandIn) / 2;
             ctx.beginPath();
             ctx.arc(cx, cy, rBandOut, 0, Math.PI * 2);
@@ -374,47 +383,55 @@
                 const a2 = ((i + 1) * 2 * Math.PI) / motifs;
                 const amid = (a1 + a2) / 2;
                 ctx.beginPath();
-                ctx.moveTo(cx + (rBandOut - 2) * Math.cos(amid), cy + (rBandOut - 2) * Math.sin(amid));
+                ctx.moveTo(cx + (rBandOut - 1) * Math.cos(amid), cy + (rBandOut - 1) * Math.sin(amid));
                 ctx.lineTo(cx + rBandMid * Math.cos(a2), cy + rBandMid * Math.sin(a2));
-                ctx.lineTo(cx + (rBandIn + 2) * Math.cos(amid), cy + (rBandIn + 2) * Math.sin(amid));
+                ctx.lineTo(cx + (rBandIn + 1) * Math.cos(amid), cy + (rBandIn + 1) * Math.sin(amid));
                 ctx.lineTo(cx + rBandMid * Math.cos(a1), cy + rBandMid * Math.sin(a1));
                 ctx.closePath();
                 ctx.strokeStyle = '#fde047';
-                ctx.lineWidth = 1;
+                ctx.lineWidth = 0.85;
                 ctx.fillStyle = 'rgba(234, 179, 8, 0.28)';
                 ctx.fill();
                 ctx.stroke();
 
                 ctx.beginPath();
-                ctx.arc(cx + rBandMid * Math.cos(amid), cy + rBandMid * Math.sin(amid), 1.8, 0, Math.PI * 2);
+                ctx.arc(cx + rBandMid * Math.cos(amid), cy + rBandMid * Math.sin(amid), 1.3, 0, Math.PI * 2);
                 ctx.fillStyle = '#fef08a';
                 ctx.fill();
             }
 
             // 50 Gold Studs around inner bezel
             const rStuds = (rBandIn + rFrameInner) / 2;
-            for (let i = 0; i < WHEEL_SEGMENTS.length; i++) {
-                const sa = i * WHEEL_SEG_ANGLE - Math.PI / 2;
+            const numStuds = 50;
+            for (let i = 0; i < numStuds; i++) {
+                const sa = (i * (Math.PI * 2) / numStuds) - Math.PI / 2;
                 ctx.beginPath();
-                ctx.arc(cx + rStuds * Math.cos(sa), cy + rStuds * Math.sin(sa), 2.1, 0, Math.PI * 2);
+                ctx.arc(cx + rStuds * Math.cos(sa), cy + rStuds * Math.sin(sa), 1.5, 0, Math.PI * 2);
                 ctx.fillStyle = '#fef9c3';
                 ctx.fill();
             }
 
-            // 4. Rotating 1..49 Dark Emerald Wheel Disc
+            // 4. Rotating Dynamic Qualified Numbers Dark Emerald Wheel Disc
             ctx.save();
             ctx.translate(cx, cy);
             ctx.rotate((angleDeg * Math.PI) / 180);
 
-            for (let i = 0; i < WHEEL_SEGMENTS.length; i++) {
+            const nSegs = Math.max(1, WHEEL_SEGMENTS.length);
+            const segFontPx = nSegs <= 8 ? 21 : nSegs <= 16 ? 17 : nSegs <= 28 ? 14 : nSegs <= 40 ? 11 : 9.5;
+
+            for (let i = 0; i < nSegs; i++) {
                 const startRad = -Math.PI / 2 + (i - 1) * WHEEL_SEG_ANGLE;
                 const endRad = startRad + WHEEL_SEG_ANGLE;
                 const midRad = (startRad + endRad) / 2;
 
                 ctx.beginPath();
-                ctx.moveTo(0, 0);
-                ctx.arc(0, 0, rFrameInner, startRad, endRad);
-                ctx.closePath();
+                if (nSegs === 1) {
+                    ctx.arc(0, 0, rFrameInner, 0, Math.PI * 2);
+                } else {
+                    ctx.moveTo(0, 0);
+                    ctx.arc(0, 0, rFrameInner, startRad, endRad);
+                    ctx.closePath();
+                }
 
                 if (i === winningSegIdx) {
                     ctx.fillStyle = '#eab308';
@@ -422,18 +439,20 @@
                     ctx.fillStyle = i % 2 === 0 ? '#053b2a' : '#03281b';
                 }
                 ctx.fill();
-                ctx.lineWidth = 1;
+                ctx.lineWidth = nSegs <= 12 ? 1.4 : 1;
                 ctx.strokeStyle = '#eab308';
                 ctx.stroke();
 
-                // Gold Number (1..49 with 49 twice at top)
+                // Gold Qualified Subscriber Number (Radial / Vertical along slice)
                 ctx.save();
-                ctx.rotate(midRad + Math.PI / 2);
-                ctx.font = '900 9.5px Arial';
-                ctx.textAlign = 'center';
+                ctx.rotate(midRad);
+                ctx.font = `900 ${segFontPx}px Arial`;
+                ctx.textAlign = 'right';
                 ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+                ctx.fillText(WHEEL_SEGMENTS[i], rFrameInner - 11, 1);
                 ctx.fillStyle = i === winningSegIdx ? '#052e16' : '#fde047';
-                ctx.fillText(WHEEL_SEGMENTS[i], 0, -rFrameInner + 13);
+                ctx.fillText(WHEEL_SEGMENTS[i], rFrameInner - 12, 0);
                 ctx.restore();
             }
 
@@ -536,6 +555,11 @@
             modalFooter.style.display = 'none';
             closeBtn.style.display = 'none';
 
+            // تعبئة العجلة بأرقام المؤهلين فقط
+            const candNums = (drawState.currentCandidates || []).map(c => String(c.number || '').trim()).filter(Boolean);
+            if (candNums.length > 0) {
+                setWheelSegments(candNums);
+            }
             drawLuxuryPrizeWheel(currentWheelRotationDeg, 0, -1);
 
             try {
@@ -563,8 +587,12 @@
                     const firstW = winners[0];
                     drawState.lastPerformedWinner = firstW;
 
-                    // Animate the Luxury Wheel to land accurately on the winner's segment
-                    const winSegIdx = getSegmentIndexForSubNumber(firstW.subscriber_number);
+                    // التأكد من وجود رقم الفائز ضمن قطاعات العجلة وتوجيهها بدقة نحوه
+                    const winNumStr = String(firstW.subscriber_number || '').trim();
+                    if (winNumStr && !WHEEL_SEGMENTS.includes(winNumStr)) {
+                        setWheelSegments([...WHEEL_SEGMENTS.filter(x => x !== '---'), winNumStr]);
+                    }
+                    const winSegIdx = getSegmentIndexForSubNumber(winNumStr);
                     const segDeg = 360 / WHEEL_SEGMENTS.length;
                     const targetMod = (-(winSegIdx - 0.5) * segDeg % 360 + 360) % 360;
                     const startDeg = currentWheelRotationDeg % 360;
@@ -581,17 +609,16 @@
                             const curDeg = startDeg + (totalTargetDeg - startDeg) * eased;
                             currentWheelRotationDeg = curDeg;
 
-                            const segUnderPtr = Math.floor(((-curDeg % 360) + 360) % 360 / segDeg);
+                            const segUnderPtr = (Math.floor(((-curDeg % 360) + 360) % 360 / segDeg) + 1) % WHEEL_SEGMENTS.length;
                             let ptrDeflect = 0;
                             if (segUnderPtr !== lastTickSeg && p < 0.985) {
                                 lastTickSeg = segUnderPtr;
                                 ptrDeflect = -14 * Math.min(1, (1 - eased) * 2.4 + 0.18);
-                                const randomCand = drawState.currentCandidates[Math.floor(Math.random() * drawState.currentCandidates.length)];
-                                if (randomCand) {
-                                    rollerNum.textContent = randomCand.number;
-                                    rollerName.textContent = randomCand.name;
-                                    rollerCat.textContent = `الفئة: ${randomCand.category}`;
-                                }
+                                const shownNum = WHEEL_SEGMENTS[segUnderPtr];
+                                const matchedCand = (drawState.currentCandidates || []).find(c => String(c.number || '').trim() === shownNum);
+                                rollerNum.textContent = shownNum;
+                                rollerName.textContent = matchedCand ? matchedCand.name : `رقم المشترك: ${shownNum}`;
+                                rollerCat.textContent = matchedCand ? `الفئة: ${matchedCand.category}` : `الفئة: ${firstW.category || '-'}`;
                             }
 
                             drawLuxuryPrizeWheel(curDeg, ptrDeflect, p >= 1 ? winSegIdx : -1);

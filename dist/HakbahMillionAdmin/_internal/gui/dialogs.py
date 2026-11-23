@@ -579,36 +579,36 @@ class LuxuryPrizeWheelWidget(QWidget):
         p.setBrush(QBrush(self._make_gold_conical(cx, cy, 25.0)))
         p.drawPath(gear_path)
 
-        # د) الإطار المعدني الذهبي العريض المصقول (Wide Polished Deep Gold Frame: R=230 -> R=178)
+        # د) الإطار المعدني الذهبي المصقول المقلّص (Slim Polished Gold Frame: R=230 -> R=208 لإعطاء مساحة أكبر للأرقام)
         r_frame_outer = 230.0
-        r_frame_inner = 178.0
+        r_frame_inner = 208.0
 
-        # الطبقة الأساسية للإطار العريض
+        # الطبقة الأساسية للإطار الذهبي
         p.setPen(QPen(QColor("#fef08a"), 1.6))
         p.setBrush(QBrush(self._make_gold_conical(cx, cy, 70.0)))
         p.drawEllipse(QPointF(cx, cy), r_frame_outer, r_frame_outer)
 
-        # تدرج دائري لإبراز انحناء المعدن ثلاثي الأبعاد على عرض الإطار
+        # تدرج دائري لإبراز انحناء المعدن ثلاثي الأبعاد
         bevel_grad = QRadialGradient(QPointF(cx, cy), r_frame_outer)
-        bevel_grad.setColorAt(0.75, QColor(69, 26, 3, 180))
-        bevel_grad.setColorAt(0.80, QColor(254, 240, 138, 120))
-        bevel_grad.setColorAt(0.86, QColor(146, 64, 14, 70))
-        bevel_grad.setColorAt(0.93, QColor(254, 249, 195, 135))
-        bevel_grad.setColorAt(0.98, QColor(120, 53, 15, 160))
+        bevel_grad.setColorAt(0.89, QColor(69, 26, 3, 180))
+        bevel_grad.setColorAt(0.92, QColor(254, 240, 138, 120))
+        bevel_grad.setColorAt(0.95, QColor(146, 64, 14, 70))
+        bevel_grad.setColorAt(0.97, QColor(254, 249, 195, 135))
+        bevel_grad.setColorAt(0.99, QColor(120, 53, 15, 160))
         bevel_grad.setColorAt(1.00, QColor(69, 26, 3, 210))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(bevel_grad))
         p.drawEllipse(QPointF(cx, cy), r_frame_outer, r_frame_outer)
 
-        # شريط الزخارف الهندسية الكلاسيكية والفيلجري الذهبي داخل الإطار العريض (R=222 -> R=188)
-        r_band_out = 221.0
-        r_band_in = 189.0
+        # شريط الزخارف الهندسية الكلاسيكية والفيلجري الذهبي النحيف داخل الإطار (R=225 -> R=213)
+        r_band_out = 225.0
+        r_band_in = 213.0
         r_band_mid = (r_band_out + r_band_in) / 2.0
 
         # خلفية غائرة داكنة قليلاً لإبراز نقوش الفيلجري الذهبية البارزة
         recess_grad = QRadialGradient(QPointF(cx, cy), r_band_out)
-        recess_grad.setColorAt(0.84, QColor("#3b1704"))
-        recess_grad.setColorAt(0.92, QColor("#5c2808"))
+        recess_grad.setColorAt(0.93, QColor("#3b1704"))
+        recess_grad.setColorAt(0.97, QColor("#5c2808"))
         recess_grad.setColorAt(1.00, QColor("#2e1002"))
         band_path = QPainterPath()
         band_path.addEllipse(QPointF(cx, cy), r_band_out, r_band_out)
@@ -616,10 +616,10 @@ class LuxuryPrizeWheelWidget(QWidget):
         inner_cut.addEllipse(QPointF(cx, cy), r_band_in, r_band_in)
         band_path = band_path.subtracted(inner_cut)
         p.setBrush(QBrush(recess_grad))
-        p.setPen(QPen(QColor("#facc15"), 1.2))
+        p.setPen(QPen(QColor("#facc15"), 1.0))
         p.drawPath(band_path)
 
-        # رسم الزخارف الهندسية الكلاسيكية والفيلجري (Classical Geometric Lattice & Gold Filigree)
+        # رسم الزخارف الهندسية الكلاسيكية النحيفة (Slim Geometric Lattice & Gold Filigree)
         num_motifs = 48
         p.save()
         for i in range(num_motifs):
@@ -628,36 +628,24 @@ class LuxuryPrizeWheelWidget(QWidget):
             next_rad = math.radians((i + 1) * (360.0 / num_motifs))
             mid_rad = (ang_rad + next_rad) / 2.0
 
-            # معين هندسي كلاسيكي متشابك (Geometric Diamond Lattice)
-            p_out = QPointF(cx + (r_band_out - 2.0) * math.cos(mid_rad), cy + (r_band_out - 2.0) * math.sin(mid_rad))
-            p_in = QPointF(cx + (r_band_in + 2.0) * math.cos(mid_rad), cy + (r_band_in + 2.0) * math.sin(mid_rad))
+            p_out = QPointF(cx + (r_band_out - 1.2) * math.cos(mid_rad), cy + (r_band_out - 1.2) * math.sin(mid_rad))
+            p_in = QPointF(cx + (r_band_in + 1.2) * math.cos(mid_rad), cy + (r_band_in + 1.2) * math.sin(mid_rad))
             p_left = QPointF(cx + r_band_mid * math.cos(ang_rad), cy + r_band_mid * math.sin(ang_rad))
             p_right = QPointF(cx + r_band_mid * math.cos(next_rad), cy + r_band_mid * math.sin(next_rad))
 
             motif_poly = QPolygonF([p_out, p_right, p_in, p_left])
-            p.setPen(QPen(QColor("#fde047"), 1.15))
+            p.setPen(QPen(QColor("#fde047"), 0.9))
             p.setBrush(QBrush(QColor(234, 179, 8, 65)))
             p.drawPolygon(motif_poly)
 
-            # أقواس فيلجري ذهبية دقيقة (Filigree Scrollwork)
             filigree_pt = QPointF(cx + r_band_mid * math.cos(mid_rad), cy + r_band_mid * math.sin(mid_rad))
-            p.setPen(QPen(QColor("#fef08a"), 0.9))
+            p.setPen(QPen(QColor("#fef08a"), 0.7))
             p.setBrush(QBrush(QColor("#facc15")))
-            p.drawEllipse(filigree_pt, 2.2, 2.2)
-
-            # تروس داخلية مصغرة محفورة في الإطار عند كل زاوية
-            if i % 2 == 0:
-                g_cx = cx + (r_band_out - 6.0) * math.cos(ang_rad)
-                g_cy = cy + (r_band_out - 6.0) * math.sin(ang_rad)
-                p.setPen(QPen(QColor("#fef9c3"), 0.8))
-                p.setBrush(QBrush(QColor("#ca8a04")))
-                p.drawEllipse(QPointF(g_cx, g_cy), 3.2, 3.2)
-                p.setBrush(QBrush(QColor("#451a03")))
-                p.drawEllipse(QPointF(g_cx, g_cy), 1.3, 1.3)
+            p.drawEllipse(filigree_pt, 1.5, 1.5)
         p.restore()
 
-        # الحلقات الذهبية الداخلية المحيطة بقرص العجلة مع مسامير ألماسية/ذهبية (50 مسماراً)
-        p.setPen(QPen(QColor("#fef08a"), 2.0))
+        # الحلقات الذهبية الداخلية المحيطة بقرص العجلة مع مسامير ذهبية ناعمة
+        p.setPen(QPen(QColor("#fef08a"), 1.6))
         p.setBrush(QBrush(self._make_gold_conical(cx, cy, 140.0)))
         inner_rim_path = QPainterPath()
         inner_rim_path.addEllipse(QPointF(cx, cy), r_band_in, r_band_in)
@@ -665,20 +653,19 @@ class LuxuryPrizeWheelWidget(QWidget):
         wheel_cut.addEllipse(QPointF(cx, cy), r_frame_inner, r_frame_inner)
         p.drawPath(inner_rim_path.subtracted(wheel_cut))
 
-        # 50 جوهرة/مسمار ذهبي مضيء على الحافة الداخلية للإطار
+        # 50 مسماراً ذهبياً ناعماً على الحافة الداخلية للإطار
         r_studs = (r_band_in + r_frame_inner) / 2.0
-        for i in range(self.num_segments):
-            s_rad = math.radians(i * self.seg_angle - 90.0)
+        for i in range(50):
+            s_rad = math.radians(i * (360.0 / 50.0) - 90.0)
             sx = cx + r_studs * math.cos(s_rad)
             sy = cy + r_studs * math.sin(s_rad)
-            stud_grad = QRadialGradient(QPointF(sx - 0.8, sy - 0.8), 3.0)
+            stud_grad = QRadialGradient(QPointF(sx - 0.5, sy - 0.5), 2.2)
             stud_grad.setColorAt(0.0, QColor("#ffffff"))
-            stud_grad.setColorAt(0.45, QColor("#fef08a"))
-            stud_grad.setColorAt(0.85, QColor("#b45309"))
-            stud_grad.setColorAt(1.0, QColor("#451a03"))
+            stud_grad.setColorAt(0.5, QColor("#fef08a"))
+            stud_grad.setColorAt(1.0, QColor("#78350f"))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(stud_grad))
-            p.drawEllipse(QPointF(sx, sy), 2.6, 2.6)
+            p.drawEllipse(QPointF(sx, sy), 1.8, 1.8)
 
         p.end()
         self._static_bg_frame_pixmap = bg_pm
@@ -698,7 +685,7 @@ class LuxuryPrizeWheelWidget(QWidget):
         px_size = int(self.wheel_size * dpr)
         cx = self.wheel_size / 2.0
         cy = self.wheel_size / 2.0
-        r_wheel = 178.0
+        r_wheel = 208.0
         r_hub_outer = 74.0
 
         disc_pm = QPixmap(px_size, px_size)
@@ -709,24 +696,22 @@ class LuxuryPrizeWheelWidget(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
 
-        # نجعل الفهرس 0 و 1 (كلاهما '49') في قمة العجلة تماماً حول الساعة 12 (-90 درجة)
-        # الفهرس 0 على يسار القمة مباشرة، والفهرس 1 على يمين القمة مباشرة
+        n_segs = max(1, len(self.segments))
+        if n_segs <= 8:
+            font_pt = 22
+        elif n_segs <= 16:
+            font_pt = 18
+        elif n_segs <= 28:
+            font_pt = 14
+        elif n_segs <= 40:
+            font_pt = 11
+        else:
+            font_pt = 9
+
         for i, label_num in enumerate(self.segments):
             # زاوية بداية القطاع بالدرجات في نظام الرياضيات (حيث -90 هي الأعلى)
             start_deg_math = -90.0 + (i - 1) * self.seg_angle
             mid_deg_math = start_deg_math + (self.seg_angle / 2.0)
-
-            path = QPainterPath()
-            path.moveTo(cx, cy)
-            # QPainter.arcTo يستخدم عكس عقارب الساعة حيث 90 هي الأعلى
-            qt_start_deg = -start_deg_math
-            qt_sweep_deg = -self.seg_angle
-            path.arcTo(
-                QRectF(cx - r_wheel, cy - r_wheel, r_wheel * 2, r_wheel * 2),
-                qt_start_deg,
-                qt_sweep_deg
-            )
-            path.closeSubpath()
 
             # تدرج المينا الزمردي الداكن الفاخر (أو توهج ذهبي للقطاع الفائز)
             seg_grad = QRadialGradient(QPointF(cx, cy), r_wheel)
@@ -747,10 +732,22 @@ class LuxuryPrizeWheelWidget(QWidget):
                     seg_grad.setColorAt(0.92, QColor("#032c1e"))
                     seg_grad.setColorAt(1.00, QColor("#011c11"))
 
-            # خطوط التقسيم الذهبية الدقيقة بين القطاعات
-            p.setPen(QPen(QColor("#eab308"), 1.05))
+            p.setPen(QPen(QColor("#eab308"), 1.3 if n_segs <= 12 else 1.05))
             p.setBrush(QBrush(seg_grad))
-            p.drawPath(path)
+            if n_segs == 1:
+                p.drawEllipse(QPointF(cx, cy), r_wheel, r_wheel)
+            else:
+                path = QPainterPath()
+                path.moveTo(cx, cy)
+                qt_start_deg = -start_deg_math
+                qt_sweep_deg = -self.seg_angle
+                path.arcTo(
+                    QRectF(cx - r_wheel, cy - r_wheel, r_wheel * 2, r_wheel * 2),
+                    qt_start_deg,
+                    qt_sweep_deg
+                )
+                path.closeSubpath()
+                p.drawPath(path)
 
             # زخرفة ذهبية داخلية ناعمة في قاعدة كل قطاع قرب المركز
             inner_arc_r = r_hub_outer + 18.0
@@ -759,25 +756,24 @@ class LuxuryPrizeWheelWidget(QWidget):
             dot_y = cy + inner_arc_r * math.sin(rad_mid)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(QColor(250, 204, 21, 140)))
-            p.drawEllipse(QPointF(dot_x, dot_y), 1.4, 1.4)
+            p.drawEllipse(QPointF(dot_x, dot_y), 1.6 if n_segs <= 12 else 1.4, 1.6 if n_segs <= 12 else 1.4)
 
-            # كتابة الأرقام الذهبية (1 إلى 49 مع 49 مرتين في الأعلى) بمحاذاة شعاعية واضحة
+            # كتابة الأرقام الذهبية للمؤهلين بشكل عمودي (شعاعي على طول القطاع من الخارج نحو المركز)
             p.save()
             p.translate(cx, cy)
-            p.rotate(mid_deg_math + 90.0)
-            num_font = QFont("Arial", 8, QFont.Weight.Black)
+            p.rotate(mid_deg_math)
+            num_font = QFont("Arial", font_pt, QFont.Weight.Black)
             p.setFont(num_font)
 
-            # ظل النص لإبراز الرقم الذهبي فوق المينا الزمردية
-            text_rect = QRectF(-13, -r_wheel + 7.0, 26, 16)
-            p.setPen(QColor(0, 0, 0, 190))
-            p.drawText(text_rect.translated(0.6, 0.8), Qt.AlignmentFlag.AlignCenter, label_num)
+            radial_rect = QRectF(r_hub_outer + 18.0, -22.0, r_wheel - r_hub_outer - 28.0, 44.0)
+            p.setPen(QColor(0, 0, 0, 210))
+            p.drawText(radial_rect.translated(0.8, 0.8), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(label_num))
 
             if i == self.winning_seg_index:
                 p.setPen(QColor("#1e293b"))
             else:
                 p.setPen(QColor("#fde047"))
-            p.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, label_num)
+            p.drawText(radial_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(label_num))
             p.restore()
 
         # حلقة ذهبية رفيعة داخل حافة القطاعات مباشرة
@@ -975,10 +971,11 @@ class LuxuryPrizeWheelWidget(QWidget):
         في أعلى منتصف الإطار المعدني تماماً.
         """
         p.save()
-        # نقطة ارتكاز المؤشر في أعلى الإطار الذهبي العريض
+        # نقطة ارتكاز المؤشر في أعلى الإطار الذهبي المقلّص
         pivot_x = cx
-        pivot_y = cy - 216.0
+        pivot_y = cy - 230.0
         p.translate(pivot_x, pivot_y)
+        p.scale(0.82, 0.82)
         p.rotate(self.pointer_deflection)
 
         # ظل المؤشر
@@ -1071,16 +1068,30 @@ class LuxuryPrizeWheelWidget(QWidget):
         center_offset = (seg_idx - 0.5) * self.seg_angle
         return (-center_offset) % 360.0
 
+    def set_segments(self, labels):
+        """تحديث قطاعات العجلة لتعرض أرقام المؤهلين فقط بشكل ديناميكي."""
+        clean = [str(x).strip() for x in (labels or []) if str(x).strip()]
+        if not clean:
+            clean = ["---"]
+        self.segments = clean
+        self.num_segments = len(self.segments)
+        self.seg_angle = 360.0 / self.num_segments
+        self.winning_seg_index = -1
+        self._rebuild_wheel_disc_pixmap()
+        self.update()
+
     def segment_index_for_subscriber(self, sub_number: str) -> int:
-        """تحويل رقم المشترك إلى القطاع المقابل (1..49) على العجلة."""
-        digits = "".join(ch for ch in str(sub_number or "") if ch.isdigit())
+        """إرجاع فهرس قطاع المشترك المطابق مباشرة داخل العجلة (أو الاحتياطي 1..49 في المعاينة)."""
+        target = str(sub_number or "").strip()
+        if target in self.segments:
+            return self.segments.index(target)
+        digits = "".join(ch for ch in target if ch.isdigit())
+        if digits and digits in self.segments:
+            return self.segments.index(digits)
         if digits:
-            num_val = ((int(digits) - 1) % 49) + 1
-        else:
-            num_val = 49
-        if num_val == 49:
-            return random.choice([0, 1])
-        return num_val + 1  # لأن الفهرس 2 يقابل الرقم '1'، والفهرس 49 يقابل الرقم '48'
+            num_val = ((int(digits) - 1) % max(1, self.num_segments))
+            return num_val
+        return 0
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -1249,16 +1260,21 @@ class DrawAnimationDialog(QDialog):
         """)
         self.db = db
         self.draw_name = draw_name
+        self._is_grand_prize = ("الجائزة الكبرى" in self.draw_name)
         self.qualified_by_category = dict(qualified_by_category or {})
         self.category_reports = dict(category_reports or {})
 
-        if self.category_reports and "الجائزة الكبرى" not in self.draw_name:
+        if self.category_reports and not self._is_grand_prize:
             self.categories = list(self.category_reports.keys())
         else:
             self.categories = list(self.qualified_by_category.keys())
 
         self.current_cat_index = 0
         self.winners = []  # list of (cat_name, winner_sub, cycle_num)
+
+        self._auto_next_timer = QTimer(self)
+        self._auto_next_timer.setSingleShot(True)
+        self._auto_next_timer.timeout.connect(self.next_category)
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(20, 14, 20, 16)
@@ -1434,9 +1450,12 @@ class DrawAnimationDialog(QDialog):
             print("Error updating category cycle report:", e)
 
     def start_category_draw(self):
-        """يبدأ بعرض تقرير الفئة الحالية قبل إجراء القرعة لها."""
+        """يبدأ بعرض التقرير قبل القرعة (وفي الجائزة الكبرى يظهر التقرير مرة واحدة فقط في البداية ثم تدور العجلة لاختيار الفائزين بالتتابع)."""
         if self.current_cat_index >= len(self.categories):
             self.show_final_report()
+            return
+        if self._is_grand_prize and self.current_cat_index > 0:
+            self.begin_wheel_spin_for_current_category()
             return
         self.show_category_pre_draw_report()
 
@@ -1497,11 +1516,19 @@ class DrawAnimationDialog(QDialog):
 
         title_vbox = QVBoxLayout()
         title_vbox.setSpacing(2)
-        step_lbl = QLabel(
-            f"📌 الفئة ({self.current_cat_index + 1} من {len(self.categories)}) — {self.draw_name}"
-        )
+        if self._is_grand_prize:
+            step_lbl = QLabel(
+                f"👑 {self.draw_name} — عدد الفائزين المطلوب اختيارهم: ({len(self.categories)})"
+            )
+            main_title = QLabel(
+                f"📋 تقرير {self.draw_name} (يظهر مرة واحدة قبل بدء تدوير العجلة)"
+            )
+        else:
+            step_lbl = QLabel(
+                f"📌 الفئة ({self.current_cat_index + 1} من {len(self.categories)}) — {self.draw_name}"
+            )
+            main_title = QLabel(f"📋 تقرير فئة: {cat_name}  |  الدورة التي سوف تُقرع: (الدورة رقم {target_cycle})")
         step_lbl.setStyleSheet(f"font-size: {11 if compact_label else 12}px; color: #a7f3d0; font-weight: bold; border: none; background: transparent;")
-        main_title = QLabel(f"📋 تقرير فئة: {cat_name}  |  الدورة التي سوف تُقرع: (الدورة رقم {target_cycle})")
         main_title.setWordWrap(True)
         main_title.setStyleSheet(f"font-size: {top_title_font}px; color: #fde047; font-weight: 900; border: none; background: transparent;")
         title_vbox.addWidget(step_lbl)
@@ -1725,9 +1752,11 @@ class DrawAnimationDialog(QDialog):
         next_cat_label = self.categories[self.current_cat_index + 1] if has_next_cat else ""
 
         if subs_for_wheel:
-            btn_spin = QPushButton(
-                f"🎡 ابدأ القرعة وتدوير العجلة لفئة ({cat_name}) — الدورة ({target_cycle})  [{len(subs_for_wheel)} مؤهل]"
-            )
+            if self._is_grand_prize:
+                spin_txt = f"🎡 ابدأ قرعة {self.draw_name} لاختيار ({len(self.categories)}) فائز [{len(subs_for_wheel)} مؤهل]"
+            else:
+                spin_txt = f"🎡 ابدأ القرعة وتدوير العجلة لفئة ({cat_name}) — الدورة ({target_cycle})  [{len(subs_for_wheel)} مؤهل]"
+            btn_spin = QPushButton(spin_txt)
             btn_spin.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_spin.setFixedHeight(50)
             btn_spin.setStyleSheet("""
@@ -1805,7 +1834,14 @@ class DrawAnimationDialog(QDialog):
 
         self.stage_stack.setCurrentWidget(self.page_wheel)
         self.btn_next_after_wheel.hide()
-        self._selected_winner = random.choice(subs)
+
+        # تعبئة العجلة بأرقام المؤهلين فقط والاختيار العشوائي منهم مباشرة
+        qual_numbers = [str(s.subscriber_number or f"#{s.id}").strip() for s in subs]
+        self.wheel_widget.set_segments(qual_numbers)
+
+        winner_idx = random.randrange(len(subs))
+        self._selected_winner = subs[winner_idx]
+        self._win_seg_idx = winner_idx
 
         target_cycle = self._current_target_cycle or 1
         self.cat_label.setText(
@@ -1825,9 +1861,7 @@ class DrawAnimationDialog(QDialog):
         self.wheel_widget.highlight_winner_segment(-1)
         self.wheel_widget.set_Subscriber_Display("---", is_winner=False)
 
-        win_seg_idx = self.wheel_widget.segment_index_for_subscriber(self._selected_winner.subscriber_number)
-        self._win_seg_idx = win_seg_idx
-        base_target_mod = self.wheel_widget.target_angle_for_segment(win_seg_idx)
+        base_target_mod = self.wheel_widget.target_angle_for_segment(winner_idx)
 
         self._start_angle = self.wheel_widget.wheel_angle % 360.0
         self.wheel_widget.wheel_angle = self._start_angle
@@ -1849,17 +1883,14 @@ class DrawAnimationDialog(QDialog):
         current_angle = self._start_angle + (self._target_angle - self._start_angle) * eased
         self.wheel_widget.wheel_angle = current_angle
 
-        seg_under_ptr = int(((-current_angle) % 360.0) / self.wheel_widget.seg_angle)
+        seg_under_ptr = (int(((-current_angle) % 360.0) / self.wheel_widget.seg_angle) + 1) % self.wheel_widget.num_segments
         speed_factor = max(0.0, 1.0 - eased)
         if seg_under_ptr != self._last_tick_seg and progress < 0.985:
             self._last_tick_seg = seg_under_ptr
             self.wheel_widget.pointer_deflection = -14.0 * min(1.0, speed_factor * 2.4 + 0.18)
-            cat_name = self.categories[self.current_cat_index]
-            subs = self.qualified_by_category.get(cat_name, [])
-            if subs:
-                random_sub = random.choice(subs)
-                self.wheel_label.setText(f"رقم المشترك: {random_sub.subscriber_number}  |  الدورة رقم ({self._current_target_cycle})")
-                self.wheel_widget.set_Subscriber_Display(random_sub.subscriber_number, is_winner=False)
+            shown_num = self.wheel_widget.segments[seg_under_ptr]
+            self.wheel_label.setText(f"رقم المشترك: {shown_num}  |  الدورة رقم ({self._current_target_cycle})")
+            self.wheel_widget.set_Subscriber_Display(shown_num, is_winner=False)
         else:
             self.wheel_widget.pointer_deflection *= 0.72
 
@@ -1944,14 +1975,30 @@ class DrawAnimationDialog(QDialog):
         has_next = (self.current_cat_index + 1) < len(self.categories)
         if has_next:
             next_cat = self.categories[self.current_cat_index + 1]
-            self.btn_next_after_wheel.setText(f"📋 الانتقال إلى تقرير الفئة التالية ({next_cat}) ⬅️")
+            if self._is_grand_prize:
+                self.status_label.setText(
+                    f"🎉 مبروك للفائز ({cat_name}): رقم المشترك ({winner_sub.subscriber_number}) — ستدور العجلة تلقائياً لاختيار ({next_cat})..."
+                )
+                self.btn_next_after_wheel.setText(f"🎡 تدوير العجلة الآن لاختيار ({next_cat}) ⬅️")
+                self._auto_next_timer.start(2500)
+            else:
+                self.btn_next_after_wheel.setText(f"📋 الانتقال إلى تقرير الفئة التالية ({next_cat}) ⬅️")
         else:
-            self.btn_next_after_wheel.setText("🏆 عرض التقرير النهائي للفائزين من كل فئة ⬅️")
+            self.btn_next_after_wheel.setText("🏆 عرض التقرير النهائي للفائزين ⬅️")
         self.btn_next_after_wheel.show()
 
     def next_category(self):
+        if self._auto_next_timer.isActive():
+            self._auto_next_timer.stop()
         self.current_cat_index += 1
         self.start_category_draw()
+
+    def closeEvent(self, event):
+        if hasattr(self, "_auto_next_timer") and self._auto_next_timer.isActive():
+            self._auto_next_timer.stop()
+        if hasattr(self, "timer") and self.timer.isActive():
+            self.timer.stop()
+        super().closeEvent(event)
 
     def show_final_report(self):
         """عرض التقرير النهائي الشامل للفائزين من كل فئة (رقم الدورة ورقم المشترك فقط بدون الأسماء أو الهواتف)."""
