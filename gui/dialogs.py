@@ -697,21 +697,16 @@ class LuxuryPrizeWheelWidget(QWidget):
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
 
         n_segs = max(1, len(self.segments))
-        if n_segs <= 6:
+        if n_segs <= 8:
             font_pt = 22
-            text_offset = 36.0
-        elif n_segs <= 12:
+        elif n_segs <= 16:
             font_pt = 18
-            text_offset = 28.0
-        elif n_segs <= 24:
+        elif n_segs <= 28:
             font_pt = 14
-            text_offset = 20.0
-        elif n_segs <= 36:
+        elif n_segs <= 40:
             font_pt = 11
-            text_offset = 14.0
         else:
             font_pt = 9
-            text_offset = 9.0
 
         for i, label_num in enumerate(self.segments):
             # زاوية بداية القطاع بالدرجات في نظام الرياضيات (حيث -90 هي الأعلى)
@@ -763,22 +758,22 @@ class LuxuryPrizeWheelWidget(QWidget):
             p.setBrush(QBrush(QColor(250, 204, 21, 140)))
             p.drawEllipse(QPointF(dot_x, dot_y), 1.6 if n_segs <= 12 else 1.4, 1.6 if n_segs <= 12 else 1.4)
 
-            # كتابة الأرقام الذهبية للمؤهلين بمحاذاة شعاعية واضحة وحجم خط ديناميكي
+            # كتابة الأرقام الذهبية للمؤهلين بشكل عمودي (شعاعي على طول القطاع من الخارج نحو المركز)
             p.save()
             p.translate(cx, cy)
-            p.rotate(mid_deg_math + 90.0)
+            p.rotate(mid_deg_math)
             num_font = QFont("Arial", font_pt, QFont.Weight.Black)
             p.setFont(num_font)
 
-            text_rect = QRectF(-34, -r_wheel + text_offset, 68, max(18, font_pt + 10))
-            p.setPen(QColor(0, 0, 0, 190))
-            p.drawText(text_rect.translated(0.6, 0.8), Qt.AlignmentFlag.AlignCenter, str(label_num))
+            radial_rect = QRectF(r_hub_outer + 18.0, -22.0, r_wheel - r_hub_outer - 28.0, 44.0)
+            p.setPen(QColor(0, 0, 0, 210))
+            p.drawText(radial_rect.translated(0.8, 0.8), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(label_num))
 
             if i == self.winning_seg_index:
                 p.setPen(QColor("#1e293b"))
             else:
                 p.setPen(QColor("#fde047"))
-            p.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, str(label_num))
+            p.drawText(radial_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(label_num))
             p.restore()
 
         # حلقة ذهبية رفيعة داخل حافة القطاعات مباشرة
@@ -1265,16 +1260,21 @@ class DrawAnimationDialog(QDialog):
         """)
         self.db = db
         self.draw_name = draw_name
+        self._is_grand_prize = ("الجائزة الكبرى" in self.draw_name)
         self.qualified_by_category = dict(qualified_by_category or {})
         self.category_reports = dict(category_reports or {})
 
-        if self.category_reports and "الجائزة الكبرى" not in self.draw_name:
+        if self.category_reports and not self._is_grand_prize:
             self.categories = list(self.category_reports.keys())
         else:
             self.categories = list(self.qualified_by_category.keys())
 
         self.current_cat_index = 0
         self.winners = []  # list of (cat_name, winner_sub, cycle_num)
+
+        self._auto_next_timer = QTimer(self)
+        self._auto_next_timer.setSingleShot(True)
+        self._auto_next_timer.timeout.connect(self.next_category)
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(20, 14, 20, 16)
@@ -1450,9 +1450,12 @@ class DrawAnimationDialog(QDialog):
             print("Error updating category cycle report:", e)
 
     def start_category_draw(self):
-        """يبدأ بعرض تقرير الفئة الحالية قبل إجراء القرعة لها."""
+        """يبدأ بعرض التقرير قبل القرعة (وفي الجائزة الكبرى يظهر التقرير مرة واحدة فقط في البداية ثم تدور العجلة لاختيار الفائزين بالتتابع)."""
         if self.current_cat_index >= len(self.categories):
             self.show_final_report()
+            return
+        if self._is_grand_prize and self.current_cat_index > 0:
+            self.begin_wheel_spin_for_current_category()
             return
         self.show_category_pre_draw_report()
 
@@ -1513,11 +1516,19 @@ class DrawAnimationDialog(QDialog):
 
         title_vbox = QVBoxLayout()
         title_vbox.setSpacing(2)
-        step_lbl = QLabel(
-            f"📌 الفئة ({self.current_cat_index + 1} من {len(self.categories)}) — {self.draw_name}"
-        )
+        if self._is_grand_prize:
+            step_lbl = QLabel(
+                f"👑 {self.draw_name} — عدد الفائزين المطلوب اختيارهم: ({len(self.categories)})"
+            )
+            main_title = QLabel(
+                f"📋 تقرير {self.draw_name} (يظهر مرة واحدة قبل بدء تدوير العجلة)"
+            )
+        else:
+            step_lbl = QLabel(
+                f"📌 الفئة ({self.current_cat_index + 1} من {len(self.categories)}) — {self.draw_name}"
+            )
+            main_title = QLabel(f"📋 تقرير فئة: {cat_name}  |  الدورة التي سوف تُقرع: (الدورة رقم {target_cycle})")
         step_lbl.setStyleSheet(f"font-size: {11 if compact_label else 12}px; color: #a7f3d0; font-weight: bold; border: none; background: transparent;")
-        main_title = QLabel(f"📋 تقرير فئة: {cat_name}  |  الدورة التي سوف تُقرع: (الدورة رقم {target_cycle})")
         main_title.setWordWrap(True)
         main_title.setStyleSheet(f"font-size: {top_title_font}px; color: #fde047; font-weight: 900; border: none; background: transparent;")
         title_vbox.addWidget(step_lbl)
@@ -1741,9 +1752,11 @@ class DrawAnimationDialog(QDialog):
         next_cat_label = self.categories[self.current_cat_index + 1] if has_next_cat else ""
 
         if subs_for_wheel:
-            btn_spin = QPushButton(
-                f"🎡 ابدأ القرعة وتدوير العجلة لفئة ({cat_name}) — الدورة ({target_cycle})  [{len(subs_for_wheel)} مؤهل]"
-            )
+            if self._is_grand_prize:
+                spin_txt = f"🎡 ابدأ قرعة {self.draw_name} لاختيار ({len(self.categories)}) فائز [{len(subs_for_wheel)} مؤهل]"
+            else:
+                spin_txt = f"🎡 ابدأ القرعة وتدوير العجلة لفئة ({cat_name}) — الدورة ({target_cycle})  [{len(subs_for_wheel)} مؤهل]"
+            btn_spin = QPushButton(spin_txt)
             btn_spin.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_spin.setFixedHeight(50)
             btn_spin.setStyleSheet("""
@@ -1962,14 +1975,30 @@ class DrawAnimationDialog(QDialog):
         has_next = (self.current_cat_index + 1) < len(self.categories)
         if has_next:
             next_cat = self.categories[self.current_cat_index + 1]
-            self.btn_next_after_wheel.setText(f"📋 الانتقال إلى تقرير الفئة التالية ({next_cat}) ⬅️")
+            if self._is_grand_prize:
+                self.status_label.setText(
+                    f"🎉 مبروك للفائز ({cat_name}): رقم المشترك ({winner_sub.subscriber_number}) — ستدور العجلة تلقائياً لاختيار ({next_cat})..."
+                )
+                self.btn_next_after_wheel.setText(f"🎡 تدوير العجلة الآن لاختيار ({next_cat}) ⬅️")
+                self._auto_next_timer.start(2500)
+            else:
+                self.btn_next_after_wheel.setText(f"📋 الانتقال إلى تقرير الفئة التالية ({next_cat}) ⬅️")
         else:
-            self.btn_next_after_wheel.setText("🏆 عرض التقرير النهائي للفائزين من كل فئة ⬅️")
+            self.btn_next_after_wheel.setText("🏆 عرض التقرير النهائي للفائزين ⬅️")
         self.btn_next_after_wheel.show()
 
     def next_category(self):
+        if self._auto_next_timer.isActive():
+            self._auto_next_timer.stop()
         self.current_cat_index += 1
         self.start_category_draw()
+
+    def closeEvent(self, event):
+        if hasattr(self, "_auto_next_timer") and self._auto_next_timer.isActive():
+            self._auto_next_timer.stop()
+        if hasattr(self, "timer") and self.timer.isActive():
+            self.timer.stop()
+        super().closeEvent(event)
 
     def show_final_report(self):
         """عرض التقرير النهائي الشامل للفائزين من كل فئة (رقم الدورة ورقم المشترك فقط بدون الأسماء أو الهواتف)."""

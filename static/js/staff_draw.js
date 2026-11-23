@@ -417,8 +417,7 @@
             ctx.rotate((angleDeg * Math.PI) / 180);
 
             const nSegs = Math.max(1, WHEEL_SEGMENTS.length);
-            const segFontPx = nSegs <= 6 ? 21 : nSegs <= 12 ? 17 : nSegs <= 24 ? 14 : 11;
-            const segTextOffset = nSegs <= 6 ? 36 : nSegs <= 12 ? 28 : nSegs <= 24 ? 22 : 16;
+            const segFontPx = nSegs <= 8 ? 21 : nSegs <= 16 ? 17 : nSegs <= 28 ? 14 : nSegs <= 40 ? 11 : 9.5;
 
             for (let i = 0; i < nSegs; i++) {
                 const startRad = -Math.PI / 2 + (i - 1) * WHEEL_SEG_ANGLE;
@@ -444,14 +443,16 @@
                 ctx.strokeStyle = '#eab308';
                 ctx.stroke();
 
-                // Gold Qualified Subscriber Number
+                // Gold Qualified Subscriber Number (Radial / Vertical along slice)
                 ctx.save();
-                ctx.rotate(midRad + Math.PI / 2);
+                ctx.rotate(midRad);
                 ctx.font = `900 ${segFontPx}px Arial`;
-                ctx.textAlign = 'center';
+                ctx.textAlign = 'right';
                 ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+                ctx.fillText(WHEEL_SEGMENTS[i], rFrameInner - 11, 1);
                 ctx.fillStyle = i === winningSegIdx ? '#052e16' : '#fde047';
-                ctx.fillText(WHEEL_SEGMENTS[i], 0, -rFrameInner + segTextOffset);
+                ctx.fillText(WHEEL_SEGMENTS[i], rFrameInner - 12, 0);
                 ctx.restore();
             }
 
