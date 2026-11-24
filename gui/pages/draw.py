@@ -153,10 +153,11 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
     if season_id and season_id != -1:
         q_cat = q_cat.filter(db_mod.Category.season_id == season_id)
     categories = q_cat.order_by(db_mod.Category.id.asc()).all()
-    if not categories:
-        categories = db.query(db_mod.Category).order_by(db_mod.Category.id.asc()).all()
 
-    all_subs_every_status = db.query(db_mod.Subscriber).all()
+    q_subs_all = db.query(db_mod.Subscriber)
+    if season_id and season_id != -1:
+        q_subs_all = q_subs_all.filter(db_mod.Subscriber.season_id == season_id)
+    all_subs_every_status = q_subs_all.all()
     all_accepted = [s for s in all_subs_every_status if s.status == "accepted"]
     fin_status_map = db_mod.calculate_financial_status_batch(all_accepted, db) if all_accepted else {}
 
@@ -202,12 +203,15 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
 
     max_late_allowed = _read_incentive_max_late(db)
 
-    all_winners_rows = db.query(
+    q_win_rows = db.query(
         db_mod.Winner.subscriber_number,
         db_mod.Winner.draw_type,
         db_mod.Winner.cycle_number,
         db_mod.Winner.draw_date,
-    ).order_by(db_mod.Winner.draw_date.asc()).all()
+    )
+    if season_id and season_id != -1:
+        q_win_rows = q_win_rows.filter(db_mod.Winner.season_id == season_id)
+    all_winners_rows = q_win_rows.order_by(db_mod.Winner.draw_date.asc()).all()
 
     weekly_won_subs = set()
     weekly_winners_info = {}     # sub_num -> list of cycle_number
@@ -1597,7 +1601,11 @@ class DrawMixin:
             self._trigger_fast_stats_update()
 
     def refresh_draw_categories_filter(self):
-        cats = self.db.query(db_mod.Category).all()
+        season_id = self._get_active_season_id_for_draw()
+        q_cats = self.db.query(db_mod.Category)
+        if season_id and season_id != -1:
+            q_cats = q_cats.filter(db_mod.Category.season_id == season_id)
+        cats = q_cats.all()
         for combo_attr in ['combo_draw_cat_filter', 'combo_draw_ex_cat_filter']:
             if not hasattr(self, combo_attr):
                 continue
@@ -1656,7 +1664,10 @@ class DrawMixin:
             pass
         self.db.expire_all()
         
+        season_id = self._get_active_season_id_for_draw()
         query = self.db.query(db_mod.Winner)
+        if season_id and season_id != -1:
+            query = query.filter(db_mod.Winner.season_id == season_id)
         if hasattr(self, 'combo_draw_filter'):
             filter_val = self.combo_draw_filter.currentText()
             if filter_val != "الكل":
@@ -1665,7 +1676,10 @@ class DrawMixin:
         winners = query.order_by(db_mod.Winner.draw_date.desc()).all()
         
         # Prefetch subscribers for quick lookup
-        subs = self.db.query(db_mod.Subscriber).all()
+        q_subs = self.db.query(db_mod.Subscriber)
+        if season_id and season_id != -1:
+            q_subs = q_subs.filter(db_mod.Subscriber.season_id == season_id)
+        subs = q_subs.all()
         sub_map = {s.subscriber_number: s for s in subs}
         
         cat_filter = self.combo_draw_cat_filter.currentData() if hasattr(self, 'combo_draw_cat_filter') else None
@@ -1782,15 +1796,22 @@ class DrawMixin:
             ModernDialog(self, "خطأ", f"حدث خطأ أثناء التصدير: {e}").exec()
 
     def _get_draw_excluded_items(self):
-        """جلب قائمة المستبعدين من السحب حسب الفئة المالية ورقم الدورة والبحث السريع."""
+        """جلب قائمة المستبعدين من السحب حسب الموسم النشط والفئة المالية ورقم الدورة والبحث السريع."""
+        season_id = self._get_active_season_id_for_draw()
         cat_filter = self.combo_draw_ex_cat_filter.currentData() if hasattr(self, 'combo_draw_ex_cat_filter') else None
         cycle_filter = self.combo_draw_ex_cycle_filter.currentData() if hasattr(self, 'combo_draw_ex_cycle_filter') else None
         search_txt = self.draw_ex_search.text().strip().lower() if hasattr(self, 'draw_ex_search') else ""
 
-        all_subs = self.db.query(db_mod.Subscriber).all()
-        fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db)
+        q_subs = self.db.query(db_mod.Subscriber)
+        q_cats = self.db.query(db_mod.Category)
+        if season_id and season_id != -1:
+            q_subs = q_subs.filter(db_mod.Subscriber.season_id == season_id)
+            q_cats = q_cats.filter(db_mod.Category.season_id == season_id)
 
-        cat_map = {c.name: c for c in self.db.query(db_mod.Category).all()}
+        all_subs = q_subs.all()
+        fin_status_map = db_mod.calculate_financial_status_batch(all_subs, self.db) if all_subs else {}
+
+        cat_map = {c.name: c for c in q_cats.all()}
         cycle_payments_by_sub = {}
         if cycle_filter is not None:
             raw_p = (
@@ -2078,20 +2099,17 @@ class DrawMixin:
         if draw_name == "الجائزة الكبرى":
             count_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "grand_prize_winners_count").first()
             num_winners = int(count_setting.value) if count_setting and count_setting.value.isdigit() else 1
-            num_winners = min(num_winners, len(qualified_subs))
+            num_winners = max(1, num_winners)
             draw_label = f"الجائزة الكبرى - الفترة {selected_period}" if periods_count > 1 else "الجائزة الكبرى"
 
-            if num_winners == 1:
-                grand_groups = {"الجائزة الكبرى": list(qualified_subs)}
-            else:
-                grand_groups = {f"الفائز رقم {i + 1}": list(qualified_subs) for i in range(num_winners)}
-
+            # كل فئة تُقرع على حدة ولها تقريرها المستقل، ويُختار من كل فئة عدد الفائزين المحدد في الإعدادات
             anim_dlg = DrawAnimationDialog(
                 self,
-                grand_groups,
+                qualified_by_category,
                 draw_label,
                 self.db,
                 category_reports=analytics_reports,
+                winners_per_category=num_winners,
             )
             anim_dlg.exec()
             self.load_recent_winners()

@@ -370,7 +370,18 @@ class CapitalMixin:
         self.refresh_capital_stats()
         self.refresh_current_capital_tab()
 
+    def _get_capital_season_id(self):
+        if hasattr(self, 'get_active_season_id'):
+            return self.get_active_season_id()
+        if hasattr(self, 'combo_header_season'):
+            sid = self.combo_header_season.currentData()
+            if sid:
+                return sid
+        curr_s = db_mod.get_current_season(self.db)
+        return curr_s.id if curr_s else None
+
     def load_capital_category_filter(self):
+        season_id = self._get_capital_season_id()
         curr_filter = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
         curr_exp_cat = self.exp_sub_cat_combo.currentData() if hasattr(self, 'exp_sub_cat_combo') else None
 
@@ -383,13 +394,19 @@ class CapitalMixin:
         self.exp_sub_cat_combo.addItem("مصاريف عامة (الكل)", None)
 
         seen_names = set()
-        for cat in self.db.query(db_mod.Category).order_by(db_mod.Category.id.asc()).all():
+        q_cats = self.db.query(db_mod.Category)
+        q_sub_cats = self.db.query(db_mod.Subscriber.category)
+        if season_id and season_id != -1:
+            q_cats = q_cats.filter(db_mod.Category.season_id == season_id)
+            q_sub_cats = q_sub_cats.filter(db_mod.Subscriber.season_id == season_id)
+
+        for cat in q_cats.order_by(db_mod.Category.id.asc()).all():
             if cat.name and cat.name not in seen_names:
                 seen_names.add(cat.name)
                 self.cap_filter_cat.addItem(cat.name, cat.name)
                 self.exp_sub_cat_combo.addItem(cat.name, cat.name)
 
-        for (sub_cat,) in self.db.query(db_mod.Subscriber.category).distinct().all():
+        for (sub_cat,) in q_sub_cats.distinct().all():
             if sub_cat and sub_cat not in seen_names:
                 seen_names.add(sub_cat)
                 self.cap_filter_cat.addItem(sub_cat, sub_cat)
@@ -462,22 +479,25 @@ class CapitalMixin:
                 widget.setParent(None)
                 widget.deleteLater()
 
+        season_id = self._get_capital_season_id()
         sel_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
         now_val = datetime.datetime.now()
 
-        # 1. حساب رأس المال المستهدف للموسم الكامل حسب الفئات والمشتركين المقبولين
+        # 1. حساب رأس المال المستهدف للموسم الكامل حسب الفئات والمشتركين المقبولين في الموسم النشط
         cat_q = self.db.query(db_mod.Category)
+        if season_id and season_id != -1:
+            cat_q = cat_q.filter(db_mod.Category.season_id == season_id)
         if sel_cat:
             cat_q = cat_q.filter(db_mod.Category.name == sel_cat)
         cats_list = cat_q.all()
         cats_map = {c.name: c for c in cats_list}
 
-        sub_counts_by_cat = dict(
-            self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id))
-            .filter(db_mod.Subscriber.status == "accepted")
-            .group_by(db_mod.Subscriber.category)
-            .all()
+        q_sub_counts = self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id)).filter(
+            db_mod.Subscriber.status == "accepted"
         )
+        if season_id and season_id != -1:
+            q_sub_counts = q_sub_counts.filter(db_mod.Subscriber.season_id == season_id)
+        sub_counts_by_cat = dict(q_sub_counts.group_by(db_mod.Subscriber.category).all())
 
         season_target_capital = 0.0
         for c_obj in cats_list:
@@ -487,6 +507,8 @@ class CapitalMixin:
             season_target_capital += s_cnt * float(c_obj.amount or 0.0) * c_inst * c_cycles
 
         base_filter = [db_mod.Subscriber.status == "accepted"]
+        if season_id and season_id != -1:
+            base_filter.append(db_mod.Subscriber.season_id == season_id)
         if sel_cat:
             base_filter.append(db_mod.Subscriber.category == sel_cat)
 
@@ -508,13 +530,20 @@ class CapitalMixin:
             season_target_capital = generated_expected
 
         exp_query = self.db.query(func.coalesce(func.sum(db_mod.Expense.amount), 0))
+        if season_id and season_id != -1:
+            exp_query = exp_query.filter(db_mod.Expense.season_id == season_id)
         if sel_cat:
             exp_query = exp_query.filter(db_mod.Expense.subscriber_category == sel_cat)
         total_expenses = float(exp_query.scalar() or 0.0)
 
-        # حساب مستحقات الفائزين المسلمة وغير المسلمة
-        all_winners = self.db.query(db_mod.Winner).all()
-        all_subs = self.db.query(db_mod.Subscriber).all()
+        # حساب مستحقات الفائزين المسلمة وغير المسلمة في الموسم النشط
+        q_win = self.db.query(db_mod.Winner)
+        q_subs_all = self.db.query(db_mod.Subscriber)
+        if season_id and season_id != -1:
+            q_win = q_win.filter(db_mod.Winner.season_id == season_id)
+            q_subs_all = q_subs_all.filter(db_mod.Subscriber.season_id == season_id)
+        all_winners = q_win.all()
+        all_subs = q_subs_all.all()
         sub_by_num = {s.subscriber_number: s for s in all_subs if s.subscriber_number}
 
         total_winner_payouts = 0.0
@@ -608,21 +637,24 @@ class CapitalMixin:
             self.capital_stats_layout.setColumnStretch(c_i, 1)
 
     def _get_categories_financial_summary_rows(self):
-        """حساب ملخص السيولة ورأس المال لكل فئة بدقة عالية واستعلام تجميعي واحد."""
+        """حساب ملخص السيولة ورأس المال لكل فئة بدقة عالية واستعلام تجميعي واحد ضمن الموسم النشط."""
+        season_id = self._get_capital_season_id()
         sel_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
         now_val = datetime.datetime.now()
 
         query = self.db.query(db_mod.Category)
+        if season_id and season_id != -1:
+            query = query.filter(db_mod.Category.season_id == season_id)
         if sel_cat:
             query = query.filter(db_mod.Category.name == sel_cat)
         categories = query.all()
 
-        sub_counts_by_cat = dict(
-            self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id))
-            .filter(db_mod.Subscriber.status == "accepted")
-            .group_by(db_mod.Subscriber.category)
-            .all()
+        q_sub_cnt = self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id)).filter(
+            db_mod.Subscriber.status == "accepted"
         )
+        if season_id and season_id != -1:
+            q_sub_cnt = q_sub_cnt.filter(db_mod.Subscriber.season_id == season_id)
+        sub_counts_by_cat = dict(q_sub_cnt.group_by(db_mod.Subscriber.category).all())
 
         cat_stats_query = self.db.query(
             db_mod.Subscriber.category,
@@ -634,10 +666,12 @@ class CapitalMixin:
             db_mod.Payment, db_mod.Subscriber.id == db_mod.Payment.subscriber_id, isouter=True
         ).filter(
             db_mod.Subscriber.status == "accepted"
-        ).group_by(db_mod.Subscriber.category)
-
+        )
+        if season_id and season_id != -1:
+            cat_stats_query = cat_stats_query.filter(db_mod.Subscriber.season_id == season_id)
         if sel_cat:
             cat_stats_query = cat_stats_query.filter(db_mod.Subscriber.category == sel_cat)
+        cat_stats_query = cat_stats_query.group_by(db_mod.Subscriber.category)
 
         cat_stats_map = {row[0]: row for row in cat_stats_query.all()}
 
@@ -726,6 +760,7 @@ class CapitalMixin:
             self.table_cap_categories.setUpdatesEnabled(True)
 
     def _build_defaulters_query(self):
+        season_id = self._get_capital_season_id()
         now_val = datetime.datetime.now()
         query = self.db.query(db_mod.Payment, db_mod.Subscriber).join(
             db_mod.Subscriber, db_mod.Subscriber.id == db_mod.Payment.subscriber_id
@@ -734,6 +769,8 @@ class CapitalMixin:
             db_mod.Payment.is_paid == False,
             db_mod.Payment.due_date <= now_val,
         )
+        if season_id and season_id != -1:
+            query = query.filter(db_mod.Subscriber.season_id == season_id)
         sel_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
         if sel_cat:
             query = query.filter(db_mod.Subscriber.category == sel_cat)
@@ -877,6 +914,7 @@ class CapitalMixin:
             ModernDialog(self, "خطأ", f"حدث خطأ أثناء السداد الجماعي: {e}").exec()
 
     def _get_standing_rows(self):
+        season_id = self._get_capital_season_id()
         now_val = datetime.datetime.now()
         sel_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
         query = self.db.query(
@@ -888,10 +926,12 @@ class CapitalMixin:
             db_mod.Payment, db_mod.Subscriber.id == db_mod.Payment.subscriber_id
         ).filter(
             db_mod.Subscriber.status == "accepted"
-        ).group_by(db_mod.Subscriber.id)
-
+        )
+        if season_id and season_id != -1:
+            query = query.filter(db_mod.Subscriber.season_id == season_id)
         if sel_cat:
             query = query.filter(db_mod.Subscriber.category == sel_cat)
+        query = query.group_by(db_mod.Subscriber.id)
 
         search_txt = self.cap_search_standing.text().strip() if hasattr(self, 'cap_search_standing') else ""
         if search_txt:
@@ -1048,7 +1088,10 @@ class CapitalMixin:
 
         sel_sub_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
 
+        season_id = self._get_capital_season_id()
         exp_sum_q = self.db.query(db_mod.Expense.category, func.coalesce(func.sum(db_mod.Expense.amount), 0))
+        if season_id and season_id != -1:
+            exp_sum_q = exp_sum_q.filter(db_mod.Expense.season_id == season_id)
         if sel_sub_cat:
             exp_sum_q = exp_sum_q.filter(db_mod.Expense.subscriber_category == sel_sub_cat)
         totals_by_cat = dict(exp_sum_q.group_by(db_mod.Expense.category).all())
@@ -1082,6 +1125,8 @@ class CapitalMixin:
                 row += 1
 
         query = self.db.query(db_mod.Expense)
+        if season_id and season_id != -1:
+            query = query.filter(db_mod.Expense.season_id == season_id)
         if sel_sub_cat:
             query = query.filter(db_mod.Expense.subscriber_category == sel_sub_cat)
 
@@ -1140,7 +1185,8 @@ class CapitalMixin:
                 category=category,
                 subscriber_category=sub_category,
                 note=note if note else None,
-                date=datetime.datetime.now()
+                date=datetime.datetime.now(),
+                season_id=self._get_capital_season_id(),
             )
             self.db.add(new_exp)
             self.db.commit()
@@ -1177,7 +1223,10 @@ class CapitalMixin:
 
     def export_expenses_excel(self):
         try:
+            season_id = self._get_capital_season_id()
             query = self.db.query(db_mod.Expense)
+            if season_id and season_id != -1:
+                query = query.filter(db_mod.Expense.season_id == season_id)
             sel_sub_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
             if sel_sub_cat:
                 query = query.filter(db_mod.Expense.subscriber_category == sel_sub_cat)
@@ -1223,7 +1272,10 @@ class CapitalMixin:
             pass
         self.db.expire_all()
 
+        season_id = self._get_capital_season_id()
         query = self.db.query(db_mod.Winner)
+        if season_id and season_id != -1:
+            query = query.filter(db_mod.Winner.season_id == season_id)
 
         sel_cat = self.cap_filter_cat.currentData() if hasattr(self, 'cap_filter_cat') else None
         status_filter = self.cap_filter_winner_status.currentData() if hasattr(self, 'cap_filter_winner_status') else None
@@ -1234,12 +1286,17 @@ class CapitalMixin:
         winners = query.order_by(db_mod.Winner.draw_date.desc()).all()
         search_txt = self.cap_search_winners.text().strip().lower() if hasattr(self, 'cap_search_winners') else ""
 
-        # جلب المشتركين والفئات دفعة واحدة لتجنب استعلامات N+1 البطيئة
-        all_subs = self.db.query(db_mod.Subscriber).all()
+        # جلب المشتركين والفئات ضمن الموسم النشط دفعة واحدة لتجنب استعلامات N+1 البطيئة
+        q_subs = self.db.query(db_mod.Subscriber)
+        q_cats = self.db.query(db_mod.Category)
+        if season_id and season_id != -1:
+            q_subs = q_subs.filter(db_mod.Subscriber.season_id == season_id)
+            q_cats = q_cats.filter(db_mod.Category.season_id == season_id)
+        all_subs = q_subs.all()
         sub_by_num = {s.subscriber_number: s for s in all_subs if s.subscriber_number}
         s_nums = self.db.query(db_mod.SubscriberNumber).all()
         snum_map = {sn.number: sn.subscriber for sn in s_nums if sn.subscriber}
-        cats_map = {c.name: c for c in self.db.query(db_mod.Category).all()}
+        cats_map = {c.name: c for c in q_cats.all()}
 
         display_list = []
         for w in winners:
@@ -1367,7 +1424,10 @@ class CapitalMixin:
 
     def export_capital_winners_excel(self):
         try:
+            season_id = self._get_capital_season_id()
             query = self.db.query(db_mod.Winner)
+            if season_id and season_id != -1:
+                query = query.filter(db_mod.Winner.season_id == season_id)
             status_filter = self.cap_filter_winner_status.currentData() if hasattr(self, 'cap_filter_winner_status') else None
             if status_filter is not None:
                 query = query.filter(db_mod.Winner.is_received == status_filter)

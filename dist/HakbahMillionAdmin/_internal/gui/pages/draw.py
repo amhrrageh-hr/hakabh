@@ -2078,20 +2078,17 @@ class DrawMixin:
         if draw_name == "الجائزة الكبرى":
             count_setting = self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "grand_prize_winners_count").first()
             num_winners = int(count_setting.value) if count_setting and count_setting.value.isdigit() else 1
-            num_winners = min(num_winners, len(qualified_subs))
+            num_winners = max(1, num_winners)
             draw_label = f"الجائزة الكبرى - الفترة {selected_period}" if periods_count > 1 else "الجائزة الكبرى"
 
-            if num_winners == 1:
-                grand_groups = {"الجائزة الكبرى": list(qualified_subs)}
-            else:
-                grand_groups = {f"الفائز رقم {i + 1}": list(qualified_subs) for i in range(num_winners)}
-
+            # كل فئة تُقرع على حدة ولها تقريرها المستقل، ويُختار من كل فئة عدد الفائزين المحدد في الإعدادات
             anim_dlg = DrawAnimationDialog(
                 self,
-                grand_groups,
+                qualified_by_category,
                 draw_label,
                 self.db,
                 category_reports=analytics_reports,
+                winners_per_category=num_winners,
             )
             anim_dlg.exec()
             self.load_recent_winners()

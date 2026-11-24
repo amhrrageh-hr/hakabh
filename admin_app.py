@@ -252,6 +252,18 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
                 self.combo_header_season.setCurrentIndex(idx)
         self.combo_header_season.blockSignals(False)
 
+    def get_active_season_id(self):
+        """إرجاع معرف الموسم النشط المختار حالياً في الشريط العلوي."""
+        if hasattr(self, 'combo_header_season') and self.combo_header_season:
+            sid = self.combo_header_season.currentData()
+            if sid:
+                return sid
+        if self.db:
+            curr = db_mod.get_current_season(self.db)
+            if curr:
+                return curr.id
+        return None
+
     def on_header_season_changed(self, index):
         if index < 0 or not hasattr(self, 'combo_header_season'):
             return
@@ -263,15 +275,64 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
             return
         db_mod.set_current_season(self.db, sid)
         self.update_header_season_selector()
+
+        # 1. تحديث قوائم المواسم والفئات والدورات في الإعدادات
         if hasattr(self, 'refresh_seasons_list'):
-            self.refresh_seasons_list()
+            try: self.refresh_seasons_list()
+            except Exception: pass
+        if hasattr(self, 'com_filter_season'):
+            try:
+                idx_fs = self.com_filter_season.findData(sid)
+                if idx_fs >= 0:
+                    self.com_filter_season.setCurrentIndex(idx_fs)
+            except Exception: pass
+        if hasattr(self, 'com_add_cat_season'):
+            try:
+                idx_as = self.com_add_cat_season.findData(sid)
+                if idx_as >= 0:
+                    self.com_add_cat_season.setCurrentIndex(idx_as)
+            except Exception: pass
         if hasattr(self, 'refresh_cat_list'):
-            self.refresh_cat_list()
-        if hasattr(self, 'load_dashboard_data'):
-            try: self.load_dashboard_data()
+            try: self.refresh_cat_list()
+            except Exception: pass
+        if hasattr(self, 'refresh_cycles_cat_list'):
+            try: self.refresh_cycles_cat_list()
+            except Exception: pass
+
+        # 2. تحديث لوحة الإحصائيات والمشتركين
+        if hasattr(self, 'refresh_stats'):
+            try: self.refresh_stats()
             except Exception: pass
         if hasattr(self, 'load_subscribers'):
             try: self.load_subscribers()
+            except Exception: pass
+
+        # 3. تحديث إدارة رأس المال إذا كانت مهيأة
+        if getattr(self, 'page_capital', None) is not None:
+            try:
+                self.load_capital_category_filter()
+                self.refresh_capital_stats()
+                self.refresh_current_capital_tab()
+            except Exception: pass
+
+        # 4. تحديث إدارة السحوبات إذا كانت مهيأة
+        if getattr(self, 'page_draw', None) is not None:
+            try:
+                self.refresh_draw_categories_filter()
+                self.refresh_draw_stats()
+                self.load_recent_winners()
+                self.load_draw_excluded()
+            except Exception: pass
+
+        # 5. تحديث أداة التقارير إذا كانت مهيأة
+        if getattr(self, 'page_reports', None) is not None:
+            try:
+                if hasattr(self, 'rep_contact_season'):
+                    idx_rs = self.rep_contact_season.findData(sid)
+                    if idx_rs >= 0:
+                        self.rep_contact_season.setCurrentIndex(idx_rs)
+                if hasattr(self, 'refresh_report_categories'):
+                    self.refresh_report_categories()
             except Exception: pass
 
     def prompt_admin_access(self):
@@ -1275,7 +1336,6 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.content_stack.setCurrentWidget(self.page_main_settings)
         self._update_nav_style("الإعدادات")
         self.on_settings_tab_changed(self.settings_sidebar.currentRow())
-
 
 
 if __name__ == "__main__":

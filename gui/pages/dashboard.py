@@ -126,16 +126,7 @@ class DashboardMixin:
         self.db.query(db_mod.Setting).filter(db_mod.Setting.key == "registration_open").update({"value": val})
         self.db.commit()
     def refresh_stats(self):
-        if hasattr(self, 'api_client') and self.api_client:
-            if hasattr(self, '_dash_stats_worker') and self._dash_stats_worker.isRunning():
-                self._dash_stats_worker.quit()
-            from api_client import APIWorker
-            self._dash_stats_worker = APIWorker(self.api_client.get_dashboard_stats)
-            self._dash_stats_worker.finished.connect(self._render_dashboard_stats_api)
-            self._dash_stats_worker.error.connect(lambda err: self._render_dashboard_stats_db())
-            self._dash_stats_worker.start()
-        else:
-            self._render_dashboard_stats_db()
+        self._render_dashboard_stats_db()
 
     def _render_dashboard_stats_api(self, data):
         for i in reversed(range(self.stats_grid.count())):
@@ -190,26 +181,37 @@ class DashboardMixin:
             w = self.stats_grid.itemAt(i).widget()
             if w:
                 w.setParent(None)
-        
+
+        season_id = self.get_active_season_id() if hasattr(self, 'get_active_season_id') else None
+
         ten_min_ago = db_mod.get_utc_now() - datetime.timedelta(minutes=10)
-        online_count = self.db.query(func.count(db_mod.Subscriber.id)).filter(
+        q_online = self.db.query(func.count(db_mod.Subscriber.id)).filter(
             db_mod.Subscriber.last_seen >= ten_min_ago
-        ).scalar() or 0
-
-        sub_visits = self.db.query(func.sum(db_mod.Subscriber.visit_count)).scalar() or 0
-        site_visits = self.db.query(func.count(db_mod.VisitLog.id)).scalar() or 0
-        total_visits = int(sub_visits) + int(site_visits)
-
-        visiting_subs = self.db.query(func.count(db_mod.Subscriber.id)).filter(
-            func.coalesce(db_mod.Subscriber.visit_count, 0) > 0
-        ).scalar() or 0
-
-        cat_counts = dict(
-            self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id))
-            .group_by(db_mod.Subscriber.category)
-            .all()
         )
-        total_subscribers = self.db.query(db_mod.Subscriber).count()
+        q_sub_visits = self.db.query(func.sum(db_mod.Subscriber.visit_count))
+        q_visiting_subs = self.db.query(func.count(db_mod.Subscriber.id)).filter(
+            func.coalesce(db_mod.Subscriber.visit_count, 0) > 0
+        )
+        q_cat_counts = self.db.query(db_mod.Subscriber.category, func.count(db_mod.Subscriber.id))
+        q_total_subs = self.db.query(db_mod.Subscriber)
+        q_cats = self.db.query(db_mod.Category)
+
+        if season_id and season_id != -1:
+            q_online = q_online.filter(db_mod.Subscriber.season_id == season_id)
+            q_sub_visits = q_sub_visits.filter(db_mod.Subscriber.season_id == season_id)
+            q_visiting_subs = q_visiting_subs.filter(db_mod.Subscriber.season_id == season_id)
+            q_cat_counts = q_cat_counts.filter(db_mod.Subscriber.season_id == season_id)
+            q_total_subs = q_total_subs.filter(db_mod.Subscriber.season_id == season_id)
+            q_cats = q_cats.filter(db_mod.Category.season_id == season_id)
+
+        online_count = q_online.scalar() or 0
+        sub_visits = q_sub_visits.scalar() or 0
+        site_visits = self.db.query(func.count(db_mod.VisitLog.id)).scalar() or 0
+        total_visits = int(sub_visits) + (int(site_visits) if not season_id else 0)
+        visiting_subs = q_visiting_subs.scalar() or 0
+
+        cat_counts = dict(q_cat_counts.group_by(db_mod.Subscriber.category).all())
+        total_subscribers = q_total_subs.count()
         items = [
             ("إجمالي المشتركين", total_subscribers, "#2e7d32", None),
             ("المتصلون الآن 🟢", online_count, "#10b981", self.show_online_subscribers_dialog),
@@ -217,7 +219,7 @@ class DashboardMixin:
             ("مشتركون زاروا الموقع 👥", visiting_subs, "#8b5cf6", None)
         ]
         colors = ["#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444"]
-        for i, cat in enumerate(self.db.query(db_mod.Category).all()):
+        for i, cat in enumerate(q_cats.all()):
             count = cat_counts.get(cat.name, 0)
             items.append((cat.name, count, colors[i % len(colors)], None))
 

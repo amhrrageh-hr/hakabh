@@ -1242,7 +1242,7 @@ class WheelPreviewDialog(QDialog):
 
 
 class DrawAnimationDialog(QDialog):
-    def __init__(self, parent, qualified_by_category, draw_name, db, category_reports=None):
+    def __init__(self, parent, qualified_by_category, draw_name, db, category_reports=None, winners_per_category=1):
         super().__init__(parent)
         self.setWindowTitle(f"{draw_name} — تقارير الفئات والقرعة")
         avail = get_available_screen_geometry(self)
@@ -1261,10 +1261,14 @@ class DrawAnimationDialog(QDialog):
         self.db = db
         self.draw_name = draw_name
         self._is_grand_prize = ("الجائزة الكبرى" in self.draw_name)
+        self.winners_per_category = max(1, int(winners_per_category or 1))
+        self.current_winner_round = 0
+        self._cat_winners_target = 1
+        self._has_more_winners_in_cat = False
         self.qualified_by_category = dict(qualified_by_category or {})
         self.category_reports = dict(category_reports or {})
 
-        if self.category_reports and not self._is_grand_prize:
+        if self.category_reports:
             self.categories = list(self.category_reports.keys())
         else:
             self.categories = list(self.qualified_by_category.keys())
@@ -1274,7 +1278,7 @@ class DrawAnimationDialog(QDialog):
 
         self._auto_next_timer = QTimer(self)
         self._auto_next_timer.setSingleShot(True)
-        self._auto_next_timer.timeout.connect(self.next_category)
+        self._auto_next_timer.timeout.connect(self._on_after_wheel_action)
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(20, 14, 20, 16)
@@ -1350,7 +1354,7 @@ class DrawAnimationDialog(QDialog):
                 background: #fde047;
             }}
         """)
-        self.btn_next_after_wheel.clicked.connect(self.next_category)
+        self.btn_next_after_wheel.clicked.connect(self._on_after_wheel_action)
         self.btn_next_after_wheel.hide()
         self.wheel_page_layout.addWidget(self.btn_next_after_wheel, 0, Qt.AlignmentFlag.AlignCenter)
 
@@ -1450,13 +1454,15 @@ class DrawAnimationDialog(QDialog):
             print("Error updating category cycle report:", e)
 
     def start_category_draw(self):
-        """يبدأ بعرض التقرير قبل القرعة (وفي الجائزة الكبرى يظهر التقرير مرة واحدة فقط في البداية ثم تدور العجلة لاختيار الفائزين بالتتابع)."""
+        """يبدأ بعرض تقرير الفئة الحالية مرة واحدة قبل تدوير العجلة لاختيار الفائزين منها."""
         if self.current_cat_index >= len(self.categories):
             self.show_final_report()
             return
-        if self._is_grand_prize and self.current_cat_index > 0:
-            self.begin_wheel_spin_for_current_category()
-            return
+        self.current_winner_round = 0
+        self._has_more_winners_in_cat = False
+        cat_name = self.categories[self.current_cat_index]
+        cat_subs_cnt = len(self.qualified_by_category.get(cat_name, []))
+        self._cat_winners_target = min(self.winners_per_category, cat_subs_cnt) if cat_subs_cnt > 0 else 0
         self.show_category_pre_draw_report()
 
     def show_category_pre_draw_report(self):
@@ -1518,10 +1524,10 @@ class DrawAnimationDialog(QDialog):
         title_vbox.setSpacing(2)
         if self._is_grand_prize:
             step_lbl = QLabel(
-                f"👑 {self.draw_name} — عدد الفائزين المطلوب اختيارهم: ({len(self.categories)})"
+                f"👑 الفئة ({self.current_cat_index + 1} من {len(self.categories)}) — {self.draw_name} | مطلوب اختيار ({self._cat_winners_target}) فائز من هذه الفئة"
             )
             main_title = QLabel(
-                f"📋 تقرير {self.draw_name} (يظهر مرة واحدة قبل بدء تدوير العجلة)"
+                f"📋 تقرير فئة: {cat_name}  |  عدد الفائزين من هذه الفئة: ({self._cat_winners_target})"
             )
         else:
             step_lbl = QLabel(
@@ -1753,7 +1759,7 @@ class DrawAnimationDialog(QDialog):
 
         if subs_for_wheel:
             if self._is_grand_prize:
-                spin_txt = f"🎡 ابدأ قرعة {self.draw_name} لاختيار ({len(self.categories)}) فائز [{len(subs_for_wheel)} مؤهل]"
+                spin_txt = f"🎡 ابدأ قرعة فئة ({cat_name}) لاختيار ({self._cat_winners_target}) فائز [{len(subs_for_wheel)} مؤهل]"
             else:
                 spin_txt = f"🎡 ابدأ القرعة وتدوير العجلة لفئة ({cat_name}) — الدورة ({target_cycle})  [{len(subs_for_wheel)} مؤهل]"
             btn_spin = QPushButton(spin_txt)
@@ -1844,9 +1850,14 @@ class DrawAnimationDialog(QDialog):
         self._win_seg_idx = winner_idx
 
         target_cycle = self._current_target_cycle or 1
-        self.cat_label.setText(
-            f"✨ {self.draw_name} — قرعة فئة: {cat_name} (الدورة رقم {target_cycle}) ✨"
-        )
+        if self._is_grand_prize and self._cat_winners_target > 1:
+            self.cat_label.setText(
+                f"✨ {self.draw_name} — فئة: {cat_name} | اختيار الفائز ({self.current_winner_round + 1} من {self._cat_winners_target}) ✨"
+            )
+        else:
+            self.cat_label.setText(
+                f"✨ {self.draw_name} — قرعة فئة: {cat_name} (الدورة رقم {target_cycle}) ✨"
+            )
         self.status_label.setText(f"جاري تدوير عجلة القرعة بين ({len(subs)}) مشتركين مؤهلين...")
         self.wheel_label.setStyleSheet("""
             font-size: 26px;
@@ -1972,20 +1983,37 @@ class DrawAnimationDialog(QDialog):
         for k_cat, k_list in self.qualified_by_category.items():
             self.qualified_by_category[k_cat] = [s for s in k_list if s.id != winner_sub.id]
 
-        has_next = (self.current_cat_index + 1) < len(self.categories)
-        if has_next:
-            next_cat = self.categories[self.current_cat_index + 1]
-            if self._is_grand_prize:
-                self.status_label.setText(
-                    f"🎉 مبروك للفائز ({cat_name}): رقم المشترك ({winner_sub.subscriber_number}) — ستدور العجلة تلقائياً لاختيار ({next_cat})..."
-                )
-                self.btn_next_after_wheel.setText(f"🎡 تدوير العجلة الآن لاختيار ({next_cat}) ⬅️")
-                self._auto_next_timer.start(2500)
-            else:
-                self.btn_next_after_wheel.setText(f"📋 الانتقال إلى تقرير الفئة التالية ({next_cat}) ⬅️")
+        self.current_winner_round += 1
+        remaining_in_cat = len(self.qualified_by_category.get(cat_name, []))
+        self._has_more_winners_in_cat = (
+            self.current_winner_round < self._cat_winners_target and remaining_in_cat > 0
+        )
+
+        if self._has_more_winners_in_cat:
+            next_round_num = self.current_winner_round + 1
+            self.status_label.setText(
+                f"🎉 مبروك للفائز ({self.current_winner_round}/{self._cat_winners_target}) في فئة ({cat_name}): رقم ({winner_sub.subscriber_number}) — ستدور العجلة تلقائياً للفائز التالي..."
+            )
+            self.btn_next_after_wheel.setText(
+                f"🎡 تدوير العجلة الآن لاختيار الفائز ({next_round_num} من {self._cat_winners_target}) في فئة ({cat_name}) ⬅️"
+            )
+            self._auto_next_timer.start(2500)
         else:
-            self.btn_next_after_wheel.setText("🏆 عرض التقرير النهائي للفائزين ⬅️")
+            has_next_cat = (self.current_cat_index + 1) < len(self.categories)
+            if has_next_cat:
+                next_cat = self.categories[self.current_cat_index + 1]
+                self.btn_next_after_wheel.setText(f"📋 الانتقال إلى تقرير الفئة التالية ({next_cat}) ⬅️")
+            else:
+                self.btn_next_after_wheel.setText("🏆 عرض التقرير النهائي للفائزين من كل فئة ⬅️")
         self.btn_next_after_wheel.show()
+
+    def _on_after_wheel_action(self):
+        if self._auto_next_timer.isActive():
+            self._auto_next_timer.stop()
+        if self._has_more_winners_in_cat:
+            self.begin_wheel_spin_for_current_category()
+        else:
+            self.next_category()
 
     def next_category(self):
         if self._auto_next_timer.isActive():
@@ -5090,22 +5118,164 @@ class _DeletePaymentsWorker(QThread):
         finally:
             db.close()
 
+class StaffHandoverDialog(QDialog):
+    """نافذة إدخال المبلغ المُسلَّم من الموظف للإدارة لتصفير العهدة كلياً أو جزئياً حسب المبلغ الموصل."""
+    def __init__(self, parent, staff_name, total_remaining):
+        super().__init__(parent)
+        self.total_remaining = round(float(total_remaining or 0.0), 2)
+        self.delivered_amount = 0.0
+        self.handover_note = ""
+
+        self.setWindowTitle(f"تسليم مبلغ للإدارة — {staff_name}")
+        fit_dialog_to_screen(self, 440, fixed_width=True)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(14)
+
+        title = QLabel(f"💵 تسليم عهدة الموظف: {staff_name}")
+        title.setObjectName("SectionTitle")
+        title.setWordWrap(True)
+        title.setStyleSheet("font-size: 16px; font-weight: 800; color: #059669;")
+        layout.addWidget(title)
+
+        lbl_cur = QLabel(f"إجمالي العهدة الحالية المتبقية على الموظف:\n{self.total_remaining:,.2f} ر.ي")
+        lbl_cur.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_cur.setStyleSheet(
+            "background: #ecfdf5; color: #065f46; border: 1.5px solid #a7f3d0; "
+            "border-radius: 10px; padding: 10px; font-size: 15px; font-weight: 900;"
+        )
+        layout.addWidget(lbl_cur)
+
+        amt_row = QHBoxLayout()
+        amt_row.setSpacing(8)
+        self.ent_amount = QLineEdit(f"{self.total_remaining:.2f}")
+        self.ent_amount.setPlaceholderText("أدخل المبلغ الذي سلمه الموظف...")
+        self.ent_amount.setStyleSheet("font-size: 15px; font-weight: bold; padding: 6px;")
+        self.ent_amount.textChanged.connect(self._update_remaining_preview)
+
+        btn_full = QPushButton("كامل العهدة")
+        btn_full.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_full.setFixedWidth(95)
+        btn_full.clicked.connect(lambda: self.ent_amount.setText(f"{self.total_remaining:.2f}"))
+
+        amt_row.addWidget(self.ent_amount, 1)
+        amt_row.addWidget(btn_full)
+        layout.addWidget(QLabel("المبلغ المُسلَّم من الموظف (ر.ي):"))
+        layout.addLayout(amt_row)
+
+        self.lbl_after = QLabel("المتبقي على الموظف بعد التسليم: 0.00 ر.ي (تصفير كامل)")
+        self.lbl_after.setWordWrap(True)
+        self.lbl_after.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_after.setStyleSheet(
+            "background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; "
+            "border-radius: 8px; padding: 8px; font-size: 13px; font-weight: bold;"
+        )
+        layout.addWidget(self.lbl_after)
+
+        layout.addWidget(QLabel("ملاحظة التسليم (اختياري):"))
+        self.ent_note = QLineEdit()
+        self.ent_note.setPlaceholderText("مثال: تم التسليم نقداً / حوالة...")
+        layout.addWidget(self.ent_note)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(10)
+        btn_ok = QPushButton("تأكيد التسليم والتصفير")
+        btn_ok.setObjectName("PrimaryBtn")
+        btn_ok.setFixedHeight(40)
+        btn_ok.clicked.connect(self._validate_and_accept)
+
+        btn_cancel = QPushButton("إلغاء")
+        btn_cancel.setObjectName("DangerBtn")
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.clicked.connect(self.reject)
+
+        btns.addWidget(btn_ok, 2)
+        btns.addWidget(btn_cancel, 1)
+        layout.addLayout(btns)
+
+        self._update_remaining_preview()
+
+    def _update_remaining_preview(self):
+        txt = (self.ent_amount.text() or "").strip().replace(",", "")
+        try:
+            val = float(txt) if txt else 0.0
+        except ValueError:
+            self.lbl_after.setText("⚠️ يرجى إدخال مبلغ رقمي صحيح")
+            self.lbl_after.setStyleSheet(
+                "background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; "
+                "border-radius: 8px; padding: 8px; font-size: 13px; font-weight: bold;"
+            )
+            return
+
+        if val <= 0:
+            self.lbl_after.setText("⚠️ يجب أن يكون المبلغ أكبر من الصفر")
+            self.lbl_after.setStyleSheet(
+                "background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; "
+                "border-radius: 8px; padding: 8px; font-size: 13px; font-weight: bold;"
+            )
+        elif val > self.total_remaining + 0.01:
+            self.lbl_after.setText(f"⚠️ المبلغ المدخل أكبر من العهدة الحالية ({self.total_remaining:,.2f} ر.ي)")
+            self.lbl_after.setStyleSheet(
+                "background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; "
+                "border-radius: 8px; padding: 8px; font-size: 13px; font-weight: bold;"
+            )
+        else:
+            rem = max(0.0, round(self.total_remaining - val, 2))
+            if rem <= 0.01:
+                self.lbl_after.setText("✅ المتبقي على الموظف بعد التسليم: 0.00 ر.ي (تصفير كامل للعهدة)")
+                self.lbl_after.setStyleSheet(
+                    "background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; "
+                    "border-radius: 8px; padding: 8px; font-size: 13px; font-weight: bold;"
+                )
+            else:
+                self.lbl_after.setText(f"📌 المتبقي في عهدة الموظف بعد التسليم: {rem:,.2f} ر.ي (تسليم جزئي)")
+                self.lbl_after.setStyleSheet(
+                    "background: #fffbeb; color: #b45309; border: 1px solid #fde68a; "
+                    "border-radius: 8px; padding: 8px; font-size: 13px; font-weight: bold;"
+                )
+
+    def _validate_and_accept(self):
+        txt = (self.ent_amount.text() or "").strip().replace(",", "")
+        try:
+            val = round(float(txt), 2)
+        except ValueError:
+            ModernDialog(self, "تنبيه", "يرجى إدخال مبلغ رقمي صحيح.").exec()
+            return
+        if val <= 0:
+            ModernDialog(self, "تنبيه", "يرجى إدخال مبلغ أكبر من الصفر.").exec()
+            return
+        if val > self.total_remaining + 0.01:
+            ModernDialog(
+                self,
+                "تنبيه",
+                f"المبلغ المدخل ({val:,.2f} ر.ي) أكبر من العهدة المتبقية على الموظف ({self.total_remaining:,.2f} ر.ي)."
+            ).exec()
+            return
+        self.delivered_amount = min(val, self.total_remaining)
+        self.handover_note = (self.ent_note.text() or "").strip()
+        self.accept()
+
+
 class StaffActivityDialog(QDialog):
     def __init__(self, parent, staff_id, db):
         super().__init__(parent)
         self.staff_id = staff_id
         self.db = db
         staff = db.get(db_mod.Staff, staff_id)
+        self.staff_name = staff.name if staff else ""
+        self._current_remaining_total = 0.0
         
-        self.setWindowTitle(f"سجل تحصيلات الموظف - {staff.name}")
-        fit_dialog_to_screen(self, 800, 550)
+        self.setWindowTitle(f"سجل تحصيلات الموظف - {self.staff_name}")
+        fit_dialog_to_screen(self, 860, 560)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(25, 25, 25, 25)
-        layout.setSpacing(15)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
         
-        title = QLabel(f"كشف المقبوضات المحصلة بواسطة: {staff.name}")
+        title = QLabel(f"كشف المقبوضات المحصلة بواسطة: {self.staff_name}")
         title.setObjectName("SectionTitle")
         layout.addWidget(title)
         
@@ -5133,29 +5303,32 @@ class StaffActivityDialog(QDialog):
         layout.addLayout(filter_lay)
 
         summary_lay = QHBoxLayout()
-        self.lbl_total = QLabel("إجمالي المبالغ المحصلة: 0.00 ر.ي")
-        self.lbl_total.setStyleSheet("font-size: 16px; font-weight: bold; color: #10b981; background: #f8fafc; padding: 12px; border-radius: 10px; border: 1px solid #e2e8f0;")
+        self.lbl_total = QLabel("العهدة المتبقية: 0.00 ر.ي")
+        self.lbl_total.setStyleSheet("font-size: 15px; font-weight: bold; color: #10b981; background: #f8fafc; padding: 10px 14px; border-radius: 10px; border: 1px solid #e2e8f0;")
         summary_lay.addWidget(self.lbl_total)
         summary_lay.addStretch()
 
         btn_pdf = QPushButton("تصدير PDF")
         btn_pdf.setObjectName("DangerBtn")
-        btn_pdf.setFixedWidth(120)
+        btn_pdf.setFixedWidth(110)
         btn_pdf.clicked.connect(self.export_to_pdf)
         summary_lay.addWidget(btn_pdf)
 
         self.btn_settle = QPushButton("تصفير السجل (تسليم للإدارة)")
         self.btn_settle.setObjectName("PrimaryBtn")
-        self.btn_settle.setFixedWidth(180)
+        self.btn_settle.setFixedWidth(195)
         self.btn_settle.clicked.connect(self.settle_payments)
         summary_lay.addWidget(self.btn_settle)
 
         layout.addLayout(summary_lay)
         
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["اسم المشترك", "المبلغ المحصل", "تاريخ العملية", "ملاحظات"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["اسم المشترك", "المبلغ المحصل", "المسلّم للإدارة", "المتبقي عهدة", "تاريخ العملية", "ملاحظات"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setMinimumSectionSize(55)
+        self.table.setWordWrap(True)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.table)
         
         self.load_data()
@@ -5173,51 +5346,119 @@ class StaffActivityDialog(QDialog):
             db_mod.Payment.paid_date <= end_date
         )
 
-        # إذا لم يتم تفعيل خيار "عرض المسلمة"، نظهر فقط العهدة الحالية
-        if self.chk_show_settled.isChecked():
-            pass # نظهر الكل
-        else:
+        # إذا لم يتم تفعيل خيار "عرض المسلمة"، نظهر فقط العهدة الحالية غير المصفّرة بالكامل
+        if not self.chk_show_settled.isChecked():
             query = query.filter(db_mod.Payment.is_staff_settled == False)
 
         results = query.order_by(db_mod.Payment.paid_date.desc()).all()
 
         self.table.setRowCount(len(results))
-        total = 0
+        total_collected = 0.0
+        total_settled = 0.0
+        total_remaining = 0.0
         for i, (p, sub) in enumerate(results):
+            amt = float(p.amount or 0.0)
+            settled_amt = amt if p.is_staff_settled else min(amt, max(0.0, float(getattr(p, 'staff_settled_amount', 0.0) or 0.0)))
+            rem_amt = max(0.0, round(amt - settled_amt, 2))
+
             self.table.setItem(i, 0, QTableWidgetItem(sub.name if sub else "غير معروف"))
-            self.table.setItem(i, 1, QTableWidgetItem(f"{p.amount:,.2f} ر.ي"))
-            self.table.setItem(i, 2, QTableWidgetItem(p.paid_date.strftime("%Y-%m-%d %H:%M") if p.paid_date else "-"))
-            self.table.setItem(i, 3, QTableWidgetItem(p.note or "-"))
-            total += p.amount
-        self.lbl_total.setText(f"إجمالي المبالغ المحصلة: {total:,.2f} ر.ي")
-        self.btn_settle.setEnabled(total > 0 and not self.chk_show_settled.isChecked())
+            self.table.setItem(i, 1, QTableWidgetItem(f"{amt:,.2f} ر.ي"))
+
+            settled_item = QTableWidgetItem(f"{settled_amt:,.2f} ر.ي")
+            settled_item.setForeground(QColor("#059669" if settled_amt > 0 else "#64748b"))
+            self.table.setItem(i, 2, settled_item)
+
+            rem_item = QTableWidgetItem(f"{rem_amt:,.2f} ر.ي")
+            rem_item.setForeground(QColor("#dc2626" if rem_amt > 0 else "#059669"))
+            self.table.setItem(i, 3, rem_item)
+
+            self.table.setItem(i, 4, QTableWidgetItem(p.paid_date.strftime("%Y-%m-%d %H:%M") if p.paid_date else "-"))
+            self.table.setItem(i, 5, QTableWidgetItem(p.note or "-"))
+
+            total_collected += amt
+            total_settled += settled_amt
+            total_remaining += rem_amt
+
+        self._current_remaining_total = round(total_remaining, 2)
+        if self.chk_show_settled.isChecked():
+            self.lbl_total.setText(
+                f"إجمالي المحصل: {total_collected:,.2f} ر.ي  |  المسلّم: {total_settled:,.2f} ر.ي  |  المتبقي: {total_remaining:,.2f} ر.ي"
+            )
+        else:
+            self.lbl_total.setText(
+                f"العهدة المتبقية على الموظف: {total_remaining:,.2f} ر.ي"
+                + (f"  (مسلّم سابقاً: {total_settled:,.2f} ر.ي)" if total_settled > 0 else "")
+            )
+        self.btn_settle.setEnabled(self._current_remaining_total > 0 and not self.chk_show_settled.isChecked())
 
     def settle_payments(self):
+        if self._current_remaining_total <= 0:
+            ModernDialog(self, "تنبيه", "لا توجد مبالغ متبقية في عهدة الموظف ضمن الفترة المحددة.").exec()
+            return
+
+        dlg = StaffHandoverDialog(self, self.staff_name, self._current_remaining_total)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        delivered = dlg.delivered_amount
+        handover_note = dlg.handover_note
         start_date = datetime.datetime.combine(self.date_from.date().toPyDate(), datetime.time.min)
         end_date = datetime.datetime.combine(self.date_to.date().toPyDate(), datetime.time.max)
-        
-        count = self.table.rowCount()
-        msg = f"هل أنت متأكد من تصفير السجل؟\nسيتم اعتبار {count} عملية قد سُلمت للإدارة ولن تظهر في الكشف الحالي للموظف."
-        
-        if ModernDialog(self, "تأكيد تسليم المبالغ", msg, is_confirm=True).exec():
-            try:
-                # جلب الأقساط غير المسواة حالياً ضمن الفلتر
-                payments = self.db.query(db_mod.Payment).filter(
-                    db_mod.Payment.staff_id == self.staff_id,
-                    db_mod.Payment.paid_date >= start_date,
-                    db_mod.Payment.paid_date <= end_date,
-                    db_mod.Payment.is_staff_settled == False
-                ).all()
-                
-                for p in payments:
+
+        try:
+            # جلب الأقساط غير المسواة بالكامل ضمن الفترة بترتيب الأقدم أولاً
+            payments = self.db.query(db_mod.Payment).filter(
+                db_mod.Payment.staff_id == self.staff_id,
+                db_mod.Payment.paid_date >= start_date,
+                db_mod.Payment.paid_date <= end_date,
+                db_mod.Payment.is_staff_settled == False
+            ).order_by(db_mod.Payment.paid_date.asc(), db_mod.Payment.id.asc()).all()
+
+            left_to_apply = round(float(delivered), 2)
+            fully_settled_cnt = 0
+            partially_settled_cnt = 0
+
+            for p in payments:
+                if left_to_apply <= 0.001:
+                    break
+                amt = float(p.amount or 0.0)
+                already = float(getattr(p, 'staff_settled_amount', 0.0) or 0.0)
+                rem = round(max(0.0, amt - already), 2)
+                if rem <= 0.001:
+                    p.staff_settled_amount = amt
                     p.is_staff_settled = True
-                
-                self.db.commit()
-                self.load_data()
-                ModernDialog(self, "نجاح", "تم تصفير السجل بنجاح.").exec()
-            except Exception as e:
-                self.db.rollback()
-                ModernDialog(self, "خطأ", f"فشل التصفير: {e}").exec()
+                    continue
+
+                if left_to_apply >= rem - 0.001:
+                    p.staff_settled_amount = amt
+                    p.is_staff_settled = True
+                    left_to_apply = round(max(0.0, left_to_apply - rem), 2)
+                    fully_settled_cnt += 1
+                else:
+                    p.staff_settled_amount = round(already + left_to_apply, 2)
+                    p.is_staff_settled = False
+                    left_to_apply = 0.0
+                    partially_settled_cnt += 1
+
+                if handover_note:
+                    existing_note = (p.note or "").strip()
+                    tag = f"تسليم للإدارة: {handover_note}"
+                    if tag not in existing_note:
+                        p.note = f"{existing_note} | {tag}" if existing_note else tag
+
+            self.db.commit()
+            self.load_data()
+            rem_after = self._current_remaining_total
+            summary_msg = (
+                f"تم تسجيل تسليم مبلغ ({delivered:,.2f} ر.ي) من الموظف بنجاح.\n"
+                f"• عمليات تم تصفيرها بالكامل: {fully_settled_cnt}\n"
+                + (f"• عمليات تم تسليم جزء منها: {partially_settled_cnt}\n" if partially_settled_cnt else "")
+                + f"• المتبقي في عهدة الموظف: {rem_after:,.2f} ر.ي"
+            )
+            ModernDialog(self, "تم التسليم بنجاح", summary_msg).exec()
+        except Exception as e:
+            self.db.rollback()
+            ModernDialog(self, "خطأ", f"فشل تسجيل التسليم: {e}").exec()
 
     def export_to_pdf(self):
         try:

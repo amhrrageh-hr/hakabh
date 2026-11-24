@@ -882,6 +882,7 @@ class Payment(Base):
     cycle_number = Column(Integer, nullable=True, index=True)
     note = Column(String, nullable=True)
     is_staff_settled = Column(Boolean, default=False)
+    staff_settled_amount = Column(Float, default=0.0)
     client_reference = Column(String, nullable=True, index=True)
 
 def build_installment_note(is_paid, due_date, paid_date=None, user_note=None, staff_name=None, is_partial=False):
@@ -992,6 +993,7 @@ class Expense(Base):
     category = Column(String, nullable=True)  # رواتب، سيرفرات، رسائل، أخرى
     subscriber_category = Column(String, nullable=True) # الفئة المالية المستهدفة (نخبة، متوسط...)
     note = Column(String, nullable=True)
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=True, index=True)
 
 class Staff(Base):
     __tablename__ = "staff"
@@ -1067,7 +1069,7 @@ def init_db(force_migration=False):
         # إذا تم التحقق من الجداول مسبقاً، تخطي الفحص البطيء لتسريع فتح البرنامج
         if not force_migration:
             try:
-                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v5_multi_category").first()
+                mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v7_expenses_season").first()
                 if mig_setting and mig_setting.value == "true":
                     return
             except Exception:
@@ -1092,6 +1094,10 @@ def init_db(force_migration=False):
         if 'is_staff_settled' not in columns:
             print("جاري تحديث قاعدة البيانات لإضافة حقل تسوية عهدة الموظف...")
             db.execute(text(f"ALTER TABLE payments ADD COLUMN is_staff_settled BOOLEAN DEFAULT {bool_false}"))
+        if 'staff_settled_amount' not in columns:
+            print("جاري تحديث قاعدة البيانات لإضافة حقل المبلغ المسلم جزئياً من الموظف...")
+            db.execute(text("ALTER TABLE payments ADD COLUMN staff_settled_amount FLOAT DEFAULT 0.0"))
+            db.execute(text(f"UPDATE payments SET staff_settled_amount = amount WHERE is_staff_settled = {bool_true} AND (staff_settled_amount IS NULL OR staff_settled_amount = 0)"))
         if 'client_reference' not in columns:
             print("جاري تحديث قاعدة البيانات لإضافة حقل مرجع العميل للمدفوعات...")
             db.execute(text("ALTER TABLE payments ADD COLUMN client_reference TEXT"))
@@ -1115,10 +1121,13 @@ def init_db(force_migration=False):
             print("جاري تحديث قاعدة البيانات لإضافة حقل معرف الموسم في جدول الفئات...")
             db.execute(text("ALTER TABLE categories ADD COLUMN season_id INTEGER REFERENCES seasons(id)"))
         
-        # إضافة حقل فئة المشتركين لجدول المصاريف
+        # إضافة حقل فئة المشتركين ومعرف الموسم لجدول المصاريف
         exp_columns = [c['name'] for c in inspector.get_columns('expenses')]
         if 'subscriber_category' not in exp_columns:
             db.execute(text("ALTER TABLE expenses ADD COLUMN subscriber_category TEXT"))
+        if 'season_id' not in exp_columns:
+            print("جاري تحديث قاعدة البيانات لإضافة حقل معرف الموسم في جدول المصاريف...")
+            db.execute(text("ALTER TABLE expenses ADD COLUMN season_id INTEGER REFERENCES seasons(id)"))
 
         # إضافة الحقول الجديدة لجدول المشتركين (رقم الهوية، العنوان، البريد الإلكتروني، معرف الموسم)
         sub_columns = [c['name'] for c in inspector.get_columns('subscribers')]
@@ -1208,6 +1217,8 @@ def init_db(force_migration=False):
                 db.execute(text(f"UPDATE subscribers SET season_id = {first_season.id} WHERE season_id IS NULL"))
                 # تحديث الفائزين السابقين
                 db.execute(text(f"UPDATE winners SET season_id = {first_season.id} WHERE season_id IS NULL"))
+                # تحديث النفقات السابقة
+                db.execute(text(f"UPDATE expenses SET season_id = {first_season.id} WHERE season_id IS NULL"))
                 db.commit()
                 print(f"تم ربط جميع البيانات السابقة بـ '{first_season.name}' بنجاح.")
             else:
@@ -1218,11 +1229,13 @@ def init_db(force_migration=False):
                     if latest:
                         latest.is_current = True
                         db.commit()
-                # ربط أي فئات أو مشتركين ليس لديهم موسم بالموسم الحالي
-                curr = db.query(Season).filter(Season.is_current == True).first()
-                if curr:
-                    db.execute(text(f"UPDATE categories SET season_id = {curr.id} WHERE season_id IS NULL"))
-                    db.execute(text(f"UPDATE subscribers SET season_id = {curr.id} WHERE season_id IS NULL"))
+                # ربط أي فئات أو مشتركين أو فائزين أو نفقات ليس لديهم موسم بالموسم الأول/الحالي
+                first_or_curr = db.query(Season).order_by(Season.id.asc()).first() or db.query(Season).filter(Season.is_current == True).first()
+                if first_or_curr:
+                    db.execute(text(f"UPDATE categories SET season_id = {first_or_curr.id} WHERE season_id IS NULL"))
+                    db.execute(text(f"UPDATE subscribers SET season_id = {first_or_curr.id} WHERE season_id IS NULL"))
+                    db.execute(text(f"UPDATE winners SET season_id = {first_or_curr.id} WHERE season_id IS NULL"))
+                    db.execute(text(f"UPDATE expenses SET season_id = {first_or_curr.id} WHERE season_id IS NULL"))
                     db.commit()
         except Exception as e:
             print(f"Error migrating seasons data: {e}")
@@ -1301,9 +1314,9 @@ def init_db(force_migration=False):
             db.add(Setting(key="registration_open", value="true"))
 
         # حفظ علامة اكتمال تهيئة الجداول لتسريع الفتح اللاحق
-        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v5_multi_category").first()
+        mig_setting = db.query(Setting).filter(Setting.key == "schema_migrated_v7_expenses_season").first()
         if not mig_setting:
-            db.add(Setting(key="schema_migrated_v5_multi_category", value="true"))
+            db.add(Setting(key="schema_migrated_v7_expenses_season", value="true"))
         else:
             mig_setting.value = "true"
 
