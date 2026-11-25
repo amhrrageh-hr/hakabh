@@ -432,25 +432,20 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
             last_due_dt = s_payments[-1][4] if s_payments else today
             is_date_reached = (today >= last_due_dt) if (last_due_dt and not is_manual_cycle) else True
 
-            has_paid_something = paid_count > 0
-            late_count = 0
+            unpaid_in_cycle = 0
+            late_paid_count = 0
             for p in s_payments:
                 p_due = p[4].date() if p[4] else None
                 p_paid = p[5].date() if p[5] else None
                 is_p = bool(p[6])
-                if p_due is None:
-                    continue
-                if p_due <= today_date or is_manual_cycle:
-                    if not is_p:
-                        late_count += 1
-                    else:
-                        if p_paid and p_paid > p_due:
-                            late_count += 1
-                else:
-                    if is_p and p_paid and p_paid > p_due:
-                        late_count += 1
+                if not is_p:
+                    unpaid_in_cycle += 1
+                elif p_due is not None and p_paid is not None and p_paid > p_due:
+                    late_paid_count += 1
 
-            is_inc = has_paid_something and (late_count <= max_late_allowed)
+            # الجائزة التحفيزية: يشترط سداد كامل أقساط الدورة (بلا أي قسط غير مسدد)،
+            # وأن يكون ملتزماً في الموعد المحدد (أو عدد الأقساط المسددة متأخراً <= الحد المحدد في الإعدادات 1 أو 2 أو 3)
+            is_inc = is_finished and (unpaid_in_cycle == 0) and (late_paid_count <= max_late_allowed)
 
             if is_finished and is_date_reached:
                 completed_total += 1
@@ -484,11 +479,13 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
                     "max_inst": max_inst,
                 })
             else:
-                inc_reason = (
-                    f"لم يسدد أي قسط في الدورة {target_cycle}"
-                    if not has_paid_something
-                    else f"تأخر في {late_count} أقساط بالدورة {target_cycle}"
-                )
+                if not is_finished or unpaid_in_cycle > 0:
+                    inc_reason = f"لم يُتم سداد كامل أقساط الدورة {target_cycle} (سدد {paid_count}/{max_inst})"
+                else:
+                    inc_reason = (
+                        f"سدد ({late_paid_count}) أقساط متأخراً عن الموعد في الدورة {target_cycle} "
+                        f"(المسموح في الإعدادات: {max_late_allowed})"
+                    )
                 incentive_excluded_entries.append({
                     "id": s.id,
                     "number": s_num,
@@ -591,77 +588,208 @@ class DrawQualificationWorker(QThread):
                 self.finished.emit(qualified_by_category, qualified_ids, disqualified_count)
                 return
 
-            # الجائزة الكبرى
+            # الجائزة الكبرى:
+            # - يدخل الملتزمون بالتسديد في الوقت المحدد خلال الفترة المحددة (يُسمح بالتأخير حتى 3 أيام فقط)
+            # - من يتأخر أكثر من 3 أيام يُستبعد طوال هذه الفترة فقط، ويبدأ فترة جديدة نظيفة بعد القرعة
+            # - كل من فاز سابقاً بالجائزة الكبرى لا يدخل السحب مرة أخرى
             today = datetime.datetime.now()
-            all_subs = bg_db.query(db_mod.Subscriber).filter(db_mod.Subscriber.status == "accepted").all()
-            if not all_subs:
+            today_date = today.date()
+
+            q_cats_g = bg_db.query(db_mod.Category)
+            q_subs_g = bg_db.query(db_mod.Subscriber)
+            q_win_g = bg_db.query(
+                db_mod.Winner.subscriber_number,
+                db_mod.Winner.draw_type,
+                db_mod.Winner.cycle_number,
+            ).filter(db_mod.Winner.draw_type.contains("الجائزة الكبرى"))
+
+            if self.season_id and self.season_id != -1:
+                q_cats_g = q_cats_g.filter(db_mod.Category.season_id == self.season_id)
+                q_subs_g = q_subs_g.filter(db_mod.Subscriber.season_id == self.season_id)
+                q_win_g = q_win_g.filter(db_mod.Winner.season_id == self.season_id)
+
+            categories_g = q_cats_g.order_by(db_mod.Category.id.asc()).all()
+            all_subs_g = q_subs_g.all()
+            if not all_subs_g:
                 self.finished.emit({}, [], 0)
                 return
 
-            fin_status_map = db_mod.calculate_financial_status_batch(all_subs, bg_db)
-            grand_prize_won_numbers = set()
-            if self.periods_count > 1:
-                grand_prize_won_numbers = {
-                    w[0]
-                    for w in bg_db.query(db_mod.Winner.subscriber_number)
-                    .filter(
-                        db_mod.Winner.draw_type.contains("الجائزة الكبرى"),
-                        db_mod.Winner.draw_type.contains(f"الفترة {self.selected_period}"),
-                    )
-                    .all()
-                    if w[0]
-                }
+            # جميع الفائزين السابقين في الجائزة الكبرى (لا يدخلون السحب مرة أخرى نهائياً)
+            grand_won_numbers = set()
+            grand_won_info = {}
+            for w_num, w_type, w_cycle in q_win_g.all():
+                if not w_num:
+                    continue
+                grand_won_numbers.add(w_num)
+                lbl = str(w_type or "الجائزة الكبرى")
+                if w_cycle:
+                    lbl = f"{lbl} (د{w_cycle})"
+                grand_won_info.setdefault(w_num, []).append(lbl)
 
-            for cat_name, info in analytics.items():
-                if self.periods_count <= 1:
-                    # إذا كانت الجائزة الكبرى فترة واحدة، نعتمد من أتموا الدورة
-                    q_ids = info.get("weekly_qualified_ids", [])
-                    if q_ids:
-                        qualified_by_category[cat_name] = list(q_ids)
-                        qualified_ids.extend(q_ids)
+            # قراءة تواريخ بداية ونهاية الجائزة الكبرى من الإعدادات
+            s_start_row = bg_db.query(db_mod.Setting).filter(db_mod.Setting.key == "grand_prize_start_date").first()
+            s_end_row = bg_db.query(db_mod.Setting).filter(db_mod.Setting.key == "grand_prize_end_date").first()
+            cfg_start_date = None
+            cfg_end_date = None
+            if s_start_row and s_start_row.value:
+                try:
+                    cfg_start_date = datetime.date.fromisoformat(s_start_row.value.strip())
+                except Exception:
+                    cfg_start_date = None
+            if s_end_row and s_end_row.value:
+                try:
+                    cfg_end_date = datetime.date.fromisoformat(s_end_row.value.strip())
+                except Exception:
+                    cfg_end_date = None
 
-            if self.periods_count > 1:
-                req_weeks = self.selected_period * self.weeks_per_period
-                disciplined_subs = [
-                    s for s in all_subs
-                    if fin_status_map.get(s.id) not in ("late", "suspended")
-                    and s.subscriber_number not in grand_prize_won_numbers
-                ]
-                sub_ids = [s.id for s in disciplined_subs]
-                raw_p = (
-                    bg_db.query(
-                        db_mod.Payment.subscriber_id,
-                        db_mod.Payment.cycle_number,
-                        db_mod.Payment.installment_number,
-                        db_mod.Payment.amount,
-                        db_mod.Payment.due_date,
-                        db_mod.Payment.paid_date,
-                        db_mod.Payment.is_paid,
-                    )
-                    .filter(db_mod.Payment.subscriber_id.in_(sub_ids))
-                    .all()
-                    if sub_ids
-                    else []
+            all_sub_ids_g = [s.id for s in all_subs_g]
+            raw_p_g = (
+                bg_db.query(
+                    db_mod.Payment.subscriber_id,
+                    db_mod.Payment.cycle_number,
+                    db_mod.Payment.installment_number,
+                    db_mod.Payment.due_date,
+                    db_mod.Payment.paid_date,
+                    db_mod.Payment.is_paid,
                 )
-                p_by_sub_cycle = {}
-                for p in raw_p:
-                    p_by_sub_cycle.setdefault(p[0], {}).setdefault(p[1] or 1, []).append(p)
+                .filter(db_mod.Payment.subscriber_id.in_(all_sub_ids_g))
+                .all()
+                if all_sub_ids_g
+                else []
+            )
+            payments_by_sub_g = {}
+            for row_p in raw_p_g:
+                payments_by_sub_g.setdefault(row_p[0], []).append(row_p)
 
-                for s in disciplined_subs:
-                    info = analytics.get(s.category, {})
-                    t_cycle = info.get("target_cycle", 1)
-                    plist = _dedupe_cycle_payments(p_by_sub_cycle.get(s.id, {}).get(t_cycle, []))
-                    period_payments = [p for p in plist if (p[2] or 0) <= req_weeks]
-                    if not period_payments:
+            subs_by_cat_g = {}
+            for s in all_subs_g:
+                subs_by_cat_g.setdefault(s.category, []).append(s)
+            for ck in subs_by_cat_g:
+                subs_by_cat_g[ck].sort(key=lambda x: _natural_sub_sort_key(x.subscriber_number))
+
+            weeks_per_p = max(1, int(self.weeks_per_period or 10))
+            sel_period = max(1, int(self.selected_period or 1))
+            c_start = (sel_period - 1) * weeks_per_p + 1
+            c_end = sel_period * weeks_per_p
+            grand_disqualified_total = 0
+
+            for cat in categories_g:
+                cat_subs = subs_by_cat_g.get(cat.name, [])
+
+                if self.periods_count > 1:
+                    period_label = f"الفترة {sel_period}: من الدورة/الأسبوع {c_start} إلى {c_end}"
+                else:
+                    p_start = cfg_start_date
+                    if p_start is None and cat.start_date:
+                        p_start = cat.start_date.date() if isinstance(cat.start_date, datetime.datetime) else cat.start_date
+                    p_end = cfg_end_date if (cfg_end_date and (p_start is None or cfg_end_date >= p_start)) else today_date
+                    period_label = f"من {p_start or '-'} إلى {p_end}"
+
+                g_qual_ids = []
+                g_qual_entries = []
+                g_prev_entries = []
+                g_excl_entries = []
+
+                for s in cat_subs:
+                    s_num = s.subscriber_number or f"#{s.id}"
+                    s_name = s.name or "-"
+
+                    # 1. الفائزون سابقاً في الجائزة الكبرى لا يدخلون السحب مرة أخرى نهائياً
+                    if s_num in grand_won_numbers:
+                        g_prev_entries.append({
+                            "id": s.id,
+                            "number": s_num,
+                            "name": s_name,
+                            "won_cycle": " ، ".join(grand_won_info.get(s_num, ["فائز سابق"])),
+                        })
                         continue
-                    is_period_paid = all(p[6] for p in period_payments)
-                    last_period_date = period_payments[-1][4] if period_payments else today
-                    is_period_date_reached = (today >= last_period_date) if last_period_date else True
-                    if is_period_paid and is_period_date_reached:
-                        qualified_ids.append(s.id)
-                        qualified_by_category.setdefault(s.category, []).append(s.id)
 
-            self.finished.emit(qualified_by_category, qualified_ids, disqualified_count)
+                    # 2. التحقق من حالة القبول الإداري
+                    if s.status != "accepted":
+                        reason_adm = "مستبعد إدارياً" if s.status == "excluded" else "طلب اشتراك معلق"
+                        g_excl_entries.append({
+                            "id": s.id,
+                            "number": s_num,
+                            "name": s_name,
+                            "reason": reason_adm,
+                        })
+                        grand_disqualified_total += 1
+                        continue
+
+                    # 3. جلب أقساط المشترك المستحقة داخل الفترة المحددة
+                    s_plist = payments_by_sub_g.get(s.id, [])
+                    if self.periods_count > 1:
+                        # الفترة k تغطي الدورات/الأسابيع من c_start إلى c_end (حتى تاريخ اليوم)
+                        period_rows = [
+                            p for p in s_plist
+                            if p[1] is not None
+                            and c_start <= int(p[1]) <= c_end
+                            and (p[3] is None or p[3].date() <= today_date)
+                        ]
+                    else:
+                        eval_end = min(p_end, today_date)
+                        period_rows = [
+                            p for p in s_plist
+                            if p[3] is not None
+                            and (p_start is None or p[3].date() >= p_start)
+                            and p[3].date() <= eval_end
+                        ]
+
+                    if not period_rows:
+                        g_excl_entries.append({
+                            "id": s.id,
+                            "number": s_num,
+                            "name": s_name,
+                            "reason": f"لا توجد أقساط مستحقة في ({period_label})",
+                        })
+                        grand_disqualified_total += 1
+                        continue
+
+                    unpaid_count = 0
+                    late_paid_count = 0
+                    for p in period_rows:
+                        p_due = p[3].date() if p[3] else None
+                        p_paid = p[4].date() if p[4] else None
+                        is_p = bool(p[5])
+                        if not is_p:
+                            unpaid_count += 1
+                        elif p_due and p_paid and p_paid > p_due:
+                            late_paid_count += 1
+
+                    # شروط التأهل للجائزة الكبرى:
+                    # 1) سداد جميع أقساط الفترة (لو بقي قسط واحد غير مسدد لا يدخل السحب)
+                    # 2) عدد الأقساط التي سددها متأخراً عن موعدها لا يتجاوز 3 أقساط كحد أقصى
+                    if unpaid_count == 0 and late_paid_count <= 3:
+                        g_qual_ids.append(s.id)
+                        g_qual_entries.append({
+                            "id": s.id,
+                            "number": s_num,
+                            "name": s_name,
+                        })
+                    else:
+                        if unpaid_count > 0:
+                            r_txt = f"عليه ({unpaid_count}) قسط غير مسدد في الفترة {sel_period}"
+                        else:
+                            r_txt = f"سدد ({late_paid_count}) أقساط متأخراً عن موعدها (الحد الأقصى 3 أقساط) في الفترة {sel_period}"
+                        g_excl_entries.append({
+                            "id": s.id,
+                            "number": s_num,
+                            "name": s_name,
+                            "reason": r_txt,
+                        })
+                        grand_disqualified_total += 1
+
+                qualified_by_category[cat.name] = list(g_qual_ids)
+                qualified_ids.extend(g_qual_ids)
+
+                cat_analytics = analytics.setdefault(cat.name, {"cat_id": cat.id, "target_cycle": sel_period})
+                cat_analytics["grand_qualified_ids"] = g_qual_ids
+                cat_analytics["grand_qualified_entries"] = g_qual_entries
+                cat_analytics["grand_previous_winners_entries"] = g_prev_entries
+                cat_analytics["grand_excluded_entries"] = g_excl_entries
+                cat_analytics["grand_period_range"] = period_label
+
+            self.finished.emit(qualified_by_category, qualified_ids, grand_disqualified_total)
         except Exception as e:
             self.error.emit(str(e))
         finally:
@@ -730,7 +858,7 @@ class DrawMixin:
         draws = [
             ("القرعة الاسبوعية", "سحب عشوائي من المشتركين الذين أتموا سداد جميع أقساط الدورة الحالية.", "#2e7d32"),
             ("الجائزة التحفيزية", "سحب لتشجيع المشتركين الملتزمين بالسداد.", "#3b82f6"),
-            ("الجائزة الكبرى", "سحب الجائزة الكبرى في نهاية الدورة.", "#ef4444")
+            ("الجائزة الكبرى", "سحب الملتزمين بسداد كامل أقساط الفترة (سماح حتى 3 أقساط مسددة متأخراً فقط، ولا يتكرر الفوز).", "#ef4444")
         ]
         
         for name, desc, color in draws:
