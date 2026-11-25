@@ -649,6 +649,8 @@ class DrawQualificationWorker(QThread):
             raw_p_g = (
                 bg_db.query(
                     db_mod.Payment.subscriber_id,
+                    db_mod.Payment.cycle_number,
+                    db_mod.Payment.installment_number,
                     db_mod.Payment.due_date,
                     db_mod.Payment.paid_date,
                     db_mod.Payment.is_paid,
@@ -668,36 +670,23 @@ class DrawQualificationWorker(QThread):
             for ck in subs_by_cat_g:
                 subs_by_cat_g[ck].sort(key=lambda x: _natural_sub_sort_key(x.subscriber_number))
 
-            period_days = max(1, int(self.weeks_per_period or 12) * 7)
+            weeks_per_p = max(1, int(self.weeks_per_period or 10))
             sel_period = max(1, int(self.selected_period or 1))
-            max_grace_days = 3
+            c_start = (sel_period - 1) * weeks_per_p + 1
+            c_end = sel_period * weeks_per_p
             grand_disqualified_total = 0
 
             for cat in categories_g:
                 cat_subs = subs_by_cat_g.get(cat.name, [])
 
-                # حساب النطاق الزمني للفترة الحالية لهذه الفئة
-                base_start = cfg_start_date
-                if base_start is None and cat.start_date:
-                    base_start = cat.start_date.date() if isinstance(cat.start_date, datetime.datetime) else cat.start_date
-                if base_start is None:
-                    # أقدم تاريخ استحقاق في الفئة
-                    due_dates = [
-                        p[1].date()
-                        for s in cat_subs
-                        for p in payments_by_sub_g.get(s.id, [])
-                        if p[1] is not None
-                    ]
-                    base_start = min(due_dates) if due_dates else today_date
-
                 if self.periods_count > 1:
-                    period_start = base_start + datetime.timedelta(days=(sel_period - 1) * period_days)
-                    period_end = base_start + datetime.timedelta(days=sel_period * period_days - 1)
+                    period_label = f"الفترة {sel_period}: من الدورة/الأسبوع {c_start} إلى {c_end}"
                 else:
-                    period_start = base_start
-                    period_end = cfg_end_date if (cfg_end_date and cfg_end_date >= period_start) else today_date
-
-                eval_end = min(period_end, today_date)
+                    p_start = cfg_start_date
+                    if p_start is None and cat.start_date:
+                        p_start = cat.start_date.date() if isinstance(cat.start_date, datetime.datetime) else cat.start_date
+                    p_end = cfg_end_date if (cfg_end_date and (p_start is None or cfg_end_date >= p_start)) else today_date
+                    period_label = f"من {p_start or '-'} إلى {p_end}"
 
                 g_qual_ids = []
                 g_qual_entries = []
@@ -708,7 +697,7 @@ class DrawQualificationWorker(QThread):
                     s_num = s.subscriber_number or f"#{s.id}"
                     s_name = s.name or "-"
 
-                    # 1. الفائزون سابقاً في الجائزة الكبرى لا يدخلون السحب مرة أخرى
+                    # 1. الفائزون سابقاً في الجائزة الكبرى لا يدخلون السحب مرة أخرى نهائياً
                     if s_num in grand_won_numbers:
                         g_prev_entries.append({
                             "id": s.id,
@@ -730,18 +719,31 @@ class DrawQualificationWorker(QThread):
                         grand_disqualified_total += 1
                         continue
 
-                    # 3. فحص أقساط المشترك داخل الفترة الزمنية المحددة [period_start .. eval_end]
+                    # 3. جلب أقساط المشترك المستحقة داخل الفترة المحددة
                     s_plist = payments_by_sub_g.get(s.id, [])
-                    period_rows = [
-                        p for p in s_plist
-                        if p[1] is not None and period_start <= p[1].date() <= eval_end
-                    ]
+                    if self.periods_count > 1:
+                        # الفترة k تغطي الدورات/الأسابيع من c_start إلى c_end (حتى تاريخ اليوم)
+                        period_rows = [
+                            p for p in s_plist
+                            if p[1] is not None
+                            and c_start <= int(p[1]) <= c_end
+                            and (p[3] is None or p[3].date() <= today_date)
+                        ]
+                    else:
+                        eval_end = min(p_end, today_date)
+                        period_rows = [
+                            p for p in s_plist
+                            if p[3] is not None
+                            and (p_start is None or p[3].date() >= p_start)
+                            and p[3].date() <= eval_end
+                        ]
+
                     if not period_rows:
                         g_excl_entries.append({
                             "id": s.id,
                             "number": s_num,
                             "name": s_name,
-                            "reason": f"لا توجد أقساط مستحقة في الفترة ({period_start} إلى {eval_end})",
+                            "reason": f"لا توجد أقساط مستحقة في ({period_label})",
                         })
                         grand_disqualified_total += 1
                         continue
@@ -749,12 +751,12 @@ class DrawQualificationWorker(QThread):
                     unpaid_count = 0
                     late_paid_count = 0
                     for p in period_rows:
-                        p_due = p[1].date()
-                        p_paid = p[2].date() if p[2] else None
-                        is_p = bool(p[3])
+                        p_due = p[3].date() if p[3] else None
+                        p_paid = p[4].date() if p[4] else None
+                        is_p = bool(p[5])
                         if not is_p:
                             unpaid_count += 1
-                        elif p_paid and p_paid > p_due:
+                        elif p_due and p_paid and p_paid > p_due:
                             late_paid_count += 1
 
                     # شروط التأهل للجائزة الكبرى:
@@ -788,7 +790,7 @@ class DrawQualificationWorker(QThread):
                 cat_analytics["grand_qualified_entries"] = g_qual_entries
                 cat_analytics["grand_previous_winners_entries"] = g_prev_entries
                 cat_analytics["grand_excluded_entries"] = g_excl_entries
-                cat_analytics["grand_period_range"] = f"{period_start} إلى {period_end}"
+                cat_analytics["grand_period_range"] = period_label
 
             self.finished.emit(qualified_by_category, qualified_ids, grand_disqualified_total)
         except Exception as e:
