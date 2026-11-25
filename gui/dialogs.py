@@ -1405,7 +1405,11 @@ class DrawAnimationDialog(QDialog):
             target_cycle = 1
 
         if info:
-            if is_incentive:
+            if self._is_grand_prize:
+                q_entries = info.get("grand_qualified_entries", [])
+                p_entries = info.get("grand_previous_winners_entries", [])
+                x_entries = info.get("grand_excluded_entries", [])
+            elif is_incentive:
                 q_entries = info.get("incentive_qualified_entries", [])
                 p_entries = info.get("incentive_previous_winners_entries", [])
                 x_entries = info.get("incentive_excluded_entries", [])
@@ -1523,8 +1527,10 @@ class DrawAnimationDialog(QDialog):
         title_vbox = QVBoxLayout()
         title_vbox.setSpacing(2)
         if self._is_grand_prize:
+            p_range = info.get("grand_period_range", "")
+            range_txt = f"  ({p_range})" if p_range else ""
             step_lbl = QLabel(
-                f"👑 الفئة ({self.current_cat_index + 1} من {len(self.categories)}) — {self.draw_name} | مطلوب اختيار ({self._cat_winners_target}) فائز من هذه الفئة"
+                f"👑 الفئة ({self.current_cat_index + 1} من {len(self.categories)}) — {self.draw_name}{range_txt} | سداد كامل الأقساط (سماح حتى 3 أقساط مسددة متأخراً)"
             )
             main_title = QLabel(
                 f"📋 تقرير فئة: {cat_name}  |  عدد الفائزين من هذه الفئة: ({self._cat_winners_target})"
@@ -1541,8 +1547,8 @@ class DrawAnimationDialog(QDialog):
         title_vbox.addWidget(main_title)
         top_lay.addLayout(title_vbox, 1)
 
-        # قائمة منسدلة لتغيير الدورة مباشرة من التقرير عند الحاجة
-        if info:
+        # قائمة منسدلة لتغيير الدورة مباشرة من التقرير عند الحاجة (للأسبوعية والتحفيزية)
+        if info and not self._is_grand_prize:
             cycle_box_lay = QHBoxLayout()
             lbl_ch = QLabel("تغيير الدورة:")
             lbl_ch.setStyleSheet("font-size: 12px; color: #fef08a; font-weight: bold; border: none; background: transparent;")
