@@ -432,25 +432,20 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
             last_due_dt = s_payments[-1][4] if s_payments else today
             is_date_reached = (today >= last_due_dt) if (last_due_dt and not is_manual_cycle) else True
 
-            has_paid_something = paid_count > 0
-            late_count = 0
+            unpaid_in_cycle = 0
+            late_paid_count = 0
             for p in s_payments:
                 p_due = p[4].date() if p[4] else None
                 p_paid = p[5].date() if p[5] else None
                 is_p = bool(p[6])
-                if p_due is None:
-                    continue
-                if p_due <= today_date or is_manual_cycle:
-                    if not is_p:
-                        late_count += 1
-                    else:
-                        if p_paid and p_paid > p_due:
-                            late_count += 1
-                else:
-                    if is_p and p_paid and p_paid > p_due:
-                        late_count += 1
+                if not is_p:
+                    unpaid_in_cycle += 1
+                elif p_due is not None and p_paid is not None and p_paid > p_due:
+                    late_paid_count += 1
 
-            is_inc = has_paid_something and (late_count <= max_late_allowed)
+            # الجائزة التحفيزية: يشترط سداد كامل أقساط الدورة (بلا أي قسط غير مسدد)،
+            # وأن يكون ملتزماً في الموعد المحدد (أو عدد الأقساط المسددة متأخراً <= الحد المحدد في الإعدادات 1 أو 2 أو 3)
+            is_inc = is_finished and (unpaid_in_cycle == 0) and (late_paid_count <= max_late_allowed)
 
             if is_finished and is_date_reached:
                 completed_total += 1
@@ -484,11 +479,13 @@ def compute_category_draw_analytics(db, selected_cycles=None, season_id=None):
                     "max_inst": max_inst,
                 })
             else:
-                inc_reason = (
-                    f"لم يسدد أي قسط في الدورة {target_cycle}"
-                    if not has_paid_something
-                    else f"تأخر في {late_count} أقساط بالدورة {target_cycle}"
-                )
+                if not is_finished or unpaid_in_cycle > 0:
+                    inc_reason = f"لم يُتم سداد كامل أقساط الدورة {target_cycle} (سدد {paid_count}/{max_inst})"
+                else:
+                    inc_reason = (
+                        f"سدد ({late_paid_count}) أقساط متأخراً عن الموعد في الدورة {target_cycle} "
+                        f"(المسموح في الإعدادات: {max_late_allowed})"
+                    )
                 incentive_excluded_entries.append({
                     "id": s.id,
                     "number": s_num,
