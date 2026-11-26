@@ -38,12 +38,36 @@ def get_utc_now() -> datetime.datetime:
     """إرجاع التوقيت العالمي الموحد UTC (بدون منطقة زمنية للتوافق التام مع قواعد البيانات)"""
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
+def is_local_test_mode() -> bool:
+    """التحقق مما إذا كان التطبيق يعمل في وضع التجارب المحلي المعزول (بدون أي اتصال أو مزامنة مع السيرفر)."""
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER"):
+        return False
+    return os.getenv("LOCAL_TEST_MODE", "0").strip().lower() in ("1", "true", "yes")
+
 def get_local_db_path():
     if getattr(sys, 'frozen', False):
         base_dir = os.path.dirname(sys.executable)
     else:
         base_dir = os.path.abspath(os.path.dirname(__file__))
-    return os.path.join(base_dir, 'hakbah.db')
+
+    prod_db = os.path.join(base_dir, 'hakbah.db')
+    if is_local_test_mode():
+        test_db = os.path.join(base_dir, 'hakbah_test.db')
+        # عند أول تشغيل لوضع التجارب، ننسخ نسخة آمنة من القاعدة المحلية hakbah.db (إن وجدت)
+        if not os.path.exists(test_db) and os.path.exists(prod_db):
+            try:
+                import sqlite3
+                src = sqlite3.connect(prod_db, timeout=10.0)
+                dst = sqlite3.connect(test_db, timeout=10.0)
+                src.backup(dst)
+                dst.close()
+                src.close()
+                print(f"[DB-TestMode] 🧪 Created isolated test database copy: {test_db}")
+            except Exception as e:
+                print(f"[DB-TestMode] ⚠️ Could not copy hakbah.db to hakbah_test.db: {e}")
+        return test_db
+
+    return prod_db
 
 def verify_and_repair_sqlite_db(db_path: str):
     """التحقق من سلامة ملف SQLite وإصلاحه تلقائياً في حال وجود تلف (malformed)"""
@@ -91,6 +115,8 @@ def get_local_database_url():
 DEFAULT_SERVER_DATABASE_URL = "postgresql://postgres:RQUnDoGWAynftxOKdmpJYROHXYafsBnB@thomas.proxy.rlwy.net:11982/railway"
 
 def get_server_database_url():
+    if is_local_test_mode():
+        return ""
     url = os.getenv("SERVER_DATABASE_URL") or ""
     if not url:
         env_url = os.getenv("DATABASE_URL", "")
@@ -129,6 +155,12 @@ def get_database_url():
       مزامنة كافة التعديلات مع سيرفر PostgreSQL على Railway لحظياً في الخلفية.
     """
     global _db_mode_online
+
+    # وضع التجارب المحلي المعزول: لا يتصل بالسيرفر نهائياً ويستخدم hakbah_test.db
+    if is_local_test_mode():
+        _db_mode_online = False
+        print("[DB-TestMode] 🧪 ISOLATED LOCAL TEST MODE -> hakbah_test.db (NO SERVER SYNC)")
+        return get_local_database_url()
 
     # البيئات السحابية (الويب على Railway/Render): استخدم PostgreSQL مباشرة
     if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER"):

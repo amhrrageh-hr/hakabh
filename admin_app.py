@@ -57,7 +57,10 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         super().__init__()
         self.api_client = get_api_client()
         self.logged_in_staff = staff
-        self.setWindowTitle("لوحة تحكم هكبة المليون - Hakbah million")
+        if db_mod.is_local_test_mode():
+            self.setWindowTitle("لوحة تحكم هكبة المليون - Hakbah million — 🧪 وضع التجارب المحلي (معزول عن السيرفر)")
+        else:
+            self.setWindowTitle("لوحة تحكم هكبة المليون - Hakbah million")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         # ضبط أبعاد متجاوبة مع أي شاشة (صغيرة أو كبيرة) لتجنب تجاوز حدود الشاشات المحدودة
@@ -522,6 +525,21 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
         self.btn_toggle_sidebar.setCursor(Qt.CursorShape.PointingHandCursor)
         
         header_layout.addWidget(self.btn_toggle_sidebar)
+
+        if db_mod.is_local_test_mode():
+            lbl_test_badge = QLabel("🧪 وضع التجارب المحلي — غير متصل بالسيرفر")
+            lbl_test_badge.setStyleSheet("""
+                QLabel {
+                    background-color: #fff7ed;
+                    color: #c2410c;
+                    border: 1px solid #fb923c;
+                    border-radius: 8px;
+                    padding: 4px 12px;
+                    font-weight: bold;
+                    font-size: 13px;
+                }
+            """)
+            header_layout.addWidget(lbl_test_badge)
 
         # Season Selector Widget in Header
         self.season_widget = QWidget()
