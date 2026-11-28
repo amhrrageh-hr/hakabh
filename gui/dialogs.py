@@ -3562,7 +3562,14 @@ class JoinAnotherCategoryDialog(QDialog):
         layout.addWidget(title)
 
         linked = db_mod.get_linked_subscriber_accounts(self.db, self.sub) if self.sub else []
-        self.subscribed_cats = {(a.category or "").strip() for a in linked if a.category}
+        target_season_id = self.sub.season_id if self.sub else None
+        self.subscribed_base_cats = {
+            db_mod.get_base_category_name(a.category)
+            for a in linked
+            if a.category
+            and (getattr(a, "status", None) or "").strip().lower() != "rejected"
+            and (target_season_id is None or getattr(a, "season_id", None) is None or a.season_id == target_season_id)
+        }
 
         info_txt = "الفئات المشترك بها حالياً: " + (
             " ، ".join(f"{a.category} (#{a.subscriber_number})" for a in linked) if linked else "لا يوجد"
@@ -3587,8 +3594,7 @@ class JoinAnotherCategoryDialog(QDialog):
             cats = self.db.query(db_mod.Category).filter(db_mod.Category.is_active == True).order_by(db_mod.Category.id.asc()).all()
 
         for c in cats:
-            c_name = (c.name or "").strip()
-            if c_name not in self.subscribed_cats:
+            if db_mod.get_base_category_name(c.name) not in self.subscribed_base_cats:
                 self.cb_cat.addItem(f"{c.name} — ({c.amount:,.0f} ر.ي)", c.id)
 
         self.cb_cat.currentIndexChanged.connect(self.load_numbers)
@@ -3640,14 +3646,21 @@ class JoinAnotherCategoryDialog(QDialog):
             return
 
         linked = db_mod.get_linked_subscriber_accounts(self.db, self.sub)
-        for acc in linked:
-            if (acc.category or "").strip() == (cat_obj.name or "").strip():
-                ModernDialog(
-                    self,
-                    "تنبيه",
-                    f"المشترك مسجل بالفعل في ({cat_obj.name}) برقم (#{acc.subscriber_number})، لا يمكن الاشتراك في نفس الفئة مرتين."
-                ).exec()
-                return
+        existing_same = db_mod.find_existing_account_in_same_base_category(
+            self.db,
+            self.sub.phone if self.sub else "",
+            cat_obj.name,
+            season_id=cat_obj.season_id or (self.sub.season_id if self.sub else None),
+            linked_accounts=linked,
+        )
+        if existing_same:
+            ModernDialog(
+                self,
+                "تنبيه",
+                f"المشترك مسجل بالفعل في نفس الفئة ({existing_same.category} — رقم #{existing_same.subscriber_number or '-'})،\n"
+                f"لا يُسمح بأكثر من حساب واحد في نفس الفئة مهما تعددت مجموعاتها."
+            ).exec()
+            return
 
         num_obj = self.db.get(db_mod.SubscriberNumber, int(num_id))
         if not num_obj or num_obj.is_reserved:

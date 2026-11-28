@@ -360,13 +360,17 @@ async def register_subscriber(
     if not cat_record or not cat_record.is_active:
         return JSONResponse(status_code=400, content={"message": "الفئة أو المجموعة المحددة غير موجودة أو غير نشطة."})
 
-    # السماح بالاشتراك في مجموعة/فئة أخرى ومنع تكرار الاشتراك في نفس المجموعة فقط
-    existing = db.query(db_mod.Subscriber).filter(
-        db_mod.Subscriber.phone == phone,
-        db_mod.Subscriber.category == cat_record.name
-    ).first()
+    # حساب واحد فقط للمشترك في نفس الفئة الأساسية مهما تعددت مجموعاتها ضمن نفس الموسم
+    existing = db_mod.find_existing_account_in_same_base_category(
+        db, phone, cat_record.name, season_id=cat_record.season_id
+    )
     if existing:
-        return JSONResponse(status_code=400, content={"message": f"رقم الهاتف مسجل مسبقاً في نفس الفئة/المجموعة ({cat_record.name})."})
+        return JSONResponse(
+            status_code=400,
+            content={
+                "message": f"رقم الهاتف مسجل مسبقاً في نفس الفئة ({existing.category} — رقم #{existing.subscriber_number or '-'})، ولا يُسمح بأكثر من حساب واحد في نفس الفئة مهما تعددت مجموعاتها."
+            }
+        )
 
     num_record = db.query(db_mod.SubscriberNumber).filter(
         db_mod.SubscriberNumber.id == number_id,
@@ -877,8 +881,17 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         if not all_season_categories:
             all_season_categories = db.query(db_mod.Category).filter(db_mod.Category.is_active == True).order_by(db_mod.Category.id.asc()).all()
 
+        subscribed_base_cats = {
+            db_mod.get_base_category_name(a.category)
+            for a in linked_accounts
+            if a.category
+            and (getattr(a, "status", None) or "").strip().lower() != "rejected"
+            and (target_season_id is None or getattr(a, "season_id", None) is None or a.season_id == target_season_id)
+        }
+
         available_other_categories = [
-            c for c in all_season_categories if (c.name or "").strip() not in subscribed_cat_names
+            c for c in all_season_categories
+            if db_mod.get_base_category_name(c.name) not in subscribed_base_cats
         ]
 
         return templates.TemplateResponse(request=request, name="dashboard.html", context={
@@ -977,17 +990,23 @@ async def subscriber_join_another_category(
     if not cat_record or not cat_record.is_active:
         return JSONResponse(status_code=400, content={"success": False, "message": "الفئة المختارة غير متاحة حالياً."})
 
-    # التحقق الصارم: لا يمكن للمشترك الاشتراك في نفس الفئة مرتين!
+    # التحقق الصارم: حساب واحد فقط للمشترك في نفس الفئة الأساسية مهما تعددت مجموعاتها!
     linked_accounts = db_mod.get_linked_subscriber_accounts(db, current_sub)
-    for acc in linked_accounts:
-        if (acc.category or "").strip() == (cat_record.name or "").strip():
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "message": f"أنت مشترك بالفعل في ({cat_record.name}) برقم (#{acc.subscriber_number})، ولا يمكن الاشتراك في نفس الفئة أكثر من مرة واحدة."
-                }
-            )
+    existing_same = db_mod.find_existing_account_in_same_base_category(
+        db,
+        current_sub.phone,
+        cat_record.name,
+        season_id=cat_record.season_id or current_sub.season_id,
+        linked_accounts=linked_accounts,
+    )
+    if existing_same:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": f"أنت مشترك بالفعل في نفس الفئة ({existing_same.category} — رقم #{existing_same.subscriber_number or '-'})، ولا يُسمح بأكثر من حساب واحد في نفس الفئة مهما تعددت مجموعاتها."
+            }
+        )
 
     num_record = db.query(db_mod.SubscriberNumber).filter(
         db_mod.SubscriberNumber.id == int(number_id),

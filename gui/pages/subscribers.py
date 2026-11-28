@@ -1110,13 +1110,24 @@ class SubscribersMixin:
                     ModernDialog(self, "خطأ", "يرجى إدخال الاسم ورقم الهاتف وكلمة المرور.").exec()
                     return
 
-                # التحقق من عدم اشتراك نفس رقم الهاتف في نفس الفئة مرتين
-                existing_same_cat = self.db.query(db_mod.Subscriber).filter(
-                    db_mod.Subscriber.phone == phone,
-                    db_mod.Subscriber.category == cat_name
-                ).first()
+                cat_id = dlg.cb_cat.currentData()
+                cat_obj = self.db.get(db_mod.Category, cat_id) if cat_id else self.db.query(db_mod.Category).filter(db_mod.Category.name == cat_name).first()
+                season_id = cat_obj.season_id if cat_obj else None
+                if not season_id:
+                    curr_s = db_mod.get_current_season(self.db)
+                    season_id = curr_s.id if curr_s else None
+
+                # التحقق الصارم: حساب واحد فقط لكل مشترك في الفئة الأساسية الواحدة مهما تعددت مجموعاتها
+                existing_same_cat = db_mod.find_existing_account_in_same_base_category(
+                    self.db, phone, cat_name, season_id=season_id
+                )
                 if existing_same_cat:
-                    ModernDialog(self, "خطأ", f"رقم الهاتف هذا مسجل مسبقاً في نفس الفئة ({cat_name})، لا يمكن الاشتراك في الفئة مرتين.").exec()
+                    ModernDialog(
+                        self,
+                        "خطأ",
+                        f"رقم الهاتف هذا مسجل مسبقاً في نفس الفئة ({existing_same_cat.category} — رقم #{existing_same_cat.subscriber_number or '-'})،\n"
+                        f"لا يُسمح للمشترك بأكثر من حساب واحد في نفس الفئة مهما تعددت مجموعاتها."
+                    ).exec()
                     return
 
                 # التأكد من صحة رقم المشترك المختار
@@ -1128,13 +1139,6 @@ class SubscribersMixin:
                 if not sub_num_obj or sub_num_obj.is_reserved:
                     ModernDialog(self, "خطأ", "هذا الرقم تم حجزه مؤخراً، يرجى اختيار رقم آخر.").exec()
                     return
-
-                cat_id = dlg.cb_cat.currentData()
-                cat_obj = self.db.get(db_mod.Category, cat_id) if cat_id else self.db.query(db_mod.Category).filter(db_mod.Category.name == cat_name).first()
-                season_id = cat_obj.season_id if cat_obj else None
-                if not season_id:
-                    curr_s = db_mod.get_current_season(self.db)
-                    season_id = curr_s.id if curr_s else None
 
                 # 1. Create Subscriber (don't set selected_number_id until validated)
                 new_sub = db_mod.Subscriber(

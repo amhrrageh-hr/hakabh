@@ -1395,6 +1395,51 @@ def get_linked_subscriber_accounts(db: Session, sub_or_id) -> list:
         return [sub]
     return accounts
 
+def get_base_category_name(category_name: str) -> str:
+    """
+    استخراج اسم الفئة الأساسية بتجريد لاحقة المجموعة (مثل ' - المجموعة 2' أو 'المجموعة 1')
+    وتوحيد المسافات، لضمان حساب واحد فقط للمشترك في الفئة الواحدة مهما تعددت مجموعاتها.
+    """
+    import re
+    raw = (category_name or "").strip()
+    if not raw:
+        return ""
+    base = re.sub(r"\s*[-–—]?\s*المجموعة\s*\d+\s*$", "", raw).strip()
+    base = " ".join(base.split())
+    return base.casefold()
+
+def find_existing_account_in_same_base_category(db: Session, phone: str, target_category_name: str, season_id=None, linked_accounts=None):
+    """
+    التحقق مما إذا كان للمشترك حساب موجود مسبقاً (غير مرفوض) في نفس الفئة الأساسية
+    ضمن نفس الموسم مهما تعددت مجموعات تلك الفئة.
+    يرجع كائن Subscriber الموجود في حال وجود تكرار، أو None إذا كان مسموحاً بالتسجيل.
+    """
+    target_base = get_base_category_name(target_category_name)
+    if not target_base:
+        return None
+
+    if linked_accounts is not None:
+        candidates = linked_accounts
+    else:
+        phone_clean = (phone or "").strip()
+        if not phone_clean:
+            return None
+        candidates = (
+            db.query(Subscriber)
+            .filter(Subscriber.phone == phone_clean)
+            .order_by(Subscriber.id.asc())
+            .all()
+        )
+
+    for acc in candidates:
+        if (getattr(acc, "status", None) or "").strip().lower() == "rejected":
+            continue
+        if season_id is not None and getattr(acc, "season_id", None) is not None and acc.season_id != season_id:
+            continue
+        if get_base_category_name(acc.category) == target_base:
+            return acc
+    return None
+
 def get_db():
     db = SessionLocal()
     try:
