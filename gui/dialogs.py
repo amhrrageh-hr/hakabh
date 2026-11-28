@@ -2974,8 +2974,17 @@ class AddSubscriberDialog(QDialog):
         form.addRow("الموسم:", self.cb_season)
         
         self.cb_cat = QComboBox()
-        self.cb_cat.currentIndexChanged.connect(self.load_numbers)
+        self.cb_cat.currentIndexChanged.connect(self.on_category_changed)
         form.addRow("الفئة:", self.cb_cat)
+
+        self.lbl_group = QLabel("المجموعة:")
+        self.cb_group = QComboBox()
+        self.cb_group.currentIndexChanged.connect(self.load_numbers)
+        form.addRow(self.lbl_group, self.cb_group)
+        self.lbl_group.setVisible(False)
+        self.cb_group.setVisible(False)
+
+        self._grouped_categories = {}  # base_key -> list[Category]
         
         self.cb_num = QComboBox()
         self.cb_num.addItem("اختر الرقم...", None)
@@ -2995,26 +3004,111 @@ class AddSubscriberDialog(QDialog):
         self.btn_save.clicked.connect(self.validate_and_accept)
         layout.addWidget(self.btn_save)
 
+    @staticmethod
+    def _extract_group_display_label(cat_name: str) -> str:
+        m = re.search(r"(المجموعة\s*\d+)\s*$", (cat_name or "").strip())
+        if m:
+            return m.group(1)
+        return "المجموعة 1 (الأساسية)"
+
+    def _get_available_counts_by_cat(self, cat_ids: list) -> dict:
+        if not cat_ids:
+            return {}
+        try:
+            rows = (
+                self.db.query(db_mod.SubscriberNumber.category_id, func.count(db_mod.SubscriberNumber.id))
+                .filter(
+                    db_mod.SubscriberNumber.category_id.in_(cat_ids),
+                    db_mod.SubscriberNumber.is_reserved == False,
+                )
+                .group_by(db_mod.SubscriberNumber.category_id)
+                .all()
+            )
+            return {cid: int(cnt or 0) for cid, cnt in rows}
+        except Exception:
+            return {}
+
     def load_categories(self):
         self.cb_cat.blockSignals(True)
         self.cb_cat.clear()
         self.cb_cat.addItem("اختر الفئة...", None)
+        self._grouped_categories = {}
+
         season_id = self.cb_season.currentData()
-        q = self.db.query(db_mod.Category)
+        q = self.db.query(db_mod.Category).filter(db_mod.Category.is_active == True)
         if season_id:
             q = q.filter(db_mod.Category.season_id == season_id)
-        for cat in q.all():
-            self.cb_cat.addItem(cat.name, cat.id)
+        cats = q.order_by(db_mod.Category.id.asc()).all()
+
+        base_display_names = {}
+        for cat in cats:
+            base_key = db_mod.get_base_category_name(cat.name)
+            if not base_key:
+                base_key = (cat.name or "").strip()
+            if base_key not in self._grouped_categories:
+                self._grouped_categories[base_key] = []
+                # عرض الاسم الأساسي النظيف بدون لاحقة "- المجموعة X"
+                clean_disp = re.sub(r"\s*[-–—]?\s*المجموعة\s*\d+\s*$", "", (cat.name or "").strip()).strip() or (cat.name or "")
+                base_display_names[base_key] = clean_disp
+            self._grouped_categories[base_key].append(cat)
+
+        for base_key, grp_list in self._grouped_categories.items():
+            disp = base_display_names.get(base_key, base_key)
+            if len(grp_list) > 1:
+                disp = f"{disp} ({len(grp_list)} مجموعات)"
+            self.cb_cat.addItem(disp, base_key)
+
         self.cb_cat.blockSignals(False)
-        if hasattr(self, 'cb_num'):
-            self.load_numbers()
+        self.on_category_changed()
+
+    def on_category_changed(self):
+        base_key = self.cb_cat.currentData()
+        groups = self._grouped_categories.get(base_key, []) if base_key else []
+
+        self.cb_group.blockSignals(True)
+        self.cb_group.clear()
+
+        if len(groups) > 1:
+            avail_map = self._get_available_counts_by_cat([g.id for g in groups])
+            self.cb_group.addItem("اختر المجموعة...", None)
+            for g in groups:
+                g_lbl = self._extract_group_display_label(g.name)
+                avail = avail_map.get(g.id, 0)
+                avail_txt = f"متاح {avail}" if avail > 0 else "ممتلئة"
+                self.cb_group.addItem(f"{g_lbl} — ({avail_txt})", g.id)
+            self.lbl_group.setVisible(True)
+            self.cb_group.setVisible(True)
+        elif len(groups) == 1:
+            g = groups[0]
+            self.cb_group.addItem(g.name, g.id)
+            self.cb_group.setCurrentIndex(0)
+            self.lbl_group.setVisible(False)
+            self.cb_group.setVisible(False)
+        else:
+            self.lbl_group.setVisible(False)
+            self.cb_group.setVisible(False)
+
+        self.cb_group.blockSignals(False)
+        self.load_numbers()
+
+    def get_selected_category(self):
+        """إرجاع (cat_id, cat_name) الفعلي للمجموعة/الفئة المختارة."""
+        cat_id = self.cb_group.currentData()
+        if not cat_id:
+            return None, ""
+        base_key = self.cb_cat.currentData()
+        for g in self._grouped_categories.get(base_key, []):
+            if g.id == cat_id:
+                return g.id, g.name
+        cat_obj = self.db.get(db_mod.Category, cat_id)
+        return (cat_obj.id, cat_obj.name) if cat_obj else (None, "")
 
     def load_numbers(self):
         if not hasattr(self, 'cb_num'):
             return
         self.cb_num.clear()
         self.cb_num.addItem("اختر الرقم...", None)
-        cat_id = self.cb_cat.currentData()
+        cat_id, _ = self.get_selected_category()
         if cat_id:
             nums = self.db.query(db_mod.SubscriberNumber).filter(
                 db_mod.SubscriberNumber.category_id == cat_id,
@@ -3024,8 +3118,15 @@ class AddSubscriberDialog(QDialog):
                 self.cb_num.addItem(n.number, n.id)
 
     def validate_and_accept(self):
-        if not self.ent_name.text() or not self.ent_phone.text() or not self.cb_cat.currentData() or not self.cb_num.currentData() or not self.ent_pwd.text():
+        cat_id, _ = self.get_selected_category()
+        if not self.ent_name.text().strip() or not self.ent_phone.text().strip() or not self.cb_cat.currentData() or not self.ent_pwd.text():
             QMessageBox.warning(self, "خطأ", "يرجى ملء جميع الحقول")
+            return
+        if not cat_id:
+            QMessageBox.warning(self, "خطأ", "يرجى اختيار المجموعة أولاً")
+            return
+        if not self.cb_num.currentData():
+            QMessageBox.warning(self, "خطأ", "يرجى اختيار رقم المشترك")
             return
         if len(self.ent_pwd.text().strip()) < 6:
             QMessageBox.warning(self, "خطأ", "يجب أن تكون كلمة المرور 6 أحرف على الأقل")
@@ -3584,6 +3685,7 @@ class JoinAnotherCategoryDialog(QDialog):
 
         self.cb_cat = QComboBox()
         self.cb_cat.addItem("اختر الفئة الجديدة...", None)
+        self._grouped_categories = {}
 
         season_id = self.sub.season_id if self.sub else None
         q = self.db.query(db_mod.Category).filter(db_mod.Category.is_active == True)
@@ -3593,12 +3695,32 @@ class JoinAnotherCategoryDialog(QDialog):
         if not cats:
             cats = self.db.query(db_mod.Category).filter(db_mod.Category.is_active == True).order_by(db_mod.Category.id.asc()).all()
 
+        base_display = {}
         for c in cats:
-            if db_mod.get_base_category_name(c.name) not in self.subscribed_base_cats:
-                self.cb_cat.addItem(f"{c.name} — ({c.amount:,.0f} ر.ي)", c.id)
+            bkey = db_mod.get_base_category_name(c.name)
+            if bkey in self.subscribed_base_cats:
+                continue
+            if bkey not in self._grouped_categories:
+                self._grouped_categories[bkey] = []
+                clean_disp = re.sub(r"\s*[-–—]?\s*المجموعة\s*\d+\s*$", "", (c.name or "").strip()).strip() or (c.name or "")
+                base_display[bkey] = f"{clean_disp} — ({c.amount:,.0f} ر.ي)"
+            self._grouped_categories[bkey].append(c)
 
-        self.cb_cat.currentIndexChanged.connect(self.load_numbers)
+        for bkey, grp_list in self._grouped_categories.items():
+            disp = base_display.get(bkey, bkey)
+            if len(grp_list) > 1:
+                disp = f"{disp} ({len(grp_list)} مجموعات)"
+            self.cb_cat.addItem(disp, bkey)
+
+        self.cb_cat.currentIndexChanged.connect(self.on_category_changed)
         form.addRow("الفئة المتاحة:", self.cb_cat)
+
+        self.lbl_group = QLabel("المجموعة:")
+        self.cb_group = QComboBox()
+        self.cb_group.currentIndexChanged.connect(self.load_numbers)
+        form.addRow(self.lbl_group, self.cb_group)
+        self.lbl_group.setVisible(False)
+        self.cb_group.setVisible(False)
 
         self.cb_num = QComboBox()
         self.cb_num.addItem("اختر الرقم...", None)
@@ -3621,10 +3743,39 @@ class JoinAnotherCategoryDialog(QDialog):
         btns.addWidget(btn_cancel)
         layout.addLayout(btns)
 
+    def on_category_changed(self):
+        bkey = self.cb_cat.currentData()
+        groups = self._grouped_categories.get(bkey, []) if bkey else []
+        self.cb_group.blockSignals(True)
+        self.cb_group.clear()
+        if len(groups) > 1:
+            self.cb_group.addItem("اختر المجموعة...", None)
+            for g in groups:
+                g_lbl = AddSubscriberDialog._extract_group_display_label(g.name)
+                avail = self.db.query(func.count(db_mod.SubscriberNumber.id)).filter(
+                    db_mod.SubscriberNumber.category_id == g.id,
+                    db_mod.SubscriberNumber.is_reserved == False
+                ).scalar() or 0
+                avail_txt = f"متاح {avail}" if avail > 0 else "ممتلئة"
+                self.cb_group.addItem(f"{g_lbl} — ({avail_txt})", g.id)
+            self.lbl_group.setVisible(True)
+            self.cb_group.setVisible(True)
+        elif len(groups) == 1:
+            g = groups[0]
+            self.cb_group.addItem(g.name, g.id)
+            self.cb_group.setCurrentIndex(0)
+            self.lbl_group.setVisible(False)
+            self.cb_group.setVisible(False)
+        else:
+            self.lbl_group.setVisible(False)
+            self.cb_group.setVisible(False)
+        self.cb_group.blockSignals(False)
+        self.load_numbers()
+
     def load_numbers(self):
         self.cb_num.clear()
         self.cb_num.addItem("اختر الرقم...", None)
-        cat_id = self.cb_cat.currentData()
+        cat_id = self.cb_group.currentData()
         if cat_id:
             nums = self.db.query(db_mod.SubscriberNumber).filter(
                 db_mod.SubscriberNumber.category_id == cat_id,
@@ -3634,10 +3785,10 @@ class JoinAnotherCategoryDialog(QDialog):
                 self.cb_num.addItem(n.number, n.id)
 
     def submit_join(self):
-        cat_id = self.cb_cat.currentData()
+        cat_id = self.cb_group.currentData()
         num_id = self.cb_num.currentData()
         if not cat_id or not num_id:
-            ModernDialog(self, "تنبيه", "يرجى اختيار الفئة والرقم المتاح.").exec()
+            ModernDialog(self, "تنبيه", "يرجى اختيار الفئة والمجموعة والرقم المتاح.").exec()
             return
 
         cat_obj = self.db.get(db_mod.Category, int(cat_id))

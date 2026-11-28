@@ -1098,19 +1098,22 @@ class SubscribersMixin:
         dlg = AddSubscriberDialog(self, self.db)
         if dlg.exec():
             try:
-                name = dlg.ent_name.text()
+                name = dlg.ent_name.text().strip()
                 phone = dlg.ent_phone.text().strip()
-                cat_name = dlg.cb_cat.currentText()
+                if hasattr(dlg, 'get_selected_category'):
+                    cat_id, cat_name = dlg.get_selected_category()
+                else:
+                    cat_id = dlg.cb_cat.currentData()
+                    cat_name = dlg.cb_cat.currentText()
                 sub_num_text = dlg.cb_num.currentText()
                 sub_num_id = dlg.cb_num.currentData()
 
                 pwd = dlg.ent_pwd.text()
 
-                if not name or not phone or not pwd:
-                    ModernDialog(self, "خطأ", "يرجى إدخال الاسم ورقم الهاتف وكلمة المرور.").exec()
+                if not name or not phone or not pwd or not cat_name:
+                    ModernDialog(self, "خطأ", "يرجى إدخال الاسم ورقم الهاتف وكلمة المرور واختيار الفئة والمجموعة.").exec()
                     return
 
-                cat_id = dlg.cb_cat.currentData()
                 cat_obj = self.db.get(db_mod.Category, cat_id) if cat_id else self.db.query(db_mod.Category).filter(db_mod.Category.name == cat_name).first()
                 season_id = cat_obj.season_id if cat_obj else None
                 if not season_id:
