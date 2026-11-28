@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import *
 import datetime
 import math
 import random
+import re
 import pandas as pd
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QScrollArea, 
@@ -2415,18 +2416,48 @@ class CreateGroupBatchDialog(QDialog):
 
         # Season
         self.combo_season = QComboBox()
+        target_season_id = getattr(cat, 'season_id', None) if cat else None
         if hasattr(parent, 'db') and parent.db:
+            if not target_season_id and hasattr(parent, 'get_active_season_id'):
+                act_sid = parent.get_active_season_id()
+                if act_sid and act_sid != -1:
+                    target_season_id = act_sid
+            if not target_season_id:
+                curr_s = db_mod.get_current_season(parent.db)
+                target_season_id = curr_s.id if curr_s else None
+
             seasons = db_mod.get_all_seasons(parent.db)
             for s in seasons:
                 self.combo_season.addItem(s.name, s.id)
-            if cat and getattr(cat, 'season_id', None):
-                idx = self.combo_season.findData(cat.season_id)
+            if target_season_id:
+                idx = self.combo_season.findData(target_season_id)
                 if idx >= 0:
                     self.combo_season.setCurrentIndex(idx)
         form.addRow("الموسم التابع له:", self.combo_season)
         
-        # Name
-        default_name = f"{cat.name} - المجموعة 2" if cat else "فئة جديدة - المجموعة 1"
+        # Smart Name & Next Group Number (avoiding "المجموعة 2 - المجموعة 2")
+        base_name = (cat.name or "").strip() if cat else "فئة جديدة"
+        base_name = re.sub(r"\s*-\s*المجموعة\s*\d+\s*$", "", base_name).strip() or "فئة جديدة"
+        next_grp_num = 2 if cat else 1
+        existing_cat_names = set()
+        existing_prefixes = set()
+        if hasattr(parent, 'db') and parent.db:
+            try:
+                existing_cat_names = {
+                    (r[0] or "").strip()
+                    for r in parent.db.query(db_mod.Category.name).all()
+                }
+                while f"{base_name} - المجموعة {next_grp_num}" in existing_cat_names:
+                    next_grp_num += 1
+                # فحص البادئات المستخدمة لتجنب تعارض الأرقام مع مجموعات أخرى
+                sample_nums = parent.db.query(db_mod.SubscriberNumber.number).all()
+                for (n_val,) in sample_nums:
+                    if n_val and "-" in str(n_val):
+                        existing_prefixes.add(str(n_val).split("-", 1)[0].upper() + "-")
+            except Exception:
+                pass
+
+        default_name = f"{base_name} - المجموعة {next_grp_num}"
         self.ent_name = QLineEdit(default_name)
         form.addRow("اسم المجموعة الجديدة:", self.ent_name)
         
@@ -2457,7 +2488,12 @@ class CreateGroupBatchDialog(QDialog):
         
         num_form = QFormLayout()
         num_form.setSpacing(8)
-        self.ent_prefix = QLineEdit("G2-")
+        prefix_idx = next_grp_num
+        suggested_prefix = f"G{prefix_idx}-"
+        while suggested_prefix.upper() in existing_prefixes:
+            prefix_idx += 1
+            suggested_prefix = f"G{prefix_idx}-"
+        self.ent_prefix = QLineEdit(suggested_prefix)
         self.ent_num_start = QLineEdit("1")
         self.ent_num_end = QLineEdit("100")
         num_form.addRow("بادئة الأرقام (Prefix):", self.ent_prefix)
@@ -2486,13 +2522,68 @@ class CreateGroupBatchDialog(QDialog):
             QMessageBox.warning(self, "تنبيه", "يرجى كتابة اسم المجموعة.")
             return
         try:
-            float(self.ent_amount.text().strip())
-            float(self.ent_prize.text().strip())
-            int(self.ent_num_start.text().strip())
-            int(self.ent_num_end.text().strip())
+            amount = float(self.ent_amount.text().strip())
+            prize = float(self.ent_prize.text().strip())
+            cycles = int(self.ent_cycles.text().strip())
+            inst = int(self.ent_inst.text().strip())
+            num_start = int(self.ent_num_start.text().strip())
+            num_end = int(self.ent_num_end.text().strip())
         except ValueError:
-            QMessageBox.warning(self, "تنبيه", "يرجى التأكد من إدخال قيم رقمية صحيحة للمبالغ والأرقام.")
+            QMessageBox.warning(self, "تنبيه", "يرجى التأكد من إدخال قيم رقمية صحيحة للمبالغ والدورات والأرقام.")
             return
+
+        if amount <= 0 or prize < 0:
+            QMessageBox.warning(self, "تنبيه", "يجب أن يكون المبلغ اليومي أكبر من صفر ومبلغ الجائزة غير سالب.")
+            return
+        if cycles < 1 or inst < 1:
+            QMessageBox.warning(self, "تنبيه", "يجب أن يكون عدد الدورات وأقساط الدورة 1 على الأقل.")
+            return
+        if num_start < 1 or num_start > num_end:
+            QMessageBox.warning(self, "تنبيه", "يرجى التأكد من نطاق الأرقام (رقم البداية أصغر من أو يساوي النهاية).")
+            return
+        if (num_end - num_start + 1) > 5000:
+            QMessageBox.warning(self, "تنبيه", "الحد الأقصى لتوليد الأرقام في دفعة واحدة هو 5000 رقم.")
+            return
+
+        # التحقق من عدم تكرار اسم المجموعة أو تعارض أرقامها مع أرقام موجودة مسبقاً
+        parent = self.parent()
+        if parent is not None and hasattr(parent, 'db') and parent.db:
+            try:
+                if parent.db.query(db_mod.Category).filter(db_mod.Category.name == name).first():
+                    QMessageBox.warning(self, "تنبيه", "اسم المجموعة موجود بالفعل، يرجى اختيار اسم مختلف.")
+                    return
+
+                prefix = self.ent_prefix.text().strip()
+                generated = [
+                    f"{prefix}{i:02d}" if (num_end >= 10 and len(str(i)) < 2) else f"{prefix}{i}"
+                    for i in range(num_start, num_end + 1)
+                ]
+                gen_list = list(set(generated))
+                existing_nums = set()
+                existing_sub_nums = set()
+                for idx in range(0, len(gen_list), 500):
+                    chunk = gen_list[idx:idx + 500]
+                    existing_nums.update(
+                        r[0] for r in parent.db.query(db_mod.SubscriberNumber.number)
+                        .filter(db_mod.SubscriberNumber.number.in_(chunk)).all()
+                    )
+                    existing_sub_nums.update(
+                        r[0] for r in parent.db.query(db_mod.Subscriber.subscriber_number)
+                        .filter(db_mod.Subscriber.subscriber_number.in_(chunk)).all()
+                    )
+                conflicts = sorted(existing_nums | existing_sub_nums)
+                if conflicts:
+                    sample = "، ".join(conflicts[:5])
+                    QMessageBox.warning(
+                        self,
+                        "تعارض في أرقام المشتركين",
+                        f"الأرقام المولدة تتعارض مع أرقام موجودة مسبقاً في النظام (مثل: {sample}).\n\n"
+                        f"يرجى تغيير بادئة الأرقام (مثل G2- أو G3-) لمنع أي تداخل في الدخول أو القرعة."
+                    )
+                    return
+            except Exception:
+                pass
+
         self.accept()
 
 class ExcludeSubscriberDialog(QDialog):

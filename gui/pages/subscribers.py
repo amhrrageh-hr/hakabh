@@ -1037,6 +1037,16 @@ class SubscribersMixin:
                 inst = int(dlg.ent_inst.text().strip())
                 start_date_q = dlg.dt_start.date()
                 start_date = datetime.datetime(start_date_q.year(), start_date_q.month(), start_date_q.day())
+                season_id = dlg.combo_season.currentData() if hasattr(dlg, 'combo_season') else None
+                if not season_id and cat:
+                    season_id = cat.season_id
+                if not season_id and hasattr(self, 'get_active_season_id'):
+                    act_sid = self.get_active_season_id()
+                    if act_sid and act_sid != -1:
+                        season_id = act_sid
+                if not season_id:
+                    curr_s = db_mod.get_current_season(self.db)
+                    season_id = curr_s.id if curr_s else None
                 
                 prefix = dlg.ent_prefix.text().strip()
                 num_start = int(dlg.ent_num_start.text().strip())
@@ -1058,7 +1068,8 @@ class SubscribersMixin:
                     max_cycles=cycles,
                     max_installments=inst,
                     start_date=start_date,
-                    is_active=True
+                    is_active=True,
+                    season_id=season_id
                 )
                 self.db.add(new_cat)
                 self.db.flush()
@@ -1074,7 +1085,10 @@ class SubscribersMixin:
                 self.db.bulk_save_objects(nums_to_add)
                 self.db.commit()
                 
-                self.load_subscribers()
+                if hasattr(self, 'refresh_all_category_views'):
+                    self.refresh_all_category_views()
+                else:
+                    self.load_subscribers()
                 ModernDialog(self, "نجاح", f"تم إنشاء المجموعة '{name}' بنجاح وتوليد {len(nums_to_add)} رقماً لها.").exec()
             except Exception as e:
                 self.db.rollback()

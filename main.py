@@ -317,13 +317,18 @@ async def read_registration(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/numbers/{cat_id}")
 async def get_available_numbers(cat_id: int, db: Session = Depends(get_db)):
-    # Optimized query to find numbers not yet assigned to any active subscriber
+    cat_record = db.get(db_mod.Category, cat_id)
+    if not cat_record:
+        return []
+    # جلب الأرقام المتاحة ضمن الفئة/المجموعة المحددة فقط دون التأثر بأرقام المجموعات الأخرى
+    taken_in_cat = db.query(db_mod.Subscriber.subscriber_number).filter(
+        db_mod.Subscriber.category == cat_record.name,
+        db_mod.Subscriber.subscriber_number != None
+    )
     numbers = db.query(db_mod.SubscriberNumber).filter(
         db_mod.SubscriberNumber.category_id == cat_id,
         db_mod.SubscriberNumber.is_reserved == False,
-        ~db_mod.SubscriberNumber.number.in_(
-            db.query(db_mod.Subscriber.subscriber_number).filter(db_mod.Subscriber.subscriber_number != None)
-        )
+        ~db_mod.SubscriberNumber.number.in_(taken_in_cat)
     ).all()
     return [{"id": n.id, "number": n.number} for n in numbers]
 
@@ -351,21 +356,26 @@ async def register_subscriber(
     if len(password) < 6:
         return JSONResponse(status_code=400, content={"message": "كلمة المرور يجب أن تكون 6 أحرف على الأقل."})
 
-    existing = db.query(db_mod.Subscriber).filter(db_mod.Subscriber.phone == phone).first()
+    cat_record = db.get(db_mod.Category, category_id)
+    if not cat_record or not cat_record.is_active:
+        return JSONResponse(status_code=400, content={"message": "الفئة أو المجموعة المحددة غير موجودة أو غير نشطة."})
+
+    # السماح بالاشتراك في مجموعة/فئة أخرى ومنع تكرار الاشتراك في نفس المجموعة فقط
+    existing = db.query(db_mod.Subscriber).filter(
+        db_mod.Subscriber.phone == phone,
+        db_mod.Subscriber.category == cat_record.name
+    ).first()
     if existing:
-        return JSONResponse(status_code=400, content={"message": "رقم الهاتف مسجل مسبقاً"})
+        return JSONResponse(status_code=400, content={"message": f"رقم الهاتف مسجل مسبقاً في نفس الفئة/المجموعة ({cat_record.name})."})
 
     num_record = db.query(db_mod.SubscriberNumber).filter(
         db_mod.SubscriberNumber.id == number_id,
+        db_mod.SubscriberNumber.category_id == category_id,
         db_mod.SubscriberNumber.is_reserved == False
     ).first()
     
     if not num_record:
-        return JSONResponse(status_code=400, content={"message": "عذراً، هذا الرقم تم حجزه للتو."})
-
-    cat_record = db.get(db_mod.Category, category_id)
-    if not cat_record:
-        return JSONResponse(status_code=400, content={"message": "الفئة المحددة غير موجودة."})
+        return JSONResponse(status_code=400, content={"message": "عذراً، هذا الرقم غير متاح أو تم حجزه للتو."})
     
     try:
         new_sub = db_mod.Subscriber(

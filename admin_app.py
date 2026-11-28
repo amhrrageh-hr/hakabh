@@ -338,6 +338,45 @@ class AdminApp(QMainWindow, DashboardMixin, SubscribersMixin, SettingsMixin, Cap
                     self.refresh_report_categories()
             except Exception: pass
 
+    def refresh_all_category_views(self):
+        """تحديث شامل وآمن لجميع الشاشات والفلاتر المرتبطة بالفئات والمجموعات بعد إضافة أو تعديل فئة/مجموعة."""
+        for method_name in (
+            'refresh_cat_list',
+            'refresh_seasons_list',
+            'refresh_cycles_cat_list',
+            'refresh_stats',
+            'load_subscribers',
+        ):
+            if hasattr(self, method_name):
+                try:
+                    getattr(self, method_name)()
+                except Exception:
+                    pass
+
+        if getattr(self, 'page_capital', None) is not None:
+            try:
+                self.load_capital_category_filter()
+                self.refresh_capital_stats()
+                self.refresh_current_capital_tab()
+            except Exception:
+                pass
+
+        if getattr(self, 'page_draw', None) is not None:
+            try:
+                self.refresh_draw_categories_filter()
+                self.refresh_draw_stats()
+            except Exception:
+                pass
+
+        if getattr(self, 'page_reports', None) is not None:
+            try:
+                if hasattr(self, 'on_contact_season_changed'):
+                    self.on_contact_season_changed()
+                if hasattr(self, 'refresh_report_categories'):
+                    self.refresh_report_categories()
+            except Exception:
+                pass
+
     def prompt_admin_access(self):
         if self.logged_in_staff:
             return True
